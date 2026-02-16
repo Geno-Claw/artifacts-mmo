@@ -1,0 +1,16 @@
+{
+  "name": "artifacts-mmo",
+  "version": "0.1.0",
+  "description": "Geno-Claw's Artifacts MMO bot - API-driven MMO gameplay",
+  "type": "module",
+  "scripts": {
+    "start": "node src/bot.mjs",
+    "status": "node src/status.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
+}
