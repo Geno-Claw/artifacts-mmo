@@ -69,16 +69,18 @@ for (let round = 1; round <= maxRounds; round++) {
     
     if (f.result === 'win') {
       wins++;
-      const xp = f.xp || 0;
-      const gold = f.gold || 0;
+      // XP/gold/drops are per-character in fight.characters[]
+      const charResult = f.characters?.find(c => c.character_name === CHARACTER) || f.characters?.[0] || {};
+      const xp = charResult.xp || 0;
+      const gold = charResult.gold || 0;
       totalXP += xp;
       totalGold += gold;
       
-      const dropStr = f.drops?.length 
-        ? f.drops.map(d => { drops[d.code] = (drops[d.code] || 0) + d.quantity; return `${d.code}×${d.quantity}`; }).join(', ')
+      const dropStr = charResult.drops?.length 
+        ? charResult.drops.map(d => { drops[d.code] = (drops[d.code] || 0) + d.quantity; return `${d.code}×${d.quantity}`; }).join(', ')
         : '';
       
-      console.log(`WIN in ${f.turns} turns | +${xp} XP +${gold}g${dropStr ? ' | ' + dropStr : ''}`);
+      console.log(`WIN in ${f.turns} turns | +${xp} XP +${gold}g${dropStr ? ' | ' + dropStr : ''} (${charResult.final_hp} HP left)`);
     } else {
       losses++;
       console.log(`LOSS in ${f.turns} turns`);
