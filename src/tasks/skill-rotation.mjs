@@ -29,6 +29,10 @@ export class SkillRotationTask extends BaseTask {
     return true;
   }
 
+  canBePreempted(_ctx) {
+    return !this.rotation.currentSkill || this.rotation.isGoalComplete();
+  }
+
   async execute(ctx) {
     // Pick or rotate skill
     if (!this.rotation.currentSkill || this.rotation.isGoalComplete()) {
@@ -173,6 +177,11 @@ export class SkillRotationTask extends BaseTask {
     // (resolveRecipeChain only returns dependency steps, not the final recipe)
     if (plan.length === 0 || plan[plan.length - 1].itemCode !== recipe.code) {
       plan.push({ type: 'craft', itemCode: recipe.code, recipe: recipe.craft, quantity: 1 });
+    }
+
+    // Re-withdraw if bank task deposited our materials
+    if (this.rotation.bankChecked && ctx.inventoryCount() === 0) {
+      this.rotation.bankChecked = false;
     }
 
     // Withdraw matching ingredients from bank (scaled for batch)
@@ -339,6 +348,9 @@ export class SkillRotationTask extends BaseTask {
       await ctx.refresh();
       this.rotation.recordProgress(1);
       log.info(`[${ctx.name}] NPC Task: completed (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+
+      // Exchange task coins for rewards if targets are configured/detected
+      await this._exchangeTaskCoins(ctx);
       return true;
     }
 
@@ -391,5 +403,39 @@ export class SkillRotationTask extends BaseTask {
     }
 
     return !ctx.inventoryFull();
+  }
+
+  // --- Task coin exchange ---
+
+  async _exchangeTaskCoins(ctx) {
+    const targets = this.rotation.getExchangeTargets();
+    if (targets.size === 0) return;
+
+    while (ctx.taskCoins() >= 6) {
+      // Check if all targets met (force-refresh bank)
+      const bank = await gameData.getBankItems(true);
+      if (!this.rotation.hasUnmetExchangeTargets(bank, ctx)) {
+        log.info(`[${ctx.name}] Task Exchange: all collection targets met, saving coins`);
+        break;
+      }
+
+      // Check inventory space (rewards give 1-2 items)
+      if (ctx.inventoryCount() + 2 >= ctx.inventoryCapacity()) {
+        log.info(`[${ctx.name}] Task Exchange: inventory too full, deferring`);
+        break;
+      }
+
+      // Already at task master after completing task
+      await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
+      try {
+        const result = await api.taskExchange(ctx.name);
+        await api.waitForCooldown(result);
+        await ctx.refresh();
+        log.info(`[${ctx.name}] Task Exchange: exchanged 6 coins (${ctx.taskCoins()} remaining)`);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Task Exchange failed: ${err.message}`);
+        break;
+      }
+    }
   }
 }

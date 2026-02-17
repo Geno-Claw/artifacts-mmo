@@ -112,6 +112,15 @@ export async function cancelTask(name = CHARACTER) {
   return request('POST', `/my/${name}/action/task/cancel`);
 }
 
+export async function taskExchange(name = CHARACTER) {
+  return request('POST', `/my/${name}/action/task/exchange`);
+}
+
+export async function getTaskRewards(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/tasks/rewards${qs ? '?' + qs : ''}`);
+}
+
 export async function buyGE(id, quantity, name = CHARACTER) {
   return request('POST', `/my/${name}/action/grandexchange/buy`, { id, quantity });
 }

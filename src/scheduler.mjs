@@ -47,6 +47,12 @@ export class Scheduler {
               log.info(`[${this.ctx.name}] ${task.name}: conditions changed, yielding`);
               break;
             }
+            // Preemption: yield if a higher-priority task needs to run
+            const preempt = this.tasks.find(t => t.priority > task.priority && t.canRun(this.ctx));
+            if (preempt && task.canBePreempted(this.ctx)) {
+              log.info(`[${this.ctx.name}] ${task.name}: preempted by ${preempt.name}`);
+              break;
+            }
             keepGoing = await task.execute(this.ctx);
           }
         } else {

@@ -217,25 +217,44 @@ export async function executeSellFlow(ctx, bankItems) {
 
   if (withdrawn.length === 0) return 0;
 
-  // Step 2: Move to GE
+  // Step 2: Determine prices and ensure we have gold for listing fees (still at bank)
+  const priced = [];
+  for (const item of withdrawn) {
+    const price = await determinePrice(item.code);
+    priced.push({ ...item, price });
+  }
+
+  const totalFees = priced.reduce((sum, p) => sum + Math.ceil(p.price * p.quantity * 0.05), 0);
+  const charGold = ctx.get().gold;
+  if (totalFees > charGold) {
+    const needed = totalFees - charGold;
+    try {
+      log.info(`[${ctx.name}] GE: withdrawing ${needed}g from bank for listing fees`);
+      const result = await api.withdrawGold(needed, ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+    } catch (err) {
+      log.warn(`[${ctx.name}] GE: could not withdraw gold for fees: ${err.message}`);
+    }
+  }
+
+  // Step 3: Move to GE
   await moveTo(ctx, geLocation.x, geLocation.y);
 
-  // Step 3: Check active orders (for logging + stale cancellation)
+  // Step 4: Check active orders (for logging + stale cancellation)
   const activeOrders = await collectCompletedOrders(ctx);
   await cancelStaleOrders(ctx, activeOrders);
 
-  // Step 4: Create sell orders
+  // Step 5: Create sell orders
   let ordersCreated = 0;
 
-  for (const item of withdrawn) {
-    const price = await determinePrice(item.code);
-
+  for (const item of priced) {
     try {
-      const result = await api.sellGE(item.code, item.quantity, price, ctx.name);
+      const result = await api.sellGE(item.code, item.quantity, item.price, ctx.name);
       await api.waitForCooldown(result);
       await ctx.refresh();
       ordersCreated++;
-      log.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${price}g each`);
+      log.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${item.price}g each`);
     } catch (err) {
       if (err.code === 437) {
         log.info(`[${ctx.name}] GE: ${item.code} cannot be sold on GE, will re-deposit`);

@@ -19,6 +19,8 @@ let workshopCache = null;       // { skill: { x, y } }
 let bankItemsCache = null;      // Map<code, quantity>
 let lastBankFetch = 0;
 let geLocationCache = null;     // { x, y } or null
+let taskRewardsCache = null;    // Array of reward objects
+let taskRewardCodes = null;     // Set<itemCode> for fast lookup
 
 const BANK_CACHE_TTL = 60_000; // 1 minute
 
@@ -26,7 +28,7 @@ const BANK_CACHE_TTL = 60_000; // 1 minute
 
 export async function initialize() {
   log.info('[GameData] Loading items, monsters, and resources...');
-  await Promise.all([loadAllItems(), loadAllMonsters(), loadAllResources(), discoverGELocation()]);
+  await Promise.all([loadAllItems(), loadAllMonsters(), loadAllResources(), discoverGELocation(), loadTaskRewards()]);
 
   // Log discovered types to help debug slot-to-type mapping
   const types = new Map();
@@ -93,6 +95,19 @@ async function loadAllResources() {
   }
 }
 
+async function loadTaskRewards() {
+  try {
+    const result = await api.getTaskRewards({ size: 100 });
+    taskRewardsCache = Array.isArray(result) ? result : [];
+    taskRewardCodes = new Set(taskRewardsCache.map(r => r.code));
+    log.info(`[GameData] Loaded ${taskRewardsCache.length} task rewards`);
+  } catch (err) {
+    log.warn(`[GameData] Could not load task rewards: ${err.message}`);
+    taskRewardsCache = [];
+    taskRewardCodes = new Set();
+  }
+}
+
 // --- Query functions ---
 
 export function getItem(code) {
@@ -114,6 +129,16 @@ export function getResource(code) {
 export function getResourceForDrop(itemCode) {
   const resourceCode = dropToResourceCache?.get(itemCode);
   return resourceCode ? resourcesCache.get(resourceCode) : null;
+}
+
+/** Returns true if the item code is obtainable from task coin exchange. */
+export function isTaskReward(code) {
+  return taskRewardCodes?.has(code) || false;
+}
+
+/** Returns the full list of task exchange reward objects. */
+export function getTaskRewards() {
+  return taskRewardsCache || [];
 }
 
 /**

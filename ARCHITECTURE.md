@@ -67,6 +67,9 @@ Tasks declare three properties in their constructor:
 - **priority** — higher number wins (Rest=100, Bank=50, Grind=10)
 - **loop** — if true, execute() is called repeatedly until it returns false or canRun() fails
 
+Optional override:
+- **`canBePreempted(ctx)`** — returns boolean (default `true`). When `false`, the scheduler skips preemption even if a higher-priority task is runnable. Used by `SkillRotationTask` to complete full goal cycles before yielding to bank/rest.
+
 All tasks receive a `CharacterContext` (not a raw character object).
 
 ### Scheduler
@@ -76,7 +79,8 @@ The scheduler holds a priority-sorted list of tasks. Each iteration:
 1. Refreshes character state from the API
 2. Walks the task list top-down, calls `canRun()` on each
 3. Runs the first task that returns true
-4. For loop tasks: re-checks `canRun()` before each iteration so higher-priority tasks can interrupt
+4. For loop tasks: re-checks `canRun()` before each iteration, and checks for higher-priority preemption
+5. Preemption is gated by `task.canBePreempted(ctx)` — tasks can defer preemption until a safe break point (e.g., skill rotation only yields between goal cycles, not mid-action)
 
 ### CharacterContext
 

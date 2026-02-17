@@ -24,7 +24,7 @@ const DEFAULT_GOALS = {
 };
 
 export class SkillRotation {
-  constructor({ skills, goals = {}, weights, craftCollection = {}, craftBlacklist = {} } = {}) {
+  constructor({ skills, goals = {}, weights, craftCollection = {}, craftBlacklist = {}, taskCollection = {} } = {}) {
     if (weights && Object.keys(weights).length > 0) {
       this.weights = weights;
       this.skills = Object.keys(weights).filter(s => weights[s] > 0);
@@ -35,6 +35,8 @@ export class SkillRotation {
     this.goals = { ...DEFAULT_GOALS, ...goals };
     this.craftCollection = craftCollection;       // { skill: bool }
     this.craftBlacklist = craftBlacklist;          // { skill: string[] }
+    this.taskCollection = taskCollection;          // { itemCode: targetQty } manual targets
+    this._exchangeNeeds = new Map();              // { itemCode → qty } dynamic targets from crafting
 
     // Current rotation state
     this.currentSkill = null;
@@ -65,6 +67,7 @@ export class SkillRotation {
   /** Pick the next random skill and set up its state. */
   async pickNext(ctx) {
     this._resetState();
+    this._exchangeNeeds.clear(); // rebuild dynamic targets from crafting setup
 
     const shuffled = this._weightedShuffle(this.skills);
 
@@ -217,7 +220,11 @@ export class SkillRotation {
       const bankSteps = plan.filter(s => s.type === 'bank');
       if (bankSteps.length > 0) {
         const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
-        if (!allMet) continue;
+        if (!allMet) {
+          // Track unmet deps that are task exchange rewards
+          this._trackExchangeNeeds(bankSteps, bank);
+          continue;
+        }
       }
 
       this._recipe = item;
@@ -256,7 +263,10 @@ export class SkillRotation {
       const bankSteps = plan.filter(s => s.type === 'bank');
       if (bankSteps.length > 0) {
         const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
-        if (!allMet) continue;
+        if (!allMet) {
+          this._trackExchangeNeeds(bankSteps, bank);
+          continue;
+        }
       }
 
       const availability = this._scoreRecipeAvailability(plan, ctx, bank);
@@ -300,6 +310,43 @@ export class SkillRotation {
     }
 
     return totalNeeded > 0 ? totalHave / totalNeeded : 0;
+  }
+
+  /**
+   * Record unmet bank-only deps that are obtainable via task exchange.
+   * Called when a recipe is skipped due to missing bank ingredients.
+   */
+  _trackExchangeNeeds(bankSteps, bank) {
+    for (const step of bankSteps) {
+      if (!gameData.isTaskReward(step.itemCode)) continue;
+      const inBank = bank.get(step.itemCode) || 0;
+      const deficit = step.quantity - inBank;
+      if (deficit > 0) {
+        this._exchangeNeeds.set(step.itemCode,
+          Math.max(this._exchangeNeeds.get(step.itemCode) || 0, deficit));
+      }
+    }
+  }
+
+  /** Merge manual taskCollection targets with dynamic crafting needs. */
+  getExchangeTargets() {
+    const targets = new Map();
+    for (const [code, qty] of Object.entries(this.taskCollection)) {
+      targets.set(code, qty);
+    }
+    for (const [code, qty] of this._exchangeNeeds) {
+      targets.set(code, Math.max(targets.get(code) || 0, qty));
+    }
+    return targets;
+  }
+
+  /** Check if any exchange target is still unmet (bank + inventory < target). */
+  hasUnmetExchangeTargets(bankItems, ctx) {
+    for (const [code, target] of this.getExchangeTargets()) {
+      const have = (bankItems.get(code) || 0) + ctx.itemCount(code);
+      if (have < target) return true;
+    }
+    return false;
   }
 
   async _setupCombat(ctx) {

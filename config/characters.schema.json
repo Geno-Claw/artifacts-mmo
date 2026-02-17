@@ -71,7 +71,7 @@
       "properties": {
         "type": { "const": "depositBank" },
         "priority": { "type": "number", "default": 50, "description": "Execution priority (default 50)" },
-        "threshold": { "type": "number", "default": 0.8, "description": "Inventory fullness ratio (0.0-1.0) to trigger deposit" },
+        "threshold": { "type": "number", "default": 0.8, "minimum": 0, "description": "Inventory fullness ratio to trigger deposit (0.0-1.0); 0 = deposit after every action" },
         "sellOnGE": { "type": "boolean", "default": true, "description": "Sell items on Grand Exchange during deposit" },
         "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" }
       }
@@ -123,6 +123,12 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "default": {}
+        },
+        "taskCollection": {
+          "type": "object",
+          "description": "Target quantities for task exchange reward items. Keys are item codes, values are desired quantities to accumulate in bank. Also works dynamically — crafting recipes with unmet bank deps that are task rewards will auto-trigger exchanges. Empty object enables dynamic-only mode.",
+          "additionalProperties": { "type": "number", "minimum": 1 },
           "default": {}
         }
       }

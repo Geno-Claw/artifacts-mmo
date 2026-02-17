@@ -16,6 +16,10 @@ export class BaseTask {
     throw new Error(`${this.name}: canRun() not implemented`);
   }
 
+  canBePreempted(_ctx) {
+    return true;
+  }
+
   async execute(_char) {
     throw new Error(`${this.name}: execute() not implemented`);
   }

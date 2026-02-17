@@ -22,21 +22,23 @@ export class DepositBankTask extends BaseTask {
   canRun(ctx) {
     const count = ctx.inventoryCount();
     const cap = ctx.inventoryCapacity();
-    return cap > 0 && (count / cap) >= this.threshold;
+    if (cap <= 0) return false;
+    if (this.threshold <= 0) return count > 0;
+    return (count / cap) >= this.threshold;
   }
 
   async execute(ctx) {
     // Step 1: Deposit all inventory items to bank
     await depositAll(ctx);
 
-    // Step 2: Deposit gold to bank
-    if (this.depositGold) {
-      await this._depositGold(ctx);
-    }
-
-    // Step 3: Sell items on GE
+    // Step 2: Sell items on GE (before depositing gold — listing fees need gold)
     if (this.sellOnGE && geSeller.getSellRules()) {
       await this._sellOnGE(ctx);
+    }
+
+    // Step 3: Deposit gold to bank (after GE so listing fees are paid first)
+    if (this.depositGold) {
+      await this._depositGold(ctx);
     }
   }
 

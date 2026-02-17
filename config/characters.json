@@ -11,21 +11,21 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0.8,
+          "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
         },
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 1,
-            "woodcutting": 1,
-            "fishing": 1,
-            "cooking": 1,
-            "alchemy": 2,
-            "weaponcrafting": 1,
-            "gearcrafting": 1,
-            "jewelrycrafting": 1,
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 0,
+            "alchemy": 0,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
             "combat": 1,
             "npc_task": 1
           },
@@ -47,7 +47,8 @@
             "jewelrycrafting": true,
             "alchemy": true
           },
-          "craftBlacklist": {}
+          "craftBlacklist": {},
+          "taskCollection": {}
         }
       ]
     },
@@ -61,7 +62,7 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0.8,
+          "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -97,7 +98,8 @@
             "jewelrycrafting": true,
             "alchemy": true
           },
-          "craftBlacklist": {}
+          "craftBlacklist": {},
+          "taskCollection": {}
         }
       ]
     },
@@ -111,7 +113,7 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0.8,
+          "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -161,7 +163,7 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0.8,
+          "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -211,7 +213,7 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0.8,
+          "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
         },
