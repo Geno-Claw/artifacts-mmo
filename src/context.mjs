@@ -3,6 +3,7 @@
  * Replaces the singleton state.mjs — one instance per character.
  */
 import { getCharacter } from './api.mjs';
+import { clearGearCache } from './helpers.mjs';
 
 export class CharacterContext {
   constructor(name) {
@@ -16,10 +17,12 @@ export class CharacterContext {
   async refresh() {
     this._char = await getCharacter(this.name);
 
-    // Reset all losses on level-up so bot retries task monsters
+    // Reset all losses and gear cache on level-up so bot retries task monsters
+    // and re-evaluates gear (new items may be available at the new level)
     const level = this._char.level;
     if (this._lastLevel !== null && level > this._lastLevel) {
       this._losses = {};
+      clearGearCache(this.name);
     }
     this._lastLevel = level;
 

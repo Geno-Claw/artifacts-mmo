@@ -6,7 +6,9 @@
 import * as api from './api.mjs';
 import * as log from './log.mjs';
 import * as gameData from './services/game-data.mjs';
+import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
 import { hpNeededForFight } from './services/combat-simulator.mjs';
+import { optimizeForMonster } from './services/gear-optimizer.mjs';
 import { BANK } from './data/locations.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
@@ -254,4 +256,135 @@ export async function depositAll(ctx) {
   const result = await api.depositBank(items, ctx.name);
   await api.waitForCooldown(result);
   await ctx.refresh();
+}
+
+// --- Combat gear optimization ---
+
+// Cache: "charName:monsterCode" → { loadout, simResult, level }
+const _gearCache = new Map();
+
+/**
+ * Equip optimal gear for fighting a specific monster.
+ * Uses simulation-based optimizer, then performs only necessary equip swaps.
+ * Caches results to avoid re-optimizing for the same target at the same level.
+ *
+ * @param {import('./context.mjs').CharacterContext} ctx
+ * @param {string} monsterCode
+ * @returns {Promise<{ changed: boolean, simResult: object | null }>}
+ */
+export async function equipForCombat(ctx, monsterCode) {
+  const cacheKey = `${ctx.name}:${monsterCode}`;
+
+  // Check cache — skip if same monster, same level, same gear
+  const cached = _gearCache.get(cacheKey);
+  if (cached && cached.level === ctx.get().level) {
+    let gearMatches = true;
+    for (const slot of EQUIPMENT_SLOTS) {
+      const current = ctx.get()[`${slot}_slot`] || null;
+      const expected = cached.loadout.get(slot) || null;
+      if (current !== expected) { gearMatches = false; break; }
+    }
+    if (gearMatches) {
+      return { changed: false, simResult: cached.simResult };
+    }
+  }
+
+  const result = await optimizeForMonster(ctx, monsterCode);
+  if (!result) return { changed: false, simResult: null };
+
+  const { loadout, simResult } = result;
+
+  // Determine which slots need changing
+  const changes = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const currentCode = ctx.get()[`${slot}_slot`] || null;
+    const targetCode = loadout.get(slot) || null;
+    if (currentCode !== targetCode) {
+      changes.push({ slot, currentCode, targetCode });
+    }
+  }
+
+  if (changes.length === 0) {
+    _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
+    return { changed: false, simResult };
+  }
+
+  log.info(`[${ctx.name}] Gear optimizer: ${changes.length} slot(s) to change for ${monsterCode}`);
+
+  // Determine if any items need to come from bank
+  const bankNeeded = changes.filter(c =>
+    c.targetCode
+    && !ctx.hasItem(c.targetCode)
+    && ctx.get()[`${c.slot}_slot`] !== c.targetCode
+  );
+
+  if (bankNeeded.length > 0) {
+    // Ensure inventory space for swaps
+    const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
+    if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
+      await depositAll(ctx);
+    }
+
+    for (const { targetCode } of bankNeeded) {
+      if (ctx.hasItem(targetCode)) continue;
+      try {
+        await withdrawItem(ctx, targetCode, 1);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Could not withdraw ${targetCode}: ${err.message}`);
+      }
+    }
+  }
+
+  // Perform equipment swaps
+  for (const { slot, currentCode, targetCode } of changes) {
+    if (targetCode === null) {
+      // Unequip only
+      if (currentCode) {
+        if (ctx.inventoryFull()) {
+          log.warn(`[${ctx.name}] Inventory full, cannot unequip ${slot}`);
+          continue;
+        }
+        log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
+        const ur = await api.unequipItem(slot, ctx.name);
+        await api.waitForCooldown(ur);
+        await ctx.refresh();
+      }
+    } else {
+      try {
+        await swapEquipment(ctx, slot, targetCode);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Gear swap failed for ${slot}: ${err.message}`);
+      }
+    }
+  }
+
+  // Deposit old gear to bank if we made a bank trip
+  if (bankNeeded.length > 0) {
+    const unequippedCodes = changes
+      .filter(c => c.currentCode && c.currentCode !== c.targetCode)
+      .map(c => c.currentCode)
+      .filter(code => ctx.hasItem(code));
+
+    if (unequippedCodes.length > 0) {
+      await moveTo(ctx, BANK.x, BANK.y);
+      const items = unequippedCodes.map(code => ({ code, quantity: ctx.itemCount(code) }));
+      try {
+        const dr = await api.depositBank(items, ctx.name);
+        await api.waitForCooldown(dr);
+        await ctx.refresh();
+      } catch (err) {
+        log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+      }
+    }
+  }
+
+  _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
+  return { changed: true, simResult };
+}
+
+/** Clear the gear cache for a character (e.g., on level-up). */
+export function clearGearCache(charName) {
+  for (const key of _gearCache.keys()) {
+    if (key.startsWith(`${charName}:`)) _gearCache.delete(key);
+  }
 }

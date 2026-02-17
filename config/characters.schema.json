@@ -26,7 +26,6 @@
               "oneOf": [
                 { "$ref": "#/$defs/restTask" },
                 { "$ref": "#/$defs/depositBankTask" },
-                { "$ref": "#/$defs/autoEquipTask" },
                 { "$ref": "#/$defs/skillRotationTask" },
                 { "$ref": "#/$defs/fightMonstersTask" },
                 { "$ref": "#/$defs/gatherResourceTask" },
@@ -74,27 +73,7 @@
         "priority": { "type": "number", "default": 50, "description": "Execution priority (default 50)" },
         "threshold": { "type": "number", "default": 0.8, "description": "Inventory fullness ratio (0.0-1.0) to trigger deposit" },
         "sellOnGE": { "type": "boolean", "default": true, "description": "Sell items on Grand Exchange during deposit" },
-        "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" },
-        "autoEquipOnBank": { "type": "boolean", "default": true, "description": "Check for and equip upgrades from bank" }
-      }
-    },
-
-    "autoEquipTask": {
-      "type": "object",
-      "required": ["type"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "autoEquip" },
-        "priority": { "type": "number", "default": 45, "description": "Execution priority (default 45)" },
-        "checkInterval": { "type": "number", "default": 300000, "description": "Milliseconds between equipment checks (default 5min)" },
-        "slots": {
-          "type": "array",
-          "description": "Equipment slots to check (default: all slots)",
-          "items": {
-            "type": "string",
-            "enum": ["weapon", "shield", "helmet", "body_armor", "leg_armor", "boots", "ring1", "ring2", "amulet"]
-          }
-        }
+        "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" }
       }
     },
 

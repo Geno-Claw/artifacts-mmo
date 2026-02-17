@@ -1,5 +1,5 @@
 import { BaseTask } from './base.mjs';
-import { depositAll, moveTo, swapEquipment } from '../helpers.mjs';
+import { depositAll, moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
@@ -12,13 +12,11 @@ export class DepositBankTask extends BaseTask {
     priority = 50,
     sellOnGE = true,
     depositGold = true,
-    autoEquipOnBank = true,
   } = {}) {
     super({ name: 'Deposit to Bank', priority, loop: false });
     this.threshold = threshold;
     this.sellOnGE = sellOnGE;
     this.depositGold = depositGold;
-    this.autoEquipOnBank = autoEquipOnBank;
   }
 
   canRun(ctx) {
@@ -36,12 +34,7 @@ export class DepositBankTask extends BaseTask {
       await this._depositGold(ctx);
     }
 
-    // Step 3: Auto-equip from bank (before selling so we don't sell upgrades)
-    if (this.autoEquipOnBank) {
-      await this._autoEquipFromBank(ctx);
-    }
-
-    // Step 4: Sell items on GE
+    // Step 3: Sell items on GE
     if (this.sellOnGE && geSeller.getSellRules()) {
       await this._sellOnGE(ctx);
     }
@@ -59,46 +52,6 @@ export class DepositBankTask extends BaseTask {
       await ctx.refresh();
     } catch (err) {
       log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
-    }
-  }
-
-  async _autoEquipFromBank(ctx) {
-    const bankItems = await gameData.getBankItems(true);
-    const upgrades = gameData.findBankUpgrades(ctx, bankItems);
-
-    if (upgrades.length === 0) return;
-
-    for (const { slot, itemCode, scoreDelta } of upgrades) {
-      const currentCode = ctx.get()[`${slot}_slot`] || null;
-
-      if (ctx.inventoryFull()) {
-        log.info(`[${ctx.name}] Bank auto-equip: inventory full, skipping ${slot}`);
-        break;
-      }
-
-      log.info(`[${ctx.name}] Bank auto-equip: ${slot}: ${currentCode || '(empty)'} → ${itemCode} (+${scoreDelta.toFixed(1)})`);
-
-      // Withdraw upgrade from bank
-      await moveTo(ctx, BANK.x, BANK.y);
-      const wr = await api.withdrawBank([{ code: itemCode, quantity: 1 }], ctx.name);
-      await api.waitForCooldown(wr);
-      await ctx.refresh();
-
-      // Swap equipment and deposit old item back to bank
-      let unequipped;
-      try {
-        ({ unequipped } = await swapEquipment(ctx, slot, itemCode));
-      } catch {
-        log.info(`[${ctx.name}] Bank auto-equip: inventory full, can't unequip ${slot}`);
-        break;
-      }
-
-      if (unequipped) {
-        await moveTo(ctx, BANK.x, BANK.y);
-        const dr = await api.depositBank([{ code: unequipped, quantity: 1 }], ctx.name);
-        await api.waitForCooldown(dr);
-        await ctx.refresh();
-      }
     }
   }
 

@@ -1,6 +1,6 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce, restBeforeFight, parseFightResult } from '../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat } from '../helpers.mjs';
 import { MONSTERS, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 import { canBeatMonster } from '../services/combat-simulator.mjs';
 
@@ -12,6 +12,7 @@ export class FightTaskMonsterTask extends BaseTask {
   constructor({ priority = 20, maxLosses = MAX_LOSSES_DEFAULT } = {}) {
     super({ name: 'NPC Task', priority, loop: true });
     this.maxLosses = maxLosses;
+    this._lastOptimizedMonster = null;
   }
 
   canRun(ctx) {
@@ -31,6 +32,12 @@ export class FightTaskMonsterTask extends BaseTask {
     const c = ctx.get();
     const monster = c.task;
     const loc = MONSTERS[monster];
+
+    // Optimize gear when NPC task monster changes
+    if (this._lastOptimizedMonster !== monster) {
+      await equipForCombat(ctx, monster);
+      this._lastOptimizedMonster = monster;
+    }
 
     await moveTo(ctx, loc.x, loc.y);
     await restBeforeFight(ctx, monster);

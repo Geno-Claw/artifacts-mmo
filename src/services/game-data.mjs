@@ -188,55 +188,12 @@ export function scoreItem(item) {
   return score;
 }
 
-// --- Equipment upgrade finding ---
+// --- Equipment slots ---
 
 export const EQUIPMENT_SLOTS = [
   'weapon', 'shield', 'helmet', 'body_armor',
   'leg_armor', 'boots', 'ring1', 'ring2', 'amulet',
 ];
-
-/**
- * Find the best equipment upgrade a character can craft.
- * @param {CharacterContext} ctx
- * @param {object} opts
- * @param {string} [opts.craftSkill] - Restrict to items crafted with this skill
- * @returns {{ itemCode, slot, recipe, scoreDelta }|null}
- */
-export function findBestUpgrade(ctx, { craftSkill } = {}) {
-  const char = ctx.get();
-  let bestTarget = null;
-  let bestScoreDelta = 0;
-
-  for (const slot of EQUIPMENT_SLOTS) {
-    const currentCode = char[`${slot}_slot`] || null;
-    const currentItem = currentCode ? getItem(currentCode) : null;
-    const currentScore = currentItem ? scoreItem(currentItem) : 0;
-
-    const candidates = getEquipmentForSlot(slot, char.level);
-    for (const candidate of candidates) {
-      if (!candidate.craft) continue;
-      if (craftSkill && candidate.craft.skill !== craftSkill) continue;
-      if (ctx.hasItem(candidate.code)) continue;
-
-      const score = scoreItem(candidate);
-      const delta = score - currentScore;
-      if (delta <= bestScoreDelta) continue;
-
-      const skillLevel = ctx.skillLevel(candidate.craft.skill);
-      if (skillLevel < candidate.craft.level) continue;
-
-      bestTarget = {
-        itemCode: candidate.code,
-        slot,
-        recipe: candidate.craft,
-        scoreDelta: delta,
-      };
-      bestScoreDelta = delta;
-    }
-  }
-
-  return bestTarget;
-}
 
 // --- Bank items ---
 
@@ -298,39 +255,6 @@ const EQUIPMENT_TYPES = new Set([
 
 export function isEquipmentType(item) {
   return item != null && EQUIPMENT_TYPES.has(item.type);
-}
-
-/**
- * Find equipment upgrades available in bank for a character.
- * Returns array of { slot, itemCode, scoreDelta } sorted by biggest improvement.
- */
-export function findBankUpgrades(ctx, bankItems) {
-  const char = ctx.get();
-  const upgrades = [];
-
-  for (const slot of EQUIPMENT_SLOTS) {
-    const currentCode = char[`${slot}_slot`] || null;
-    const currentItem = currentCode ? getItem(currentCode) : null;
-    const currentScore = currentItem ? scoreItem(currentItem) : 0;
-
-    const candidates = getEquipmentForSlot(slot, char.level);
-    let bestItem = null;
-    let bestScore = currentScore;
-
-    for (const candidate of candidates) {
-      const score = scoreItem(candidate);
-      if (score <= bestScore || candidate.code === currentCode) continue;
-      if ((bankItems.get(candidate.code) || 0) < 1) continue;
-      bestItem = candidate;
-      bestScore = score;
-    }
-
-    if (bestItem) {
-      upgrades.push({ slot, itemCode: bestItem.code, scoreDelta: bestScore - currentScore });
-    }
-  }
-
-  return upgrades.sort((a, b) => b.scoreDelta - a.scoreDelta);
 }
 
 // --- Recipe chain resolution ---

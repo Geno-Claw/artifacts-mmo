@@ -13,12 +13,7 @@
           "type": "depositBank",
           "threshold": 0.8,
           "sellOnGE": true,
-          "depositGold": true,
-          "autoEquipOnBank": true
-        },
-        {
-          "type": "autoEquip",
-          "checkInterval": 300000
+          "depositGold": true
         },
         {
           "type": "skillRotation",
@@ -68,26 +63,21 @@
           "type": "depositBank",
           "threshold": 0.8,
           "sellOnGE": true,
-          "depositGold": true,
-          "autoEquipOnBank": true
-        },
-        {
-          "type": "autoEquip",
-          "checkInterval": 300000
+          "depositGold": true
         },
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 1,
-            "woodcutting": 1,
-            "fishing": 1,
-            "cooking": 1,
-            "alchemy": 2,
-            "weaponcrafting": 1,
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 0,
+            "alchemy": 0,
+            "weaponcrafting": 0,
             "gearcrafting": 1,
             "jewelrycrafting": 1,
-            "combat": 1,
-            "npc_task": 1
+            "combat": 3,
+            "npc_task": 2
           },
           "goals": {
             "mining": 20,
@@ -123,20 +113,15 @@
           "type": "depositBank",
           "threshold": 0.8,
           "sellOnGE": true,
-          "depositGold": true,
-          "autoEquipOnBank": true
-        },
-        {
-          "type": "autoEquip",
-          "checkInterval": 300000
+          "depositGold": true
         },
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 1,
-            "woodcutting": 1,
-            "fishing": 1,
-            "cooking": 0,
+            "mining": 2,
+            "woodcutting": 2,
+            "fishing": 2,
+            "cooking": 5,
             "alchemy": 1,
             "weaponcrafting": 0,
             "gearcrafting": 0,
@@ -178,12 +163,7 @@
           "type": "depositBank",
           "threshold": 0.8,
           "sellOnGE": true,
-          "depositGold": true,
-          "autoEquipOnBank": true
-        },
-        {
-          "type": "autoEquip",
-          "checkInterval": 300000
+          "depositGold": true
         },
         {
           "type": "skillRotation",
@@ -191,9 +171,9 @@
             "mining": 0,
             "woodcutting": 1,
             "fishing": 0,
-            "cooking": 1,
+            "cooking": 0,
             "alchemy": 0,
-            "weaponcrafting": 0,
+            "weaponcrafting": 1,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 0,
@@ -233,12 +213,7 @@
           "type": "depositBank",
           "threshold": 0.8,
           "sellOnGE": true,
-          "depositGold": true,
-          "autoEquipOnBank": true
-        },
-        {
-          "type": "autoEquip",
-          "checkInterval": 300000
+          "depositGold": true
         },
         {
           "type": "skillRotation",
@@ -249,8 +224,8 @@
             "cooking": 0,
             "alchemy": 0,
             "weaponcrafting": 0,
-            "gearcrafting": 0,
-            "jewelrycrafting": 0,
+            "gearcrafting": 1,
+            "jewelrycrafting": 1,
             "combat": 0,
             "npc_task": 0
           },

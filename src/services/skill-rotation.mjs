@@ -5,7 +5,7 @@
  */
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { canBeatMonster } from './combat-simulator.mjs';
+import { findBestCombatTarget } from './gear-optimizer.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -49,9 +49,8 @@ export class SkillRotation {
     this._planStepProgress = null; // tracks gathered quantities per step
     this._monster = null;       // monster object for combat
     this._monsterLoc = null;    // { x, y } for combat
+    this._combatLoadout = null; // optimal gear loadout for combat target
     this._bankChecked = false;  // whether bank withdrawal happened for current recipe
-    this._upgradeTarget = null; // { itemCode, slot, recipe, scoreDelta } for gear upgrades
-    this._isUpgrade = false;    // true when crafting an equipment upgrade
     this._isCollection = false; // true when crafting a missing collection item
   }
 
@@ -73,7 +72,7 @@ export class SkillRotation {
       const ok = await this._setupSkill(skill, ctx);
       if (ok) {
         this.currentSkill = skill;
-        this.goalTarget = (this._isUpgrade || this._isCollection) ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+        this.goalTarget = this._isCollection ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
         this.goalProgress = 0;
         return skill;
       }
@@ -97,7 +96,7 @@ export class SkillRotation {
       const ok = await this._setupSkill(skill, ctx);
       if (ok) {
         this.currentSkill = skill;
-        this.goalTarget = (this._isUpgrade || this._isCollection) ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+        this.goalTarget = this._isCollection ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
         this.goalProgress = 0;
         return skill;
       }
@@ -117,10 +116,9 @@ export class SkillRotation {
   get planStepProgress() { return this._planStepProgress; }
   get monster() { return this._monster; }
   get monsterLoc() { return this._monsterLoc; }
+  get combatLoadout() { return this._combatLoadout; }
   get bankChecked() { return this._bankChecked; }
   set bankChecked(v) { this._bankChecked = v; }
-  get upgradeTarget() { return this._upgradeTarget; }
-  get isUpgrade() { return this._isUpgrade; }
   get isCollection() { return this._isCollection; }
 
   // --- Internal ---
@@ -133,9 +131,8 @@ export class SkillRotation {
     this._planStepProgress = null;
     this._monster = null;
     this._monsterLoc = null;
+    this._combatLoadout = null;
     this._bankChecked = false;
-    this._upgradeTarget = null;
-    this._isUpgrade = false;
     this._isCollection = false;
   }
 
@@ -182,34 +179,18 @@ export class SkillRotation {
   async _setupCrafting(skill, ctx) {
     const level = ctx.skillLevel(skill);
 
-    // Tier 1: Equipment upgrade
-    const upgrade = gameData.findBestUpgrade(ctx, { craftSkill: skill });
-    if (upgrade) {
-      const plan = gameData.resolveRecipeChain(upgrade.recipe);
-      if (plan && plan.length > 0) {
-        this._upgradeTarget = upgrade;
-        this._isUpgrade = true;
-        this._recipe = gameData.getItem(upgrade.itemCode);
-        this._productionPlan = plan;
-        this._planStepProgress = new Map();
-        this._bankChecked = false;
-        log.info(`[${ctx.name}] Rotation: ${skill} → UPGRADE ${upgrade.itemCode} for ${upgrade.slot} (+${upgrade.scoreDelta.toFixed(1)} score, ${plan.length} steps)`);
-        return true;
-      }
-    }
-
-    // Tier 2: Collection — craft 1 of each missing item
+    // Tier 1: Collection — craft 1 of each missing item
     if (this.craftCollection[skill]) {
       const result = await this._setupCollectionCraft(skill, level, ctx);
       if (result) return true;
     }
 
-    // Tier 3: XP grinding
+    // Tier 2: XP grinding
     return this._setupXpGrind(skill, level, ctx);
   }
 
   /**
-   * Tier 2: Find a craftable item missing from bank and set up crafting it.
+   * Tier 1: Find a craftable item missing from bank and set up crafting it.
    * Picks highest craft.level first for maximum XP while filling the collection.
    * Skips blacklisted items and items with unfulfillable bank-only dependencies.
    */
@@ -240,9 +221,7 @@ export class SkillRotation {
       }
 
       this._recipe = item;
-      this._isUpgrade = false;
       this._isCollection = true;
-      this._upgradeTarget = null;
       this._productionPlan = plan;
       this._planStepProgress = new Map();
       this._bankChecked = false;
@@ -255,7 +234,7 @@ export class SkillRotation {
   }
 
   /**
-   * Tier 3: Pick the best recipe for XP grinding.
+   * Tier 2: Pick the best recipe for XP grinding.
    * Sorts by craft.level DESC (XP proxy), with bank availability as tiebreaker.
    * Skips blacklisted items and recipes with unmet bank-only dependencies.
    */
@@ -293,9 +272,7 @@ export class SkillRotation {
 
     const best = scored[0];
     this._recipe = best.recipe;
-    this._isUpgrade = false;
     this._isCollection = false;
-    this._upgradeTarget = null;
     this._productionPlan = best.plan;
     this._planStepProgress = new Map();
     this._bankChecked = false;
@@ -326,22 +303,13 @@ export class SkillRotation {
   }
 
   async _setupCombat(ctx) {
-    const level = ctx.get().level;
-    const monsters = gameData.findMonstersByLevel(level);
-    if (monsters.length === 0) return false;
+    const target = await findBestCombatTarget(ctx);
+    if (!target) return false;
 
-    // Pick the highest-level monster we can reliably beat
-    for (const m of monsters) {
-      if (!canBeatMonster(ctx, m.code)) continue;
-      const loc = await gameData.getMonsterLocation(m.code);
-      if (!loc) continue;
-      this._monster = m;
-      this._monsterLoc = loc;
-      log.info(`[${ctx.name}] Rotation: combat → ${m.code} (lv${m.level})`);
-      return true;
-    }
-
-    log.info(`[${ctx.name}] Rotation: no beatable monster found`);
-    return false;
+    this._monster = target.monster;
+    this._monsterLoc = target.location;
+    this._combatLoadout = target.loadout;
+    log.info(`[${ctx.name}] Rotation: combat → ${target.monsterCode} (lv${target.monster.level})`);
+    return true;
   }
 }

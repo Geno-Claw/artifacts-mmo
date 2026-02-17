@@ -2,16 +2,15 @@
  * Skill Rotation Task — randomly cycles between gathering, crafting,
  * combat, and NPC tasks with goal-based durations.
  *
- * Runs as a low-priority loop task. Background tasks (rest, bank,
- * auto-equip) interrupt via higher priority in the scheduler.
+ * Runs as a low-priority loop task. Background tasks (rest, bank)
+ * interrupt via higher priority in the scheduler.
  */
 import { BaseTask } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import { SkillRotation } from '../services/skill-rotation.mjs';
-import { canBeatMonster } from '../services/combat-simulator.mjs';
-import { moveTo, gatherOnce, fightOnce, restBeforeFight, swapEquipment, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded } from '../helpers.mjs';
+import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
@@ -131,6 +130,9 @@ export class SkillRotationTask extends BaseTask {
       await this.rotation.forceRotate(ctx);
       return true;
     }
+
+    // Optimize gear for target monster (cached — only runs once per target)
+    await equipForCombat(ctx, this.rotation.monster.code);
 
     await moveTo(ctx, loc.x, loc.y);
     await restBeforeFight(ctx, this.rotation.monster.code);
@@ -268,10 +270,6 @@ export class SkillRotationTask extends BaseTask {
           this.rotation.bankChecked = false;
           this._currentBatch = 1;
 
-          // Auto-equip if this was an upgrade craft
-          if (this.rotation.isUpgrade && this.rotation.upgradeTarget) {
-            await this._equipUpgrade(ctx, this.rotation.upgradeTarget);
-          }
         }
         return true;
       }
@@ -319,13 +317,6 @@ export class SkillRotationTask extends BaseTask {
     }
   }
 
-  // --- Equip upgrade after crafting ---
-
-  async _equipUpgrade(ctx, upgradeTarget) {
-    const { itemCode, slot } = upgradeTarget;
-    await swapEquipment(ctx, slot, itemCode);
-  }
-
   // --- NPC Tasks ---
 
   async _executeNpcTask(ctx) {
@@ -369,14 +360,16 @@ export class SkillRotationTask extends BaseTask {
       return true;
     }
 
-    if (!canBeatMonster(ctx, monster)) {
-      log.warn(`[${ctx.name}] NPC Task: simulation predicts loss vs ${monster}, skipping`);
+    if (ctx.consecutiveLosses(monster) >= this.maxLosses) {
+      log.warn(`[${ctx.name}] NPC Task: too many losses vs ${monster}, skipping`);
       this.rotation.goalProgress = this.rotation.goalTarget;
       return true;
     }
 
-    if (ctx.consecutiveLosses(monster) >= this.maxLosses) {
-      log.warn(`[${ctx.name}] NPC Task: too many losses vs ${monster}, skipping`);
+    // Optimize gear for NPC task monster — also validates fight is winnable
+    const { simResult } = await equipForCombat(ctx, monster);
+    if (!simResult || !simResult.win || simResult.hpLostPercent > 80) {
+      log.warn(`[${ctx.name}] NPC Task: simulation predicts loss vs ${monster} even with optimal gear, skipping`);
       this.rotation.goalProgress = this.rotation.goalTarget;
       return true;
     }

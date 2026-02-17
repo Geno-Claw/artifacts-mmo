@@ -1,6 +1,6 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce, restBeforeFight, parseFightResult } from '../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
 import { canBeatMonster } from '../services/combat-simulator.mjs';
 
@@ -18,6 +18,7 @@ export class FightMonstersTask extends BaseTask {
     super({ name: `Fight ${monster}`, priority, loop: true });
     this.monster = monster;
     this.loc = loc;
+    this._gearOptimized = false;
   }
 
   canRun(ctx) {
@@ -28,6 +29,12 @@ export class FightMonstersTask extends BaseTask {
   }
 
   async execute(ctx) {
+    // Optimize gear once when combat loop starts (not every fight)
+    if (!this._gearOptimized) {
+      await equipForCombat(ctx, this.monster);
+      this._gearOptimized = true;
+    }
+
     await moveTo(ctx, this.loc.x, this.loc.y);
     await restBeforeFight(ctx, this.monster);
 
