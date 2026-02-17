@@ -7,7 +7,7 @@ import * as api from './api.mjs';
 import * as log from './log.mjs';
 import * as gameData from './services/game-data.mjs';
 import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
-import { hpNeededForFight } from './services/combat-simulator.mjs';
+import { hpNeededForFight, simulateCombat } from './services/combat-simulator.mjs';
 import { optimizeForMonster } from './services/gear-optimizer.mjs';
 import { BANK } from './data/locations.mjs';
 
@@ -49,6 +49,32 @@ function findHealingFood(ctx) {
   }
 
   // Eat the most potent food first
+  foods.sort((a, b) => b.hpRestore - a.hpRestore);
+  return foods;
+}
+
+/** Find consumable food items in the bank that restore HP. */
+function findBankFood(bankItems) {
+  const foods = [];
+  for (const [code, quantity] of bankItems) {
+    if (quantity <= 0) continue;
+
+    const item = gameData.getItem(code);
+    if (!item || item.type !== 'consumable') continue;
+    if (!item.effects || item.effects.length === 0) continue;
+
+    let hpRestore = 0;
+    for (const effect of item.effects) {
+      const name = effect.name || effect.code || '';
+      if (name === 'hp' || name === 'heal' || name === 'restore' || name === 'restore_hp') {
+        hpRestore += (effect.value || 0);
+      }
+    }
+    if (hpRestore <= 0) continue;
+
+    foods.push({ code, quantity, hpRestore });
+  }
+
   foods.sort((a, b) => b.hpRestore - a.hpRestore);
   return foods;
 }
@@ -107,6 +133,103 @@ export async function restBeforeFight(ctx, monsterCode) {
   return true;
 }
 
+/**
+ * Withdraw enough healing food from the bank for N fights against a monster.
+ * Uses the combat simulator to calculate exact total healing needed, then
+ * withdraws the minimum food to cover it. If the bank doesn't have enough,
+ * takes what's available — restBeforeFight() handles the remainder via rest API.
+ *
+ * Called once at the start of a combat task, not every fight.
+ *
+ * @param {import('./context.mjs').CharacterContext} ctx
+ * @param {string} monsterCode
+ * @param {number} numFights — total fights planned
+ * @returns {Promise<boolean>} true if ready (even if no food), false if unbeatable
+ */
+export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
+  if (numFights <= 0) return true;
+
+  const monster = gameData.getMonster(monsterCode);
+  if (!monster) return false;
+
+  const charStats = ctx.get();
+  const result = simulateCombat(charStats, monster);
+  if (!result.win) return false;
+
+  const damageTaken = charStats.max_hp - result.remainingHp;
+  const totalHealingNeeded = Math.max(0, damageTaken * numFights - (charStats.max_hp - 1));
+
+  if (totalHealingNeeded <= 0) {
+    log.info(`[${ctx.name}] Food: no healing needed for ${numFights} fights vs ${monsterCode}`);
+    return true;
+  }
+
+  // Subtract healing from food already in inventory
+  const inventoryFoods = findHealingFood(ctx);
+  let inventoryHealing = 0;
+  for (const food of inventoryFoods) {
+    inventoryHealing += food.hpRestore * food.quantity;
+  }
+
+  const healingDeficit = totalHealingNeeded - inventoryHealing;
+  if (healingDeficit <= 0) {
+    log.info(`[${ctx.name}] Food: inventory already covers ${numFights} fights vs ${monsterCode}`);
+    return true;
+  }
+
+  // Find food in bank
+  const bank = await gameData.getBankItems(true);
+  const bankFoods = findBankFood(bank);
+  if (bankFoods.length === 0) {
+    log.info(`[${ctx.name}] Food: no food in bank, will rely on rest API`);
+    return true;
+  }
+
+  // Greedily pick most potent food first (minimizes item count)
+  const toWithdraw = [];
+  let remainingHealing = healingDeficit;
+
+  for (const food of bankFoods) {
+    if (remainingHealing <= 0) break;
+    const countNeeded = Math.ceil(remainingHealing / food.hpRestore);
+    const count = Math.min(countNeeded, food.quantity);
+    if (count <= 0) continue;
+    toWithdraw.push({ code: food.code, quantity: count });
+    remainingHealing -= count * food.hpRestore;
+  }
+
+  if (toWithdraw.length === 0) return true;
+
+  // Cap by available inventory space
+  let totalCount = toWithdraw.reduce((sum, w) => sum + w.quantity, 0);
+  const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+  if (totalCount > space && space > 0) {
+    const scale = space / totalCount;
+    for (const w of toWithdraw) {
+      w.quantity = Math.max(1, Math.floor(w.quantity * scale));
+    }
+  } else if (space <= 0) {
+    log.info(`[${ctx.name}] Food: no inventory space for food`);
+    return true;
+  }
+
+  // Withdraw from bank
+  await moveTo(ctx, BANK.x, BANK.y);
+  for (const w of toWithdraw) {
+    if (w.quantity <= 0) continue;
+    try {
+      log.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`);
+      const wr = await api.withdrawBank([{ code: w.code, quantity: w.quantity }], ctx.name);
+      await api.waitForCooldown(wr);
+      await ctx.refresh();
+    } catch (err) {
+      log.warn(`[${ctx.name}] Food: could not withdraw ${w.code}: ${err.message}`);
+    }
+  }
+
+  return true;
+}
+
 /** Single fight. Returns the full action result. */
 export async function fightOnce(ctx) {
   const result = await api.fight(ctx.name);
@@ -141,10 +264,24 @@ export async function swapEquipment(ctx, slot, newItemCode) {
     await ctx.refresh();
   }
 
-  log.info(`[${ctx.name}] Equipping ${newItemCode} in ${slot}`);
-  const er = await api.equipItem(slot, newItemCode, ctx.name);
-  await api.waitForCooldown(er);
-  await ctx.refresh();
+  try {
+    log.info(`[${ctx.name}] Equipping ${newItemCode} in ${slot}`);
+    const er = await api.equipItem(slot, newItemCode, ctx.name);
+    await api.waitForCooldown(er);
+    await ctx.refresh();
+  } catch (err) {
+    if (currentCode) {
+      log.warn(`[${ctx.name}] Equip ${newItemCode} failed, rolling back to ${currentCode}`);
+      try {
+        const rr = await api.equipItem(slot, currentCode, ctx.name);
+        await api.waitForCooldown(rr);
+        await ctx.refresh();
+      } catch (rollbackErr) {
+        log.warn(`[${ctx.name}] Rollback failed for ${slot}: ${rollbackErr.message}`);
+      }
+    }
+    throw err;
+  }
 
   return { unequipped: currentCode };
 }
@@ -336,12 +473,14 @@ export async function equipForCombat(ctx, monsterCode) {
   }
 
   // Perform equipment swaps
+  let swapsFailed = false;
   for (const { slot, currentCode, targetCode } of changes) {
     if (targetCode === null) {
       // Unequip only
       if (currentCode) {
         if (ctx.inventoryFull()) {
           log.warn(`[${ctx.name}] Inventory full, cannot unequip ${slot}`);
+          swapsFailed = true;
           continue;
         }
         log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
@@ -350,10 +489,17 @@ export async function equipForCombat(ctx, monsterCode) {
         await ctx.refresh();
       }
     } else {
+      // Verify target item is available before attempting swap
+      if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
+        log.warn(`[${ctx.name}] Skipping ${slot} swap: ${targetCode} not in inventory (withdrawal failed?)`);
+        swapsFailed = true;
+        continue;
+      }
       try {
         await swapEquipment(ctx, slot, targetCode);
       } catch (err) {
         log.warn(`[${ctx.name}] Gear swap failed for ${slot}: ${err.message}`);
+        swapsFailed = true;
       }
     }
   }
@@ -378,7 +524,11 @@ export async function equipForCombat(ctx, monsterCode) {
     }
   }
 
-  _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
+  if (!swapsFailed) {
+    _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
+  } else {
+    _gearCache.delete(cacheKey);
+  }
   return { changed: true, simResult };
 }
 

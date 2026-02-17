@@ -10,7 +10,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import { SkillRotation } from '../services/skill-rotation.mjs';
-import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat } from '../helpers.mjs';
+import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
@@ -22,6 +22,7 @@ export class SkillRotationTask extends BaseTask {
     this.rotation = new SkillRotation(rotationCfg);
     this.maxLosses = maxLosses;
     this._currentBatch = 1;
+    this._foodWithdrawn = false;
   }
 
   canRun(ctx) {
@@ -41,6 +42,7 @@ export class SkillRotationTask extends BaseTask {
         log.warn(`[${ctx.name}] Rotation: no viable skills, idling`);
         return false;
       }
+      this._foodWithdrawn = false;
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
     }
 
@@ -137,6 +139,13 @@ export class SkillRotationTask extends BaseTask {
 
     // Optimize gear for target monster (cached — only runs once per target)
     await equipForCombat(ctx, this.rotation.monster.code);
+
+    // Withdraw food from bank for all remaining fights (once per combat goal)
+    if (!this._foodWithdrawn) {
+      const remaining = this.rotation.goalTarget - this.rotation.goalProgress;
+      await withdrawFoodForFights(ctx, this.rotation.monster.code, remaining);
+      this._foodWithdrawn = true;
+    }
 
     await moveTo(ctx, loc.x, loc.y);
     await restBeforeFight(ctx, this.rotation.monster.code);
@@ -384,6 +393,13 @@ export class SkillRotationTask extends BaseTask {
       log.warn(`[${ctx.name}] NPC Task: simulation predicts loss vs ${monster} even with optimal gear, skipping`);
       this.rotation.goalProgress = this.rotation.goalTarget;
       return true;
+    }
+
+    // Withdraw food from bank for all remaining task fights (once per NPC task)
+    if (!this._foodWithdrawn) {
+      const remaining = c.task_total - c.task_progress;
+      await withdrawFoodForFights(ctx, monster, remaining);
+      this._foodWithdrawn = true;
     }
 
     await moveTo(ctx, monsterLoc.x, monsterLoc.y);

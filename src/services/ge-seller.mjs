@@ -47,12 +47,39 @@ export function getSellRules() {
 // --- Analysis ---
 
 /**
+ * Build a Map<itemCode, quantity> of all items held by characters
+ * (inventories + equipped slots). Does NOT include bank items.
+ * @param {Array} characters - array from api.getMyCharacters()
+ * @returns {Map<string, number>}
+ */
+function buildCharacterItemCounts(characters) {
+  const counts = new Map();
+
+  for (const char of characters) {
+    for (const slot of (char.inventory || [])) {
+      if (!slot.code) continue;
+      counts.set(slot.code, (counts.get(slot.code) || 0) + slot.quantity);
+    }
+
+    for (const slot of gameData.EQUIPMENT_SLOTS) {
+      const code = char[`${slot}_slot`] || null;
+      if (code) {
+        counts.set(code, (counts.get(code) || 0) + 1);
+      }
+    }
+  }
+
+  return counts;
+}
+
+/**
  * Determine which items to sell from bank contents.
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {Map<string, number>} bankItems - code → quantity
+ * @param {Map<string, number>} charItemCounts - code → quantity across all characters
  * @returns {Array<{ code: string, quantity: number, reason: string }>}
  */
-export function analyzeSellCandidates(ctx, bankItems) {
+export function analyzeSellCandidates(ctx, bankItems, charItemCounts = new Map()) {
   if (!sellRules) return [];
 
   const candidates = [];
@@ -62,19 +89,26 @@ export function analyzeSellCandidates(ctx, bankItems) {
   if (sellRules.sellDuplicateEquipment) {
     const keep = sellRules.keepPerEquipmentCode ?? 1;
 
-    for (const [code, qty] of bankItems.entries()) {
+    for (const [code, bankQty] of bankItems.entries()) {
       if (neverSellSet.has(code)) continue;
 
       const item = gameData.getItem(code);
       if (!item || !gameData.isEquipmentType(item)) continue;
 
-      const surplus = qty - keep;
+      // Total owned = bank + all character inventories + all character equipped
+      const charQty = charItemCounts.get(code) || 0;
+      const totalOwned = bankQty + charQty;
+      const surplus = totalOwned - keep;
       if (surplus <= 0) continue;
+
+      // Can only sell what is actually in the bank
+      const sellQty = Math.min(surplus, bankQty);
+      if (sellQty <= 0) continue;
 
       candidates.push({
         code,
-        quantity: surplus,
-        reason: `duplicate equipment (keeping ${keep})`,
+        quantity: sellQty,
+        reason: `duplicate equipment (keeping ${keep}, total owned: ${totalOwned})`,
       });
     }
   }
@@ -208,7 +242,11 @@ export async function executeSellFlow(ctx) {
     // Force-refresh bank inside the lock to get current state
     const bankItems = await gameData.getBankItems(true);
 
-    const candidates = analyzeSellCandidates(ctx, bankItems);
+    // Fetch all character data to count items outside the bank
+    const allCharacters = await api.getMyCharacters();
+    const charItemCounts = buildCharacterItemCounts(allCharacters);
+
+    const candidates = analyzeSellCandidates(ctx, bankItems, charItemCounts);
     if (candidates.length === 0) {
       log.info(`[${ctx.name}] GE: no items to sell`);
       return 0;
