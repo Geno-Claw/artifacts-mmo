@@ -1,7 +1,7 @@
 import { BaseTask } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import { moveTo } from '../helpers.mjs';
+import { moveTo, swapEquipment } from '../helpers.mjs';
 import * as gameData from '../services/game-data.mjs';
 
 /**
@@ -74,17 +74,7 @@ export class CraftGearTask extends BaseTask {
     log.info(`[${ctx.name}] Crafted ${itemCode}!`);
 
     // Equip the crafted item so _findCraftTarget won't re-target it
-    const currentEquip = ctx.get()[`${slot}_slot`];
-    if (currentEquip) {
-      log.info(`[${ctx.name}] Unequipping ${currentEquip} from ${slot}`);
-      const ur = await api.unequipItem(slot, ctx.name);
-      await api.waitForCooldown(ur);
-      await ctx.refresh();
-    }
-    log.info(`[${ctx.name}] Equipping ${itemCode} in ${slot}`);
-    const er = await api.equipItem(slot, itemCode, ctx.name);
-    await api.waitForCooldown(er);
-    await ctx.refresh();
+    await swapEquipment(ctx, slot, itemCode);
 
     ctx.craftTarget = null; // Re-evaluate on next cycle
   }

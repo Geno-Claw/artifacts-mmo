@@ -1,7 +1,7 @@
 import { BaseTask } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import { moveTo, gatherOnce, withdrawItem } from '../helpers.mjs';
+import { moveTo, gatherOnce, withdrawPlanFromBank, rawMaterialNeeded } from '../helpers.mjs';
 import * as gameData from '../services/game-data.mjs';
 
 /**
@@ -47,32 +47,8 @@ export class GatherMaterialsTask extends BaseTask {
     return this._currentStep !== null;
   }
 
-  /**
-   * Dynamically compute how much of a raw material is still needed,
-   * accounting for intermediates already crafted.
-   */
   _rawMaterialNeeded(ctx, itemCode) {
-    let total = 0;
-    let usedByCraft = false;
-
-    for (const step of this._plan) {
-      if (step.type !== 'craft') continue;
-      for (const mat of step.recipe.items) {
-        if (mat.code !== itemCode) continue;
-        usedByCraft = true;
-        const remaining = Math.max(0, step.quantity - ctx.itemCount(step.itemCode));
-        total += remaining * mat.quantity;
-      }
-    }
-
-    // If not consumed by any craft step in the plan, it's a direct material
-    // for the final recipe — use the plan's original quantity
-    if (!usedByCraft) {
-      const gatherStep = this._plan.find(s => s.type === 'gather' && s.itemCode === itemCode);
-      return gatherStep ? gatherStep.quantity : 0;
-    }
-
-    return total;
+    return rawMaterialNeeded(ctx, this._plan, itemCode);
   }
 
   _findNextStep(ctx) {
@@ -115,29 +91,7 @@ export class GatherMaterialsTask extends BaseTask {
   }
 
   async _withdrawFromBank(ctx) {
-    const bank = await gameData.getBankItems(true);
-    const withdrawn = [];
-
-    // Check craft items first (higher value — may skip gather+craft steps)
-    const stepsReversed = [...this._plan].reverse();
-    for (const step of stepsReversed) {
-      if (ctx.inventoryFull()) break;
-
-      const have = ctx.itemCount(step.itemCode);
-      const needed = step.quantity - have;
-      if (needed <= 0) continue;
-
-      const inBank = bank.get(step.itemCode) || 0;
-      if (inBank <= 0) continue;
-
-      const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-      const toWithdraw = Math.min(needed, inBank, space);
-      if (toWithdraw <= 0) continue;
-
-      await withdrawItem(ctx, step.itemCode, toWithdraw);
-      withdrawn.push(`${step.itemCode} x${toWithdraw}`);
-    }
-
+    const withdrawn = await withdrawPlanFromBank(ctx, this._plan);
     if (withdrawn.length > 0) {
       log.info(`[${ctx.name}] Withdrew from bank: ${withdrawn.join(', ')}`);
     }

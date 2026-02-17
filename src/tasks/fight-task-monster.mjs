@@ -1,7 +1,7 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce, restBeforeFight } from '../helpers.mjs';
-import { MONSTERS } from '../data/locations.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult } from '../helpers.mjs';
+import { MONSTERS, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 import { canBeatMonster } from '../services/combat-simulator.mjs';
 
 /**
@@ -9,7 +9,7 @@ import { canBeatMonster } from '../services/combat-simulator.mjs';
  * Reads the target dynamically from character state each iteration.
  */
 export class FightTaskMonsterTask extends BaseTask {
-  constructor({ priority = 20, maxLosses = 2 } = {}) {
+  constructor({ priority = 20, maxLosses = MAX_LOSSES_DEFAULT } = {}) {
     super({ name: 'NPC Task', priority, loop: true });
     this.maxLosses = maxLosses;
   }
@@ -36,19 +36,16 @@ export class FightTaskMonsterTask extends BaseTask {
     await restBeforeFight(ctx, monster);
 
     const result = await fightOnce(ctx);
-    const f = result.fight;
-    const cr = f.characters?.find(ch => ch.character_name === ctx.name)
-            || f.characters?.[0] || {};
+    const r = parseFightResult(result, ctx);
 
-    if (f.result === 'win') {
+    if (r.win) {
       ctx.clearLosses(monster);
-      const drops = cr.drops?.map(d => `${d.code}x${d.quantity}`).join(', ') || '';
       const fresh = ctx.get();
       const task = ` [task: ${fresh.task_progress}/${fresh.task_total}]`;
-      log.info(`[${ctx.name}] ${monster}: WIN ${f.turns}t | +${cr.xp || 0}xp +${cr.gold || 0}g${drops ? ' | ' + drops : ''} (${cr.final_hp}hp)${task}`);
+      log.info(`[${ctx.name}] ${monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${r.finalHp}hp)${task}`);
     } else {
       ctx.recordLoss(monster);
-      log.warn(`[${ctx.name}] ${monster}: LOSS ${f.turns}t (${ctx.consecutiveLosses(monster)}/${this.maxLosses} losses)`);
+      log.warn(`[${ctx.name}] ${monster}: LOSS ${r.turns}t (${ctx.consecutiveLosses(monster)}/${this.maxLosses} losses)`);
       return false;
     }
 

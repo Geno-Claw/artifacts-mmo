@@ -11,17 +11,18 @@ import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import { SkillRotation } from '../services/skill-rotation.mjs';
 import { canBeatMonster } from '../services/combat-simulator.mjs';
-import { moveTo, gatherOnce, fightOnce, restBeforeFight, withdrawItem } from '../helpers.mjs';
-import { TASKS_MASTER } from '../data/locations.mjs';
+import { moveTo, gatherOnce, fightOnce, restBeforeFight, swapEquipment, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded } from '../helpers.mjs';
+import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
 
 export class SkillRotationTask extends BaseTask {
-  constructor({ priority = 5, maxLosses = 2, ...rotationCfg } = {}) {
+  constructor({ priority = 5, maxLosses = MAX_LOSSES_DEFAULT, ...rotationCfg } = {}) {
     super({ name: 'Skill Rotation', priority, loop: true });
     this.rotation = new SkillRotation(rotationCfg);
     this.maxLosses = maxLosses;
+    this._currentBatch = 1;
   }
 
   canRun(ctx) {
@@ -135,21 +136,18 @@ export class SkillRotationTask extends BaseTask {
     await restBeforeFight(ctx, this.rotation.monster.code);
 
     const result = await fightOnce(ctx);
-    const f = result.fight;
-    const cr = f.characters?.find(ch => ch.character_name === ctx.name)
-            || f.characters?.[0] || {};
+    const r = parseFightResult(result, ctx);
     const monster = this.rotation.monster;
 
-    if (f.result === 'win') {
+    if (r.win) {
       ctx.clearLosses(monster.code);
       this.rotation.recordProgress(1);
-      const drops = cr.drops?.map(d => `${d.code}x${d.quantity}`).join(', ') || '';
-      log.info(`[${ctx.name}] ${monster.code}: WIN ${f.turns}t | +${cr.xp || 0}xp +${cr.gold || 0}g${drops ? ' | ' + drops : ''} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+      log.info(`[${ctx.name}] ${monster.code}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
       return !ctx.inventoryFull();
     } else {
       ctx.recordLoss(monster.code);
       const losses = ctx.consecutiveLosses(monster.code);
-      log.warn(`[${ctx.name}] ${monster.code}: LOSS ${f.turns}t (${losses} losses)`);
+      log.warn(`[${ctx.name}] ${monster.code}: LOSS ${r.turns}t (${losses} losses)`);
 
       if (losses >= this.maxLosses) {
         log.info(`[${ctx.name}] Too many losses, rotating to different skill`);
@@ -175,10 +173,11 @@ export class SkillRotationTask extends BaseTask {
       plan.push({ type: 'craft', itemCode: recipe.code, recipe: recipe.craft, quantity: 1 });
     }
 
-    // Withdraw matching ingredients from bank once per recipe
+    // Withdraw matching ingredients from bank (scaled for batch)
     if (!this.rotation.bankChecked) {
       this.rotation.bankChecked = true;
-      await this._withdrawFromBank(ctx);
+      this._currentBatch = this._batchSize(ctx);
+      await this._withdrawFromBank(ctx, this._currentBatch);
     }
 
     // Walk through production plan steps
@@ -188,7 +187,7 @@ export class SkillRotationTask extends BaseTask {
       if (step.type === 'bank') {
         // Must come from bank (monster drops, etc.) — already withdrawn above
         const have = ctx.itemCount(step.itemCode);
-        if (have >= step.quantity) continue;
+        if (have >= step.quantity) continue; // have enough for at least 1 craft
         // Don't have enough and can't gather it — skip this recipe
         log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`);
         await this.rotation.forceRotate(ctx);
@@ -196,8 +195,8 @@ export class SkillRotationTask extends BaseTask {
       }
 
       if (step.type === 'gather') {
-        // Check if we already have enough (accounting for intermediates already crafted)
-        const needed = this._rawMaterialNeeded(ctx, plan, step.itemCode);
+        // Check if we already have enough (accounting for batch + intermediates)
+        const needed = rawMaterialNeeded(ctx, plan, step.itemCode, this._currentBatch);
         if (ctx.itemCount(step.itemCode) >= needed) continue;
 
         // Gather one batch from the resource
@@ -216,17 +215,33 @@ export class SkillRotationTask extends BaseTask {
       }
 
       if (step.type === 'craft') {
-        // Skip intermediates we already have enough of (final step is goal-driven)
-        if (i < plan.length - 1 && ctx.itemCount(step.itemCode) >= step.quantity) continue;
+        // Skip intermediates we already have enough of (scaled by batch)
+        if (i < plan.length - 1 && ctx.itemCount(step.itemCode) >= step.quantity * this._currentBatch) continue;
 
-        // Check if we have all ingredients for this intermediate/final craft
+        // Calculate how many we can craft with available materials
         const craftItem = gameData.getItem(step.itemCode);
         if (!craftItem?.craft) continue;
 
-        const haveAll = craftItem.craft.items.every(
-          mat => ctx.itemCount(mat.code) >= mat.quantity
-        );
-        if (!haveAll) continue; // need to gather more, loop will handle it
+        let craftQty;
+        if (i === plan.length - 1) {
+          // Final step: craft as many as materials allow, up to remaining goal
+          craftQty = Math.min(
+            this.rotation.goalTarget - this.rotation.goalProgress,
+            ...craftItem.craft.items.map(mat =>
+              Math.floor(ctx.itemCount(mat.code) / mat.quantity)
+            )
+          );
+        } else {
+          // Intermediate step: craft enough for the batch
+          const neededQty = step.quantity * this._currentBatch - ctx.itemCount(step.itemCode);
+          craftQty = Math.min(
+            neededQty,
+            ...craftItem.craft.items.map(mat =>
+              Math.floor(ctx.itemCount(mat.code) / mat.quantity)
+            )
+          );
+        }
+        if (craftQty <= 0) continue; // need to gather more, loop will handle it
 
         // Craft at the workshop
         const workshops = await gameData.getWorkshops();
@@ -238,19 +253,20 @@ export class SkillRotationTask extends BaseTask {
         }
 
         await moveTo(ctx, ws.x, ws.y);
-        const result = await api.craft(step.itemCode, 1, ctx.name);
+        const result = await api.craft(step.itemCode, craftQty, ctx.name);
         await api.waitForCooldown(result);
         await ctx.refresh();
 
-        log.info(`[${ctx.name}] ${this.rotation.currentSkill}: crafted ${step.itemCode}`);
+        log.info(`[${ctx.name}] ${this.rotation.currentSkill}: crafted ${step.itemCode} x${craftQty}`);
 
         // If this is the final step, record progress
         if (i === plan.length - 1) {
-          this.rotation.recordProgress(1);
-          log.info(`[${ctx.name}] ${this.rotation.currentSkill}: ${recipe.code} complete (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+          this.rotation.recordProgress(craftQty);
+          log.info(`[${ctx.name}] ${this.rotation.currentSkill}: ${recipe.code} x${craftQty} complete (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
 
-          // Allow re-withdrawal from bank for next iteration
+          // Allow re-withdrawal from bank for next batch
           this.rotation.bankChecked = false;
+          this._currentBatch = 1;
 
           // Auto-equip if this was an upgrade craft
           if (this.rotation.isUpgrade && this.rotation.upgradeTarget) {
@@ -266,65 +282,38 @@ export class SkillRotationTask extends BaseTask {
     return !ctx.inventoryFull();
   }
 
-  // --- Dynamic gather quantity (accounts for already-crafted intermediates) ---
+  // --- Batch size calculation ---
 
-  _rawMaterialNeeded(ctx, plan, itemCode) {
-    let total = 0;
-    let usedByCraft = false;
+  _batchSize(ctx) {
+    const remaining = this.rotation.goalTarget - this.rotation.goalProgress;
+    if (remaining <= 1) return 1;
 
+    const plan = this.rotation.productionPlan;
+    if (!plan) return 1;
+
+    // Sum material quantities per single craft (bank + gather steps)
+    let materialsPerCraft = 0;
     for (const step of plan) {
-      if (step.type !== 'craft') continue;
-      for (const mat of step.recipe.items) {
-        if (mat.code !== itemCode) continue;
-        usedByCraft = true;
-        // Final step is goal-driven — always need 1 batch of materials
-        const isFinalStep = step === plan[plan.length - 1];
-        const remaining = isFinalStep ? 1 : Math.max(0, step.quantity - ctx.itemCount(step.itemCode));
-        total += remaining * mat.quantity;
+      if (step.type === 'bank' || step.type === 'gather') {
+        materialsPerCraft += step.quantity;
       }
     }
+    if (materialsPerCraft === 0) materialsPerCraft = 1;
 
-    if (!usedByCraft) {
-      const gatherStep = plan.find(s => s.type === 'gather' && s.itemCode === itemCode);
-      return gatherStep ? gatherStep.quantity : 0;
-    }
+    // Cap by available inventory space
+    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+    const spaceLimit = Math.floor(space / materialsPerCraft);
 
-    return total;
+    return Math.max(1, Math.min(remaining, spaceLimit));
   }
 
   // --- Bank withdrawal for crafting ---
 
-  async _withdrawFromBank(ctx) {
+  async _withdrawFromBank(ctx, batchSize = 1) {
     const plan = this.rotation.productionPlan;
     if (!plan) return;
 
-    const bank = await gameData.getBankItems(true);
-    const withdrawn = [];
-
-    // Check steps in reverse (crafted intermediates first — can skip gather steps)
-    const stepsReversed = [...plan].reverse();
-    for (const step of stepsReversed) {
-      if (ctx.inventoryFull()) break;
-
-      const have = ctx.itemCount(step.itemCode);
-      const needed = step.quantity - have;
-      if (needed <= 0) continue;
-
-      const inBank = bank.get(step.itemCode) || 0;
-      if (inBank <= 0) continue;
-
-      const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-      const toWithdraw = Math.min(needed, inBank, space);
-      if (toWithdraw <= 0) continue;
-
-      try {
-        await withdrawItem(ctx, step.itemCode, toWithdraw);
-        withdrawn.push(`${step.itemCode} x${toWithdraw}`);
-      } catch (err) {
-        log.warn(`[${ctx.name}] Could not withdraw ${step.itemCode}: ${err.message}`);
-      }
-    }
-
+    const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSize);
     if (withdrawn.length > 0) {
       log.info(`[${ctx.name}] Rotation crafting: withdrew from bank: ${withdrawn.join(', ')}`);
     }
@@ -334,19 +323,7 @@ export class SkillRotationTask extends BaseTask {
 
   async _equipUpgrade(ctx, upgradeTarget) {
     const { itemCode, slot } = upgradeTarget;
-
-    const currentEquip = ctx.get()[`${slot}_slot`];
-    if (currentEquip) {
-      log.info(`[${ctx.name}] Unequipping ${currentEquip} from ${slot}`);
-      const ur = await api.unequipItem(slot, ctx.name);
-      await api.waitForCooldown(ur);
-      await ctx.refresh();
-    }
-
-    log.info(`[${ctx.name}] Equipping upgrade ${itemCode} in ${slot}`);
-    const er = await api.equipItem(slot, itemCode, ctx.name);
-    await api.waitForCooldown(er);
-    await ctx.refresh();
+    await swapEquipment(ctx, slot, itemCode);
   }
 
   // --- NPC Tasks ---
@@ -408,18 +385,15 @@ export class SkillRotationTask extends BaseTask {
     await restBeforeFight(ctx, monster);
 
     const result = await fightOnce(ctx);
-    const f = result.fight;
-    const cr = f.characters?.find(ch => ch.character_name === ctx.name)
-            || f.characters?.[0] || {};
+    const r = parseFightResult(result, ctx);
 
-    if (f.result === 'win') {
+    if (r.win) {
       ctx.clearLosses(monster);
-      const drops = cr.drops?.map(d => `${d.code}x${d.quantity}`).join(', ') || '';
       const fresh = ctx.get();
-      log.info(`[${ctx.name}] ${monster}: WIN ${f.turns}t | +${cr.xp || 0}xp +${cr.gold || 0}g${drops ? ' | ' + drops : ''} [task: ${fresh.task_progress}/${fresh.task_total}]`);
+      log.info(`[${ctx.name}] ${monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} [task: ${fresh.task_progress}/${fresh.task_total}]`);
     } else {
       ctx.recordLoss(monster);
-      log.warn(`[${ctx.name}] ${monster}: LOSS ${f.turns}t (${ctx.consecutiveLosses(monster)} losses)`);
+      log.warn(`[${ctx.name}] ${monster}: LOSS ${r.turns}t (${ctx.consecutiveLosses(monster)} losses)`);
       return false;
     }
 

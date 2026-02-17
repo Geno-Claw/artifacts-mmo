@@ -1,6 +1,6 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce, restBeforeFight } from '../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
 import { canBeatMonster } from '../services/combat-simulator.mjs';
 
@@ -32,17 +32,14 @@ export class FightMonstersTask extends BaseTask {
     await restBeforeFight(ctx, this.monster);
 
     const result = await fightOnce(ctx);
-    const f = result.fight;
-    const cr = f.characters?.find(c => c.character_name === ctx.name)
-            || f.characters?.[0] || {};
+    const r = parseFightResult(result, ctx);
 
-    if (f.result === 'win') {
-      const drops = cr.drops?.map(d => `${d.code}x${d.quantity}`).join(', ') || '';
+    if (r.win) {
       const c = ctx.get();
       const task = c.task ? ` [task: ${c.task_progress}/${c.task_total}]` : '';
-      log.info(`[${ctx.name}] ${this.monster}: WIN ${f.turns}t | +${cr.xp || 0}xp +${cr.gold || 0}g${drops ? ' | ' + drops : ''} (${cr.final_hp}hp)${task}`);
+      log.info(`[${ctx.name}] ${this.monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${r.finalHp}hp)${task}`);
     } else {
-      log.warn(`[${ctx.name}] ${this.monster}: LOSS ${f.turns}t`);
+      log.warn(`[${ctx.name}] ${this.monster}: LOSS ${r.turns}t`);
       return false;
     }
 

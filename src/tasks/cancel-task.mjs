@@ -2,7 +2,7 @@ import { BaseTask } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { moveTo } from '../helpers.mjs';
-import { TASKS_MASTER } from '../data/locations.mjs';
+import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 
 /**
  * Cancels an NPC task that's too hard (too many consecutive losses).
@@ -11,7 +11,7 @@ import { TASKS_MASTER } from '../data/locations.mjs';
  * resets the loss counter and it retries.
  */
 export class CancelNpcTask extends BaseTask {
-  constructor({ maxLosses = 2, priority = 55 } = {}) {
+  constructor({ maxLosses = MAX_LOSSES_DEFAULT, priority = 55 } = {}) {
     super({ name: 'Cancel NPC Task', priority, loop: false });
     this.maxLosses = maxLosses;
   }

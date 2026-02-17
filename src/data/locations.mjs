@@ -20,6 +20,8 @@ export const MONSTERS = {
 
 export const BANK = { x: 4, y: 1 };
 
+export const MAX_LOSSES_DEFAULT = 2;
+
 export const TASKS_MASTER = {
   monsters: { x: 1, y: 2 },
   items:    { x: 4, y: 13 },

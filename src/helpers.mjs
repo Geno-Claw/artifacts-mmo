@@ -7,6 +7,7 @@ import * as api from './api.mjs';
 import * as log from './log.mjs';
 import * as gameData from './services/game-data.mjs';
 import { hpNeededForFight } from './services/combat-simulator.mjs';
+import { BANK } from './data/locations.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
 export async function moveTo(ctx, x, y) {
@@ -120,9 +121,121 @@ export async function gatherOnce(ctx) {
   return result;
 }
 
+/**
+ * Swap equipment in a slot: unequip current (if any), equip new item.
+ * Caller must ensure newItemCode is in inventory.
+ * Returns { unequipped } — the code that was removed, or null.
+ */
+export async function swapEquipment(ctx, slot, newItemCode) {
+  const currentCode = ctx.get()[`${slot}_slot`] || null;
+
+  if (currentCode) {
+    if (ctx.inventoryFull()) {
+      throw new Error(`Inventory full, cannot unequip ${slot}`);
+    }
+    log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
+    const ur = await api.unequipItem(slot, ctx.name);
+    await api.waitForCooldown(ur);
+    await ctx.refresh();
+  }
+
+  log.info(`[${ctx.name}] Equipping ${newItemCode} in ${slot}`);
+  const er = await api.equipItem(slot, newItemCode, ctx.name);
+  await api.waitForCooldown(er);
+  await ctx.refresh();
+
+  return { unequipped: currentCode };
+}
+
+/**
+ * Extract structured results from a fight action response.
+ * @returns {{ win: boolean, turns: number, xp: number, gold: number,
+ *             drops: string, dropsRaw: Array, finalHp: number }}
+ */
+export function parseFightResult(result, ctx) {
+  const f = result.fight;
+  const cr = f.characters?.find(ch => ch.character_name === ctx.name)
+          || f.characters?.[0] || {};
+  return {
+    win: f.result === 'win',
+    turns: f.turns,
+    xp: cr.xp || 0,
+    gold: cr.gold || 0,
+    drops: cr.drops?.map(d => `${d.code}x${d.quantity}`).join(', ') || '',
+    dropsRaw: cr.drops || [],
+    finalHp: cr.final_hp || 0,
+  };
+}
+
+/**
+ * Compute how much of a raw material is still needed for a production plan,
+ * accounting for intermediates already crafted.
+ */
+export function rawMaterialNeeded(ctx, plan, itemCode, batchSize = 1) {
+  let total = 0;
+  let usedByCraft = false;
+
+  for (const step of plan) {
+    if (step.type !== 'craft') continue;
+    for (const mat of step.recipe.items) {
+      if (mat.code !== itemCode) continue;
+      usedByCraft = true;
+      const isFinalStep = step === plan[plan.length - 1];
+      const remaining = isFinalStep
+        ? batchSize
+        : Math.max(0, step.quantity * batchSize - ctx.itemCount(step.itemCode));
+      total += remaining * mat.quantity;
+    }
+  }
+
+  if (!usedByCraft) {
+    const gatherStep = plan.find(s => s.type === 'gather' && s.itemCode === itemCode);
+    return gatherStep ? gatherStep.quantity * batchSize : 0;
+  }
+
+  return total;
+}
+
+/**
+ * Withdraw items from bank for a production plan.
+ * Checks steps in reverse order (highest-value intermediates first).
+ * @param {object} ctx — CharacterContext
+ * @param {Array} plan — array of { itemCode, quantity, ... } steps
+ * @returns {string[]} — list of "itemCode xN" descriptions for logging
+ */
+export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
+  const bank = await gameData.getBankItems(true);
+  const withdrawn = [];
+
+  const stepsReversed = [...plan].reverse();
+  for (const step of stepsReversed) {
+    if (ctx.inventoryFull()) break;
+
+    const have = ctx.itemCount(step.itemCode);
+    const needed = step.quantity * batchSize - have;
+    if (needed <= 0) continue;
+
+    const inBank = bank.get(step.itemCode) || 0;
+    if (inBank <= 0) continue;
+
+    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+    const toWithdraw = Math.min(needed, inBank, space);
+    if (toWithdraw <= 0) continue;
+
+    try {
+      await withdrawItem(ctx, step.itemCode, toWithdraw);
+      withdrawn.push(`${step.itemCode} x${toWithdraw}`);
+    } catch (err) {
+      log.warn(`[${ctx.name}] Could not withdraw ${step.itemCode}: ${err.message}`);
+    }
+  }
+
+  return withdrawn;
+}
+
 /** Move to bank and withdraw a specific item. */
-export async function withdrawItem(ctx, code, quantity = 1, bankX = 4, bankY = 1) {
-  await moveTo(ctx, bankX, bankY);
+export async function withdrawItem(ctx, code, quantity = 1) {
+  await moveTo(ctx, BANK.x, BANK.y);
   log.info(`[${ctx.name}] Withdrawing ${code} x${quantity}`);
   const result = await api.withdrawBank([{ code, quantity }], ctx.name);
   await api.waitForCooldown(result);
@@ -131,8 +244,8 @@ export async function withdrawItem(ctx, code, quantity = 1, bankX = 4, bankY = 1
 }
 
 /** Move to bank and deposit all inventory items. */
-export async function depositAll(ctx, bankX = 4, bankY = 1) {
-  await moveTo(ctx, bankX, bankY);
+export async function depositAll(ctx) {
+  await moveTo(ctx, BANK.x, BANK.y);
   const items = ctx.get().inventory
     .filter(slot => slot.code)
     .map(slot => ({ code: slot.code, quantity: slot.quantity }));

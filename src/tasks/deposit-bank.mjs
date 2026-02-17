@@ -1,5 +1,5 @@
 import { BaseTask } from './base.mjs';
-import { depositAll, moveTo } from '../helpers.mjs';
+import { depositAll, moveTo, swapEquipment } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
@@ -84,26 +84,18 @@ export class DepositBankTask extends BaseTask {
       await api.waitForCooldown(wr);
       await ctx.refresh();
 
-      // Unequip current item
-      if (currentCode) {
-        if (ctx.inventoryFull()) {
-          log.info(`[${ctx.name}] Bank auto-equip: inventory full, can't unequip ${slot}`);
-          break;
-        }
-        const ur = await api.unequipItem(slot, ctx.name);
-        await api.waitForCooldown(ur);
-        await ctx.refresh();
+      // Swap equipment and deposit old item back to bank
+      let unequipped;
+      try {
+        ({ unequipped } = await swapEquipment(ctx, slot, itemCode));
+      } catch {
+        log.info(`[${ctx.name}] Bank auto-equip: inventory full, can't unequip ${slot}`);
+        break;
       }
 
-      // Equip the upgrade
-      const er = await api.equipItem(slot, itemCode, ctx.name);
-      await api.waitForCooldown(er);
-      await ctx.refresh();
-
-      // Deposit old item back to bank
-      if (currentCode) {
+      if (unequipped) {
         await moveTo(ctx, BANK.x, BANK.y);
-        const dr = await api.depositBank([{ code: currentCode, quantity: 1 }], ctx.name);
+        const dr = await api.depositBank([{ code: unequipped, quantity: 1 }], ctx.name);
         await api.waitForCooldown(dr);
         await ctx.refresh();
       }

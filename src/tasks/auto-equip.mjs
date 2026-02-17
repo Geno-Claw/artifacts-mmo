@@ -1,14 +1,10 @@
 import { BaseTask } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import { moveTo } from '../helpers.mjs';
+import { moveTo, swapEquipment } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 import * as gameData from '../services/game-data.mjs';
-
-const EQUIPMENT_SLOTS = [
-  'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet',
-];
+import { EQUIPMENT_SLOTS } from '../services/game-data.mjs';
 
 /**
  * Periodically scans inventory + bank for gear upgrades and equips them.
@@ -100,7 +96,7 @@ export class AutoEquipTask extends BaseTask {
     }
 
     for (const upgrade of upgrades) {
-      const { slot, itemCode, source, scoreDelta } = upgrade;
+      const { slot, itemCode, source } = upgrade;
 
       // Withdraw from bank if needed
       if (source === 'bank') {
@@ -114,24 +110,13 @@ export class AutoEquipTask extends BaseTask {
         await ctx.refresh();
       }
 
-      // Unequip current item in the slot
-      const currentCode = ctx.get()[`${slot}_slot`];
-      if (currentCode) {
-        if (ctx.inventoryFull()) {
-          log.info(`[${ctx.name}] Auto-Equip: inventory full, can't unequip ${slot}`);
-          break;
-        }
-        log.info(`[${ctx.name}] Auto-Equip: unequipping ${currentCode} from ${slot}`);
-        const ur = await api.unequipItem(slot, ctx.name);
-        await api.waitForCooldown(ur);
-        await ctx.refresh();
+      // Swap equipment in the slot
+      try {
+        await swapEquipment(ctx, slot, itemCode);
+      } catch {
+        log.info(`[${ctx.name}] Auto-Equip: inventory full, can't unequip ${slot}`);
+        break;
       }
-
-      // Equip the upgrade
-      log.info(`[${ctx.name}] Auto-Equip: equipping ${itemCode} in ${slot} (+${scoreDelta.toFixed(1)} score)`);
-      const er = await api.equipItem(slot, itemCode, ctx.name);
-      await api.waitForCooldown(er);
-      await ctx.refresh();
     }
 
     this._pendingUpgrades = [];

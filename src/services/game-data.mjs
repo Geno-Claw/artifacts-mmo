@@ -7,6 +7,7 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
+import { getWeight } from '../data/scoring-weights.mjs';
 
 // --- In-memory caches ---
 let itemsCache = null;          // Map<code, item>
@@ -182,23 +183,14 @@ export function scoreItem(item) {
   let score = 0;
   for (const effect of item.effects) {
     const name = effect.name || effect.code;
-    const value = effect.value || 0;
-    if (name.startsWith('attack_'))     score += value * 3;
-    else if (name === 'dmg' || name.startsWith('dmg_'))   score += value * 2;
-    else if (name.startsWith('res_'))   score += value * 1.5;
-    else if (name === 'hp')             score += value * 0.5;
-    else if (name === 'haste')          score += value * 4;
-    else if (name === 'initiative')     score += value * 0.2;
-    else if (name === 'prospecting')    score += value * 0.1;
-    else if (name === 'wisdom')         score += value * 0.2;
-    else                                score += value;
+    score += (effect.value || 0) * getWeight(name);
   }
   return score;
 }
 
 // --- Equipment upgrade finding ---
 
-const EQUIP_SLOTS = [
+export const EQUIPMENT_SLOTS = [
   'weapon', 'shield', 'helmet', 'body_armor',
   'leg_armor', 'boots', 'ring1', 'ring2', 'amulet',
 ];
@@ -215,7 +207,7 @@ export function findBestUpgrade(ctx, { craftSkill } = {}) {
   let bestTarget = null;
   let bestScoreDelta = 0;
 
-  for (const slot of EQUIP_SLOTS) {
+  for (const slot of EQUIPMENT_SLOTS) {
     const currentCode = char[`${slot}_slot`] || null;
     const currentItem = currentCode ? getItem(currentCode) : null;
     const currentScore = currentItem ? scoreItem(currentItem) : 0;
@@ -316,7 +308,7 @@ export function findBankUpgrades(ctx, bankItems) {
   const char = ctx.get();
   const upgrades = [];
 
-  for (const slot of EQUIP_SLOTS) {
+  for (const slot of EQUIPMENT_SLOTS) {
     const currentCode = char[`${slot}_slot`] || null;
     const currentItem = currentCode ? getItem(currentCode) : null;
     const currentScore = currentItem ? scoreItem(currentItem) : 0;
