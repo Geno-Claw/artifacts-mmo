@@ -1,6 +1,6 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, gatherOnce } from '../helpers.mjs';
+import { moveTo, gatherOnce, equipForGathering } from '../helpers.mjs';
 import * as gameData from '../services/game-data.mjs';
 
 export class GatherResourceTask extends BaseTask {
@@ -30,6 +30,9 @@ export class GatherResourceTask extends BaseTask {
       log.error(`[${ctx.name}] No map location found for resource ${this.resource}`);
       return false;
     }
+
+    // Equip optimal gathering gear (tool + prospecting)
+    await equipForGathering(ctx, this.res.skill);
 
     await moveTo(ctx, location.x, location.y);
 

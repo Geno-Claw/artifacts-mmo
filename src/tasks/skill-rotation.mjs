@@ -10,7 +10,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import { SkillRotation } from '../services/skill-rotation.mjs';
-import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights } from '../helpers.mjs';
+import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights, equipForGathering } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
@@ -78,6 +78,9 @@ export class SkillRotationTask extends BaseTask {
     // Smelt/process raw materials before gathering more
     const smelted = await this._trySmelting(ctx);
     if (smelted) return !ctx.inventoryFull();
+
+    // Equip optimal gathering gear (tool + prospecting)
+    await equipForGathering(ctx, this.rotation.currentSkill);
 
     await moveTo(ctx, loc.x, loc.y);
     const result = await gatherOnce(ctx);
@@ -226,6 +229,9 @@ export class SkillRotationTask extends BaseTask {
           await this.rotation.forceRotate(ctx);
           return true;
         }
+
+        // Equip gathering gear for this resource's skill (e.g. alchemy gloves)
+        await equipForGathering(ctx, step.resource.skill);
 
         await moveTo(ctx, loc.x, loc.y);
         const result = await gatherOnce(ctx);

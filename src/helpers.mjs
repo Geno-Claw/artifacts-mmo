@@ -8,7 +8,7 @@ import * as log from './log.mjs';
 import * as gameData from './services/game-data.mjs';
 import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
 import { hpNeededForFight, simulateCombat } from './services/combat-simulator.mjs';
-import { optimizeForMonster } from './services/gear-optimizer.mjs';
+import { optimizeForMonster, optimizeForGathering } from './services/gear-optimizer.mjs';
 import { BANK } from './data/locations.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
@@ -537,4 +537,141 @@ export function clearGearCache(charName) {
   for (const key of _gearCache.keys()) {
     if (key.startsWith(`${charName}:`)) _gearCache.delete(key);
   }
+  for (const key of _gatheringGearCache.keys()) {
+    if (key.startsWith(`${charName}:`)) _gatheringGearCache.delete(key);
+  }
+}
+
+// --- Gathering gear optimization ---
+
+// Cache: "charName:skill" → { loadout, level }
+const _gatheringGearCache = new Map();
+
+/**
+ * Equip optimal gear for gathering a specific skill.
+ * Selects the correct tool (weapon) and maximizes prospecting on all other slots.
+ * Caches results to avoid re-optimizing for the same skill at the same level.
+ *
+ * @param {import('./context.mjs').CharacterContext} ctx
+ * @param {string} skill — gathering skill name (mining, woodcutting, fishing, alchemy)
+ * @returns {Promise<{ changed: boolean }>}
+ */
+export async function equipForGathering(ctx, skill) {
+  const cacheKey = `${ctx.name}:${skill}`;
+
+  // Check cache — skip if same skill, same level, same gear
+  const cached = _gatheringGearCache.get(cacheKey);
+  if (cached && cached.level === ctx.get().level) {
+    let gearMatches = true;
+    for (const slot of EQUIPMENT_SLOTS) {
+      const current = ctx.get()[`${slot}_slot`] || null;
+      const expected = cached.loadout.get(slot) || null;
+      if (current !== expected) { gearMatches = false; break; }
+    }
+    if (gearMatches) {
+      return { changed: false };
+    }
+  }
+
+  const result = await optimizeForGathering(ctx, skill);
+  if (!result) return { changed: false };
+
+  const { loadout } = result;
+
+  // Determine which slots need changing
+  const changes = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const currentCode = ctx.get()[`${slot}_slot`] || null;
+    const targetCode = loadout.get(slot) || null;
+    if (currentCode !== targetCode) {
+      changes.push({ slot, currentCode, targetCode });
+    }
+  }
+
+  if (changes.length === 0) {
+    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level });
+    return { changed: false };
+  }
+
+  log.info(`[${ctx.name}] Gathering gear: ${changes.length} slot(s) to change for ${skill}`);
+
+  // Determine if any items need to come from bank
+  const bankNeeded = changes.filter(c =>
+    c.targetCode
+    && !ctx.hasItem(c.targetCode)
+    && ctx.get()[`${c.slot}_slot`] !== c.targetCode
+  );
+
+  if (bankNeeded.length > 0) {
+    const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
+    if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
+      await depositAll(ctx);
+    }
+
+    for (const { targetCode } of bankNeeded) {
+      if (ctx.hasItem(targetCode)) continue;
+      try {
+        await withdrawItem(ctx, targetCode, 1);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Could not withdraw ${targetCode}: ${err.message}`);
+      }
+    }
+  }
+
+  // Perform equipment swaps
+  let swapsFailed = false;
+  for (const { slot, currentCode, targetCode } of changes) {
+    if (targetCode === null) {
+      if (currentCode) {
+        if (ctx.inventoryFull()) {
+          log.warn(`[${ctx.name}] Inventory full, cannot unequip ${slot}`);
+          swapsFailed = true;
+          continue;
+        }
+        log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
+        const ur = await api.unequipItem(slot, ctx.name);
+        await api.waitForCooldown(ur);
+        await ctx.refresh();
+      }
+    } else {
+      if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
+        log.warn(`[${ctx.name}] Skipping ${slot} swap: ${targetCode} not in inventory`);
+        swapsFailed = true;
+        continue;
+      }
+      try {
+        await swapEquipment(ctx, slot, targetCode);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Gear swap failed for ${slot}: ${err.message}`);
+        swapsFailed = true;
+      }
+    }
+  }
+
+  // Deposit old gear to bank if we made a bank trip
+  if (bankNeeded.length > 0) {
+    const unequippedCodes = changes
+      .filter(c => c.currentCode && c.currentCode !== c.targetCode)
+      .map(c => c.currentCode)
+      .filter(code => ctx.hasItem(code));
+
+    if (unequippedCodes.length > 0) {
+      await moveTo(ctx, BANK.x, BANK.y);
+      const items = unequippedCodes.map(code => ({ code, quantity: ctx.itemCount(code) }));
+      try {
+        const dr = await api.depositBank(items, ctx.name);
+        await api.waitForCooldown(dr);
+        await ctx.refresh();
+      } catch (err) {
+        log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+      }
+    }
+  }
+
+  if (!swapsFailed) {
+    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level });
+  } else {
+    _gatheringGearCache.delete(cacheKey);
+  }
+  return { changed: true };
 }

@@ -78,7 +78,7 @@ function buildStats(baseStats, gearSet) {
  * Collect all available items for a slot from equipped, inventory, and bank.
  * Filtered by character level. Returns deduplicated by item code.
  */
-function getCandidatesForSlot(ctx, slot, bankItems) {
+export function getCandidatesForSlot(ctx, slot, bankItems) {
   const char = ctx.get();
   const charLevel = char.level;
   const candidates = new Map(); // code → { item, source }
@@ -327,4 +327,143 @@ export async function findBestCombatTarget(ctx) {
   }
 
   return bestTarget;
+}
+
+// --- Gathering gear optimizer ---
+
+/**
+ * Skill-to-tool-effect mapping.
+ * Tools are weapons (subtype "tool") whose effects include the gathering skill name.
+ */
+const SKILL_TO_TOOL_EFFECT = {
+  mining: 'mining',
+  woodcutting: 'woodcutting',
+  fishing: 'fishing',
+  alchemy: 'alchemy',
+};
+
+const NON_WEAPON_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'ring1', 'ring2', 'amulet'];
+
+/**
+ * Get the prospecting effect value from an item.
+ * @returns {number} prospecting value (0 if none)
+ */
+function getProspecting(item) {
+  if (!item?.effects) return 0;
+  for (const e of item.effects) {
+    if ((e.name || e.code) === 'prospecting') return e.value || 0;
+  }
+  return 0;
+}
+
+/**
+ * Find the best available tool for a gathering skill.
+ * A tool is a weapon with subtype "tool" and an effect matching the skill name.
+ * Picks the highest-level tool the character can equip and has access to.
+ *
+ * @param {import('../context.mjs').CharacterContext} ctx
+ * @param {string} skill
+ * @param {Map<string, number>} bankItems
+ * @returns {{ item: object, source: string } | null}
+ */
+function findBestTool(ctx, skill, bankItems) {
+  const effectName = SKILL_TO_TOOL_EFFECT[skill];
+  if (!effectName) return null;
+
+  const charLevel = ctx.get().level;
+  const tools = gameData.findItems({ type: 'weapon', subtype: 'tool', maxLevel: charLevel })
+    .filter(item => item.effects?.some(e => (e.name || e.code) === effectName));
+
+  if (tools.length === 0) return null;
+
+  // Highest level first (better tier)
+  tools.sort((a, b) => b.level - a.level);
+
+  const equippedWeapon = ctx.get().weapon_slot || null;
+
+  for (const tool of tools) {
+    if (equippedWeapon === tool.code) return { item: tool, source: 'equipped' };
+    if (ctx.hasItem(tool.code)) return { item: tool, source: 'inventory' };
+    if (bankItems && (bankItems.get(tool.code) || 0) >= 1) return { item: tool, source: 'bank' };
+  }
+
+  return null;
+}
+
+/**
+ * Find the optimal gathering loadout for a skill.
+ * Weapon: best available tool for the skill.
+ * All other slots: maximize total prospecting stat.
+ *
+ * @param {import('../context.mjs').CharacterContext} ctx
+ * @param {string} skill — gathering skill (mining, woodcutting, fishing, alchemy)
+ * @returns {Promise<{ loadout: Map<string, string|null> } | null>}
+ */
+export async function optimizeForGathering(ctx, skill) {
+  const bankItems = await gameData.getBankItems();
+
+  const toolResult = findBestTool(ctx, skill, bankItems);
+  if (!toolResult) {
+    log.warn(`[${ctx.name}] No tool found for ${skill}`);
+    return null;
+  }
+
+  const loadout = new Map();
+  loadout.set('weapon', toolResult.item.code);
+
+  // For each non-weapon slot, pick the item with highest prospecting
+  for (const slot of NON_WEAPON_SLOTS) {
+    const candidates = getCandidatesForSlot(ctx, slot, bankItems);
+    const currentCode = ctx.get()[`${slot}_slot`] || null;
+
+    let bestProspecting = 0;
+    let bestCode = null;
+
+    // Check current item's prospecting first
+    if (currentCode) {
+      const currentItem = gameData.getItem(currentCode);
+      bestProspecting = getProspecting(currentItem);
+      bestCode = currentCode;
+    }
+
+    for (const { item } of candidates) {
+      const p = getProspecting(item);
+      if (p > bestProspecting) {
+        bestProspecting = p;
+        bestCode = item.code;
+      }
+    }
+
+    // If no prospecting improvement, keep current gear
+    loadout.set(slot, bestCode || currentCode);
+  }
+
+  // Ring deduplication: if both rings chose same item, check we have 2 copies
+  const ring1Code = loadout.get('ring1');
+  const ring2Code = loadout.get('ring2');
+  if (ring1Code && ring1Code === ring2Code) {
+    const char = ctx.get();
+    const equippedCount = [char.ring1_slot, char.ring2_slot].filter(c => c === ring1Code).length;
+    const inInventory = ctx.itemCount(ring1Code);
+    const inBank = bankItems.get(ring1Code) || 0;
+    if (equippedCount + inInventory + inBank < 2) {
+      loadout.set('ring2', char.ring2_slot || null);
+    }
+  }
+
+  // Log changes
+  const changes = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const current = ctx.get()[`${slot}_slot`] || null;
+    const optimal = loadout.get(slot) || null;
+    if (current !== optimal) {
+      changes.push(`${slot}: ${current || '(empty)'} → ${optimal || '(empty)'}`);
+    }
+  }
+
+  if (changes.length > 0) {
+    log.info(`[${ctx.name}] Gathering optimizer for ${skill}: ${changes.join(', ')}`);
+  }
+
+  return { loadout };
 }
