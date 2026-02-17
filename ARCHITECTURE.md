@@ -2,34 +2,51 @@
 
 ## How It Works
 
-The bot runs a forever loop:
+The bot loads `config/characters.json`, creates a `CharacterContext` + `Scheduler` for each character, and runs them all concurrently via `Promise.all`. Each character runs an independent forever loop:
 
 ```
 refresh character state → pick highest-priority runnable task → execute it → repeat
 ```
 
-When HP drops low, Rest (priority 100) takes over. When inventory fills up, Bank (priority 50) takes over. Otherwise it grinds/gathers (priority 10). This creates emergent behavior from simple rules.
+When HP drops low, Rest (priority 100) takes over. When inventory fills up, Bank (priority 50) takes over. Otherwise it runs skill rotation, NPC tasks, or direct grinding. This creates emergent behavior from simple rules.
 
 ## File Layout
 
 ```
 src/
-  bot.mjs              Entry point — wires everything, starts the loop
-  scheduler.mjs        The "brain" — picks and runs tasks
-  state.mjs            Character state singleton + convenience accessors
-  helpers.mjs          Reusable action patterns (moveTo, restUntil, fightOnce, etc.)
-  log.mjs              Timestamped console logging
-  api.mjs              HTTP client for all API calls
+  bot.mjs               Entry point — loads config, inits game data, starts all characters
+  scheduler.mjs          The "brain" — picks and runs tasks per character
+  context.mjs            CharacterContext — per-character state wrapper
+  helpers.mjs            Reusable action patterns (moveTo, equipForCombat, depositAll, etc.)
+  api.mjs                HTTP client for all API calls, auto-retry on cooldown
+  log.mjs                Timestamped console logging
   data/
-    locations.mjs      Monster, resource, and bank coordinates
+    locations.mjs        Monster, resource, and bank coordinates (Season 6)
+    scoring-weights.mjs  Equipment scoring multipliers
+  services/
+    game-data.mjs        Static game data cache (items, monsters, resources, recipes)
+    combat-simulator.mjs Pure math fight predictor using game damage formulas
+    gear-optimizer.mjs   Simulation-based equipment optimizer (3-phase greedy)
+    ge-seller.mjs        Grand Exchange selling flow (pricing, listing, order mgmt)
+    skill-rotation.mjs   State machine for multi-skill cycling
   tasks/
-    index.mjs          Task registry — imports all tasks, exports defaultTasks()
-    base.mjs           BaseTask class
-    rest.mjs            Priority 100 — rest when HP < 40%
-    deposit-bank.mjs    Priority 50  — bank when inventory ≥ 80% full
-    do-task.mjs         Priority 60/5 — complete/accept NPC tasks
-    fight-monsters.mjs  Priority 10  — combat grinding (configurable per monster)
-    gather-resource.mjs Priority 10  — resource gathering (configurable per resource)
+    base.mjs             BaseTask abstract class
+    factory.mjs           buildTasks() — parses config into task instances
+    index.mjs             Re-exports all task classes
+    rest.mjs              Priority 100 — rest when HP low, eats food first
+    deposit-bank.mjs      Priority 50  — bank when inventory full, optional GE selling
+    do-task.mjs           Priority 60/15 — complete/accept NPC tasks
+    cancel-task.mjs       Priority 55  — cancel too-hard NPC tasks (optional, costs task coins)
+    fight-monsters.mjs    Priority 10  — combat grinding (configurable target)
+    fight-task-monster.mjs Priority 20 — fight current NPC task monster, loss tracking
+    gather-resource.mjs   Priority 10  — resource gathering (configurable target)
+    skill-rotation.mjs    Priority 5   — weighted multi-skill rotation
+config/
+  characters.json         Per-character task configuration
+  sell-rules.json         Grand Exchange sell rules
+  *.schema.json           JSON Schema validators
+scripts/
+  export-gear-scores.mjs  Export all equipment to CSV with scoring breakdown
 ```
 
 ## Core Concepts
@@ -40,8 +57,8 @@ Every task extends `BaseTask` and implements two methods:
 
 ```js
 class MyTask extends BaseTask {
-  canRun(char)          // → boolean: "can I run right now?"
-  async execute(char)   // → boolean (loop tasks): true = keep going, false = stop
+  canRun(ctx)           // → boolean: "can I run right now?"
+  async execute(ctx)    // → boolean (loop tasks): true = keep going, false = stop
 }
 ```
 
@@ -50,16 +67,7 @@ Tasks declare three properties in their constructor:
 - **priority** — higher number wins (Rest=100, Bank=50, Grind=10)
 - **loop** — if true, execute() is called repeatedly until it returns false or canRun() fails
 
-Prerequisites are plain code in `canRun()`. No DSL, no config — just check whatever you need:
-
-```js
-canRun(char) {
-  if (char.level < 5) return false;
-  if (state.hpPercent() < 30) return false;
-  if (state.inventoryFull()) return false;
-  return true;
-}
-```
+All tasks receive a `CharacterContext` (not a raw character object).
 
 ### Scheduler
 
@@ -70,45 +78,137 @@ The scheduler holds a priority-sorted list of tasks. Each iteration:
 3. Runs the first task that returns true
 4. For loop tasks: re-checks `canRun()` before each iteration so higher-priority tasks can interrupt
 
-### State
+### CharacterContext
 
-`state.mjs` is a module-level singleton (not a class). Call `refresh()` to pull from API, then use accessors:
+Per-character state wrapper (replaces old singleton `state.mjs`). One instance per character.
 
-| Function | Returns |
-|----------|---------|
+| Method | Returns |
+|--------|---------|
+| `refresh()` | Fetches latest from API, detects level-ups |
 | `get()` | Full character object |
 | `hpPercent()` | Current HP as percentage |
 | `isAt(x, y)` | Whether character is at coords |
 | `hasItem(code, qty)` | Whether inventory contains item |
 | `itemCount(code)` | Quantity of item in inventory |
-| `inventoryUsed()` | Number of occupied slots |
-| `inventoryFull()` | All slots occupied? |
+| `inventoryCount()` | Total item count across all slots |
+| `inventoryCapacity()` | Max items (`inventory_max_items`) |
+| `inventoryFull()` | Count >= capacity? |
 | `hasTask()` | Has an active NPC task? |
 | `taskComplete()` | Task progress >= total? |
 | `skillLevel(name)` | Level of a skill (e.g. 'mining') |
+| `equippedItem(slot)` | Item code in equipment slot |
+| `recordLoss(monster)` | Track consecutive loss |
+| `consecutiveLosses(m)` | Query loss count |
+| `taskCoins()` | NPC task coin balance |
+
+**Level-up behavior:** On level-up, all loss counters reset and the gear cache is cleared, so the bot retries previously-failed monsters and re-evaluates equipment.
 
 ### Helpers
 
-DRY wrappers that handle `waitForCooldown` + `state.refresh()` internally:
+DRY wrappers that handle `waitForCooldown` + `ctx.refresh()` internally:
 
 | Helper | What it does |
 |--------|-------------|
-| `moveTo(x, y)` | Move if not already there (no-op if at target) |
-| `restUntil(pct)` | Loop rest until HP reaches percentage |
-| `fightOnce()` | Single fight, returns result |
-| `gatherOnce()` | Single gather, returns result |
-| `depositAll()` | Move to bank, deposit all inventory |
+| `moveTo(ctx, x, y)` | Move if not already there |
+| `restUntil(ctx, pct)` | Eat food first, then rest API until HP% |
+| `restBeforeFight(ctx, monster)` | Rest to minimum HP needed for a fight |
+| `fightOnce(ctx)` | Single fight, returns result |
+| `gatherOnce(ctx)` | Single gather, returns result |
+| `swapEquipment(ctx, slot, code)` | Unequip + equip in one slot |
+| `equipForCombat(ctx, monster)` | Full gear optimization with caching |
+| `parseFightResult(result, ctx)` | Extract win/xp/gold/drops from fight |
+| `depositAll(ctx)` | Move to bank, deposit all inventory |
+| `withdrawItem(ctx, code, qty)` | Move to bank, withdraw specific item |
+| `withdrawPlanFromBank(ctx, plan)` | Withdraw items for a crafting plan |
+| `rawMaterialNeeded(ctx, plan, code)` | Remaining material needed for a plan |
+| `clearGearCache(charName)` | Reset gear cache (called on level-up) |
 
-Tasks call these instead of raw `api.*` functions so they never need to worry about cooldowns or state refresh.
+## Services
+
+### Game Data (`services/game-data.mjs`)
+Loads items, monsters, resources, maps, and bank contents from the API at startup. Provides lookups (`getItem`, `getMonster`, `getResource`), equipment scoring (`scoreItem`), recipe resolution (`resolveRecipeChain`), and location helpers (`getResourceLocation`, `getWorkshops`).
+
+### Combat Simulator (`services/combat-simulator.mjs`)
+Pure math fight predictor using the documented Artifacts MMO damage formulas. Key exports:
+- `simulateCombat(char, monster)` — predict fight outcome
+- `canBeatMonster(ctx, monsterCode)` — win with ≥20% HP remaining
+- `hpNeededForFight(ctx, monsterCode)` — minimum HP to survive
+
+### Gear Optimizer (`services/gear-optimizer.mjs`)
+Simulation-based equipment selection. Three-phase greedy approach:
+1. **Weapon** — maximize outgoing DPS
+2. **Defensive slots** (shield, helmet, body, legs, boots) — maximize HP remaining via combat sim
+3. **Accessories** (rings, amulet) — maximize HP remaining via combat sim
+
+Considers items from bank, inventory, and currently equipped. Handles ring deduplication.
+
+### GE Seller (`services/ge-seller.mjs`)
+Grand Exchange selling automation:
+- Identify sell candidates (duplicate equipment, always-sell rules)
+- Price via undercut strategy (configured % below lowest listing)
+- Withdraw → list → deposit flow
+- Order collection and stale order cancellation
+
+### Skill Rotation (`services/skill-rotation.mjs`)
+State machine for `SkillRotationTask`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
+
+## Configuration
+
+### `config/characters.json`
+
+```json
+{
+  "characters": [
+    {
+      "name": "GenoClaw",
+      "tasks": [
+        { "type": "rest", "triggerPct": 40, "targetPct": 80 },
+        { "type": "depositBank", "threshold": 0.8, "sellOnGE": true },
+        { "type": "completeNpcTask" },
+        { "type": "cancelNpcTask", "maxLosses": 3 },
+        { "type": "acceptNpcTask" },
+        { "type": "skillRotation", "weights": { "mining": 1, "combat": 1 }, "goals": { "mining": 20 } }
+      ]
+    }
+  ]
+}
+```
+
+Task types: `rest`, `depositBank`, `completeNpcTask`, `acceptNpcTask`, `cancelNpcTask`, `fightMonsters`, `fightTaskMonster`, `gatherResource`, `skillRotation`.
+
+### `config/sell-rules.json`
+
+Controls Grand Exchange selling behavior:
+- `sellDuplicateEquipment` — sell surplus gear (keeps 2 per item code)
+- `alwaysSell` / `neverSell` — item-level rules
+- `pricingStrategy` — "undercut" with configurable `undercutPercent`
 
 ## Priority Scale
 
 | Range | Purpose | Examples |
 |-------|---------|---------|
 | 90–100 | Survival | Rest when HP low |
-| 50–70 | Maintenance | Bank deposits, complete NPC tasks |
-| 10–30 | Core gameplay | Fight monsters, gather resources |
-| 1–9 | Background | Accept new tasks |
+| 50–70 | Maintenance | Bank deposits, complete/cancel NPC tasks |
+| 15–20 | NPC tasks | Accept tasks, fight task monsters |
+| 10 | Core gameplay | Fight monsters, gather resources |
+| 5 | Background | Skill rotation |
+
+## Equipment Scoring
+
+Static scoring via weighted sum of item effects (`data/scoring-weights.mjs`):
+
+| Effect | Weight | Rationale |
+|--------|--------|-----------|
+| haste | 4x | Most impactful combat stat |
+| attack_* | 3x | Direct damage scaling |
+| dmg, dmg_* | 2x | Flat damage bonuses |
+| res_* | 1.5x | Damage reduction |
+| hp | 0.5x | Raw values are large (50-500) |
+| initiative | 0.2x | Raw values 50-700, would dominate at 1x |
+| wisdom | 0.2x | High raw values, non-combat |
+| prospecting | 0.1x | High raw values, non-combat |
+
+The gear optimizer uses combat simulation instead of static scores for actual equipment decisions.
 
 ## Adding a New Task
 
@@ -116,67 +216,35 @@ Tasks call these instead of raw `api.*` functions so they never need to worry ab
 
 ```js
 import { BaseTask } from './base.mjs';
-import * as state from '../state.mjs';
 
 export class MyTask extends BaseTask {
   constructor() {
     super({ name: 'My Task', priority: 20, loop: false });
   }
 
-  canRun(char) {
-    // return true when this task should run
-    return char.level >= 5 && !state.inventoryFull();
+  canRun(ctx) {
+    return ctx.get().level >= 5 && !ctx.inventoryFull();
   }
 
-  async execute(char) {
+  async execute(ctx) {
     // do the thing
   }
 }
 ```
 
-2. Register it in `src/tasks/index.mjs`:
+2. Add it to `buildTasks()` in `src/tasks/factory.mjs` with a config type mapping.
 
-```js
-import { MyTask } from './my-task.mjs';
-
-export function defaultTasks() {
-  return [
-    // ...existing tasks...
-    new MyTask(),
-  ];
-}
-```
-
-That's it. The scheduler picks it up automatically.
-
-## Configurable Tasks
-
-`FightMonstersTask` and `GatherResourceTask` take constructor args, so you can create multiple instances targeting different things:
-
-```js
-export function defaultTasks() {
-  return [
-    new RestTask(),
-    new DepositBankTask(),
-    new FightMonstersTask('chicken', { priority: 10 }),
-    new FightMonstersTask('cow', { priority: 11 }),         // preferred over chicken
-    new GatherResourceTask('copper_ore', { priority: 8 }),  // lower than fighting
-  ];
-}
-```
-
-Higher-level monsters get higher priority so the bot farms the toughest thing it can handle. The `canRun()` check ensures it won't attempt monsters above its level.
+3. Add the task config to `config/characters.json` for the desired characters.
 
 ## Running
 
 ```bash
-npm start          # runs src/bot.mjs
+npm start          # runs src/bot.mjs — all characters start concurrently
 ```
 
 Environment (`.env`):
 ```
 ARTIFACTS_TOKEN=your_token
-CHARACTER_NAME=GenoClaw
 ```
 
-Ctrl+C to stop gracefully.
+Characters are configured entirely in `config/characters.json`. Ctrl+C to stop.

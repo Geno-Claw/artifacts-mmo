@@ -68,12 +68,12 @@
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 0,
-            "woodcutting": 0,
-            "fishing": 0,
-            "cooking": 0,
-            "alchemy": 0,
-            "weaponcrafting": 0,
+            "mining": 1,
+            "woodcutting": 1,
+            "fishing": 1,
+            "cooking": 1,
+            "alchemy": 1,
+            "weaponcrafting": 1,
             "gearcrafting": 1,
             "jewelrycrafting": 1,
             "combat": 3,
