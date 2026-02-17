@@ -72,7 +72,8 @@
         "type": { "const": "depositBank" },
         "priority": { "type": "number", "default": 50, "description": "Execution priority (default 50)" },
         "threshold": { "type": "number", "default": 0.8, "minimum": 0, "description": "Inventory fullness ratio to trigger deposit (0.0-1.0); 0 = deposit after every action" },
-        "sellOnGE": { "type": "boolean", "default": true, "description": "Sell items on Grand Exchange during deposit" },
+        "sellOnGE": { "type": "boolean", "default": true, "description": "Sell whitelisted items on Grand Exchange during deposit (alwaysSell rules only)" },
+        "recycleEquipment": { "type": "boolean", "default": true, "description": "Recycle surplus equipment at workshops during deposit" },
         "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" }
       }
     },

@@ -84,6 +84,10 @@ export async function craft(code, quantity = 1, name = CHARACTER) {
   return request('POST', `/my/${name}/action/crafting`, { code, quantity });
 }
 
+export async function recycle(code, quantity = 1, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/recycling`, { code, quantity });
+}
+
 export async function depositBank(items, name = CHARACTER) {
   return request('POST', `/my/${name}/action/bank/deposit/item`, items);
 }

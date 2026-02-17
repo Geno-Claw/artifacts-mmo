@@ -31,6 +31,9 @@ export async function initialize() {
   log.info('[GameData] Loading items, monsters, and resources...');
   await Promise.all([loadAllItems(), loadAllMonsters(), loadAllResources(), discoverGELocation(), loadTaskRewards()]);
 
+  // Discover workshops after items are loaded (needs craft skills from item data)
+  await getWorkshops();
+
   // Log discovered types to help debug slot-to-type mapping
   const types = new Map();
   for (const item of itemsCache.values()) {

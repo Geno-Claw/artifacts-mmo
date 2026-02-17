@@ -4,17 +4,20 @@ import { BANK } from '../data/locations.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
+import * as recycler from '../services/recycler.mjs';
 
 export class DepositBankTask extends BaseTask {
   constructor({
     threshold = 0.8,
     priority = 50,
     sellOnGE = true,
+    recycleEquipment = true,
     depositGold = true,
   } = {}) {
     super({ name: 'Deposit to Bank', priority, loop: false });
     this.threshold = threshold;
     this.sellOnGE = sellOnGE;
+    this.recycleEquipment = recycleEquipment;
     this.depositGold = depositGold;
   }
 
@@ -30,14 +33,44 @@ export class DepositBankTask extends BaseTask {
     // Step 1: Deposit all inventory items to bank
     await depositAll(ctx);
 
-    // Step 2: Sell items on GE (before depositing gold — listing fees need gold)
+    // Step 2: Recycle surplus equipment at workshops
+    if (this.recycleEquipment && geSeller.getSellRules()) {
+      await this._recycleEquipment(ctx);
+    }
+
+    // Step 3: Sell items on GE — whitelist only (alwaysSell rules)
     if (this.sellOnGE && geSeller.getSellRules()) {
       await this._sellOnGE(ctx);
     }
 
-    // Step 3: Deposit gold to bank (after GE so listing fees are paid first)
+    // Step 4: Deposit gold to bank (after GE so listing fees are paid first)
     if (this.depositGold) {
       await this._depositGold(ctx);
+    }
+  }
+
+  async _recycleEquipment(ctx) {
+    try {
+      await recycler.executeRecycleFlow(ctx);
+    } catch (err) {
+      log.error(`[${ctx.name}] Recycle flow error: ${err.message}`);
+    }
+
+    // Re-deposit any leftover inventory (failed recycles, etc.)
+    const leftover = ctx.get().inventory.filter(s => s.code);
+    if (leftover.length > 0) {
+      await moveTo(ctx, BANK.x, BANK.y);
+      log.info(`[${ctx.name}] Re-depositing ${leftover.length} unrecycled item(s)`);
+      try {
+        const result = await api.depositBank(
+          leftover.map(s => ({ code: s.code, quantity: s.quantity })),
+          ctx.name,
+        );
+        await api.waitForCooldown(result);
+        await ctx.refresh();
+      } catch (err) {
+        log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
+      }
     }
   }
 

@@ -31,3 +31,4 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details.
 
 - [API Reference](https://api.artifactsmmo.com/docs/)
 - [Game Docs](https://docs.artifactsmmo.com/)
+- [OpenAPI Spec](https://api.artifactsmmo.com/openapi.json)

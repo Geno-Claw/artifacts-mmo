@@ -10,7 +10,7 @@
     "sellDuplicateEquipment": {
       "type": "boolean",
       "default": true,
-      "description": "Sell surplus equipment from bank (keeps 'keepPerEquipmentCode' copies of each)"
+      "description": "Recycle surplus equipment at workshops (keeps 'keepPerEquipmentCode' copies of each). Materials returned to bank."
     },
     "keepPerEquipmentCode": {
       "type": "integer",

@@ -27,14 +27,15 @@ src/
     game-data.mjs        Static game data cache (items, monsters, resources, recipes)
     combat-simulator.mjs Pure math fight predictor using game damage formulas
     gear-optimizer.mjs   Simulation-based equipment optimizer (3-phase greedy)
-    ge-seller.mjs        Grand Exchange selling flow (pricing, listing, order mgmt)
+    ge-seller.mjs        Grand Exchange selling flow (whitelist-only, pricing, order mgmt)
+    recycler.mjs         Equipment recycling at workshops (surplus → crafting materials)
     skill-rotation.mjs   State machine for multi-skill cycling
   tasks/
     base.mjs             BaseTask abstract class
     factory.mjs           buildTasks() — parses config into task instances
     index.mjs             Re-exports all task classes
     rest.mjs              Priority 100 — rest when HP low, eats food first
-    deposit-bank.mjs      Priority 50  — bank when inventory full, optional GE selling
+    deposit-bank.mjs      Priority 50  — bank when inventory full, recycle equipment, optional GE selling
     do-task.mjs           Priority 60/15 — complete/accept NPC tasks
     cancel-task.mjs       Priority 55  — cancel too-hard NPC tasks (optional, costs task coins)
     fight-monsters.mjs    Priority 10  — combat grinding (configurable target)
@@ -146,9 +147,18 @@ Simulation-based equipment selection. Three-phase greedy approach:
 
 Considers items from bank, inventory, and currently equipped. Handles ring deduplication.
 
+### Recycler (`services/recycler.mjs`)
+Equipment recycling at workshops. Surplus equipment is broken down into crafting materials instead of being sold on the GE:
+- Identify recycle candidates (duplicate equipment above `keepPerEquipmentCode` threshold)
+- Group by `craft.skill` to minimize workshop travel (e.g., weaponcrafting, gearcrafting, jewelrycrafting)
+- Withdraw → move to workshop → recycle → deposit materials flow
+- Mid-batch inventory management: deposits materials to bank when inventory hits 90% capacity
+- Items without `craft.skill` (uncraftable/event items) are skipped
+- Concurrency control: async mutex ensures only one character recycles at a time
+
 ### GE Seller (`services/ge-seller.mjs`)
-Grand Exchange selling automation:
-- Identify sell candidates (duplicate equipment, always-sell rules)
+Grand Exchange selling automation — **whitelist-only** (only `alwaysSell` rules):
+- Equipment duplicates are handled by the recycler, not the GE
 - Price via undercut strategy (configured % below lowest listing)
 - Withdraw → list → deposit flow with inventory verification before each sell order
 - Order collection and stale order cancellation
@@ -174,7 +184,7 @@ State machine for `SkillRotationTask`. Tracks current skill, goal progress, and 
       "name": "GenoClaw",
       "tasks": [
         { "type": "rest", "triggerPct": 40, "targetPct": 80 },
-        { "type": "depositBank", "threshold": 0.8, "sellOnGE": true },
+        { "type": "depositBank", "threshold": 0.8, "recycleEquipment": true, "sellOnGE": true },
         { "type": "completeNpcTask" },
         { "type": "cancelNpcTask", "maxLosses": 3 },
         { "type": "acceptNpcTask" },
@@ -189,10 +199,11 @@ Task types: `rest`, `depositBank`, `completeNpcTask`, `acceptNpcTask`, `cancelNp
 
 ### `config/sell-rules.json`
 
-Controls Grand Exchange selling behavior:
-- `sellDuplicateEquipment` — sell surplus gear (keeps 2 per item code)
-- `alwaysSell` / `neverSell` — item-level rules
-- `pricingStrategy` — "undercut" with configurable `undercutPercent`
+Controls equipment recycling and GE selling:
+- `sellDuplicateEquipment` — recycle surplus equipment at workshops (keeps `keepPerEquipmentCode` copies per item)
+- `alwaysSell` — whitelist of items to sell on the GE (the only items that go to GE)
+- `neverSell` — item codes exempt from both recycling and GE selling
+- `pricingStrategy` — "undercut" with configurable `undercutPercent` (for GE listings)
 
 ## Priority Scale
 

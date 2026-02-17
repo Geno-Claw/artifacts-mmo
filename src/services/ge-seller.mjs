@@ -60,30 +60,9 @@ export function analyzeSellCandidates(ctx, bankItems) {
   const candidates = [];
   const neverSellSet = new Set(sellRules.neverSell || []);
 
-  // 1. Equipment duplicate detection
-  if (sellRules.sellDuplicateEquipment) {
-    const baseKeep = sellRules.keepPerEquipmentCode ?? 1;
+  // Equipment duplicates are handled by recycler — GE is whitelist-only (alwaysSell)
 
-    for (const [code, bankQty] of bankItems.entries()) {
-      if (neverSellSet.has(code)) continue;
-
-      const item = gameData.getItem(code);
-      if (!item || !gameData.isEquipmentType(item)) continue;
-
-      // Rings need 2 per character (ring1 + ring2 slots), so double the keep
-      const keep = item.type === 'ring' ? baseKeep * 2 : baseKeep;
-      const surplus = bankQty - keep;
-      if (surplus <= 0) continue;
-
-      candidates.push({
-        code,
-        quantity: surplus,
-        reason: `duplicate equipment (bank: ${bankQty}, keeping ${keep}${item.type === 'ring' ? ' (ring x2)' : ''})`,
-      });
-    }
-  }
-
-  // 2. Always-sell list
+  // Always-sell list
   for (const rule of (sellRules.alwaysSell || [])) {
     if (neverSellSet.has(rule.code)) continue;
     if (candidates.some(c => c.code === rule.code)) continue;
