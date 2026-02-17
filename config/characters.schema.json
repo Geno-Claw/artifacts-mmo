@@ -1,0 +1,232 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Artifacts MMO Bot Characters Config",
+  "type": "object",
+  "required": ["characters"],
+  "properties": {
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "tasks"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Character name (must match an existing game character)"
+          },
+          "tasks": {
+            "type": "array",
+            "description": "Tasks in priority order (highest priority = checked first)",
+            "items": {
+              "oneOf": [
+                { "$ref": "#/$defs/restTask" },
+                { "$ref": "#/$defs/depositBankTask" },
+                { "$ref": "#/$defs/autoEquipTask" },
+                { "$ref": "#/$defs/skillRotationTask" },
+                { "$ref": "#/$defs/fightMonstersTask" },
+                { "$ref": "#/$defs/gatherResourceTask" },
+                { "$ref": "#/$defs/gatherMaterialsTask" },
+                { "$ref": "#/$defs/craftGearTask" },
+                { "$ref": "#/$defs/acceptNpcTaskTask" },
+                { "$ref": "#/$defs/completeNpcTaskTask" },
+                { "$ref": "#/$defs/fightTaskMonsterTask" },
+                { "$ref": "#/$defs/cancelNpcTaskTask" }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "skillName": {
+      "type": "string",
+      "enum": [
+        "mining", "woodcutting", "fishing",
+        "cooking", "alchemy", "weaponcrafting", "gearcrafting", "jewelrycrafting",
+        "combat", "npc_task"
+      ]
+    },
+
+    "restTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "rest" },
+        "priority": { "type": "number", "default": 100, "description": "Execution priority (default 100)" },
+        "triggerPct": { "type": "number", "default": 40, "description": "HP % below which to start resting" },
+        "targetPct": { "type": "number", "default": 80, "description": "HP % to rest up to" }
+      }
+    },
+
+    "depositBankTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "depositBank" },
+        "priority": { "type": "number", "default": 50, "description": "Execution priority (default 50)" },
+        "threshold": { "type": "number", "default": 0.8, "description": "Inventory fullness ratio (0.0-1.0) to trigger deposit" },
+        "sellOnGE": { "type": "boolean", "default": true, "description": "Sell items on Grand Exchange during deposit" },
+        "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" },
+        "autoEquipOnBank": { "type": "boolean", "default": true, "description": "Check for and equip upgrades from bank" }
+      }
+    },
+
+    "autoEquipTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "autoEquip" },
+        "priority": { "type": "number", "default": 45, "description": "Execution priority (default 45)" },
+        "checkInterval": { "type": "number", "default": 300000, "description": "Milliseconds between equipment checks (default 5min)" },
+        "slots": {
+          "type": "array",
+          "description": "Equipment slots to check (default: all slots)",
+          "items": {
+            "type": "string",
+            "enum": ["weapon", "shield", "helmet", "body_armor", "leg_armor", "boots", "ring1", "ring2", "amulet"]
+          }
+        }
+      }
+    },
+
+    "skillRotationTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "skillRotation" },
+        "priority": { "type": "number", "default": 5, "description": "Execution priority (default 5, lowest)" },
+        "maxLosses": { "type": "number", "default": 2, "description": "Consecutive combat losses before rotating to another skill" },
+        "skills": {
+          "type": "array",
+          "description": "Skills to rotate between (ignored if weights is set)",
+          "items": { "$ref": "#/$defs/skillName" }
+        },
+        "weights": {
+          "type": "object",
+          "description": "Weighted skill selection. Keys are skill names, values are relative weights. Higher weight = picked more often. Skills not listed are disabled. Overrides 'skills' array.",
+          "propertyNames": { "$ref": "#/$defs/skillName" },
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        },
+        "goals": {
+          "type": "object",
+          "description": "Target count per skill before rotating. Gathering/combat = action count, crafting = items crafted.",
+          "propertyNames": { "$ref": "#/$defs/skillName" },
+          "additionalProperties": { "type": "number", "minimum": 1 },
+          "default": {
+            "mining": 20, "woodcutting": 20, "fishing": 20,
+            "cooking": 5, "alchemy": 5,
+            "weaponcrafting": 2, "gearcrafting": 2, "jewelrycrafting": 2,
+            "combat": 10, "npc_task": 1
+          }
+        },
+        "craftCollection": {
+          "type": "object",
+          "description": "Per-skill collection mode. When true for a skill, crafting will first try to craft 1 of each missing item (not yet in bank) before XP grinding.",
+          "propertyNames": { "$ref": "#/$defs/skillName" },
+          "additionalProperties": { "type": "boolean" },
+          "default": {}
+        },
+        "craftBlacklist": {
+          "type": "object",
+          "description": "Per-skill item blacklists. Item codes to never craft for collection or XP grinding (upgrades are unaffected).",
+          "propertyNames": { "$ref": "#/$defs/skillName" },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "default": {}
+        }
+      }
+    },
+
+    "fightMonstersTask": {
+      "type": "object",
+      "required": ["type", "monster"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "fightMonsters" },
+        "priority": { "type": "number", "default": 10, "description": "Execution priority (default 10)" },
+        "monster": { "type": "string", "description": "Monster code (e.g. 'chicken', 'goblin', 'wolf')" }
+      }
+    },
+
+    "gatherResourceTask": {
+      "type": "object",
+      "required": ["type", "resource"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "gatherResource" },
+        "priority": { "type": "number", "default": 10, "description": "Execution priority (default 10)" },
+        "resource": { "type": "string", "description": "Resource code (e.g. 'copper_rocks', 'ash_tree', 'gudgeon_fishing_spot')" }
+      }
+    },
+
+    "gatherMaterialsTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "gatherMaterials" },
+        "priority": { "type": "number", "default": 11, "description": "Execution priority (default 11)" }
+      }
+    },
+
+    "craftGearTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "craftGear" },
+        "priority": { "type": "number", "default": 12, "description": "Execution priority (default 12)" },
+        "checkInterval": { "type": "number", "default": 600000, "description": "Milliseconds between upgrade target checks (default 10min)" }
+      }
+    },
+
+    "acceptNpcTaskTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "acceptNpcTask" },
+        "priority": { "type": "number", "default": 15, "description": "Execution priority (default 15)" }
+      }
+    },
+
+    "completeNpcTaskTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "completeNpcTask" },
+        "priority": { "type": "number", "default": 60, "description": "Execution priority (default 60)" }
+      }
+    },
+
+    "fightTaskMonsterTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "fightTaskMonster" },
+        "priority": { "type": "number", "default": 20, "description": "Execution priority (default 20)" },
+        "maxLosses": { "type": "number", "default": 2, "description": "Consecutive losses before giving up on task monster" }
+      }
+    },
+
+    "cancelNpcTaskTask": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "cancelNpcTask" },
+        "priority": { "type": "number", "default": 55, "description": "Execution priority (default 55)" },
+        "maxLosses": { "type": "number", "default": 2, "description": "Consecutive losses before cancelling task (costs 1 task coin)" }
+      }
+    }
+  }
+}

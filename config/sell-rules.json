@@ -1,0 +1,13 @@
+{
+  "$schema": "./sell-rules.schema.json",
+  "sellDuplicateEquipment": true,
+  "keepPerEquipmentCode": 1,
+  "alwaysSell": [],
+  "neverSell": [
+    "tasks_coin"
+  ],
+  "pricingStrategy": "undercut",
+  "undercutPercent": 1,
+  "minPrice": 1,
+  "cancelStaleAfterHours": 0
+}

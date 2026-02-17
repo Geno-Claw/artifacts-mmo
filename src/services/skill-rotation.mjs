@@ -24,9 +24,17 @@ const DEFAULT_GOALS = {
 };
 
 export class SkillRotation {
-  constructor({ skills = [], goals = {} } = {}) {
-    this.skills = skills.length > 0 ? skills : Object.keys(DEFAULT_GOALS);
+  constructor({ skills, goals = {}, weights, craftCollection = {}, craftBlacklist = {} } = {}) {
+    if (weights && Object.keys(weights).length > 0) {
+      this.weights = weights;
+      this.skills = Object.keys(weights).filter(s => weights[s] > 0);
+    } else {
+      this.skills = skills?.length > 0 ? skills : Object.keys(DEFAULT_GOALS);
+      this.weights = null;
+    }
     this.goals = { ...DEFAULT_GOALS, ...goals };
+    this.craftCollection = craftCollection;       // { skill: bool }
+    this.craftBlacklist = craftBlacklist;          // { skill: string[] }
 
     // Current rotation state
     this.currentSkill = null;
@@ -44,6 +52,7 @@ export class SkillRotation {
     this._bankChecked = false;  // whether bank withdrawal happened for current recipe
     this._upgradeTarget = null; // { itemCode, slot, recipe, scoreDelta } for gear upgrades
     this._isUpgrade = false;    // true when crafting an equipment upgrade
+    this._isCollection = false; // true when crafting a missing collection item
   }
 
   isGoalComplete() {
@@ -58,14 +67,13 @@ export class SkillRotation {
   async pickNext(ctx) {
     this._resetState();
 
-    // Shuffle skills and try each until one is viable
-    const shuffled = [...this.skills].sort(() => Math.random() - 0.5);
+    const shuffled = this._weightedShuffle(this.skills);
 
     for (const skill of shuffled) {
       const ok = await this._setupSkill(skill, ctx);
       if (ok) {
         this.currentSkill = skill;
-        this.goalTarget = this._isUpgrade ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+        this.goalTarget = (this._isUpgrade || this._isCollection) ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
         this.goalProgress = 0;
         return skill;
       }
@@ -83,13 +91,13 @@ export class SkillRotation {
     this._resetState();
 
     const others = this.skills.filter(s => s !== prev);
-    const shuffled = others.sort(() => Math.random() - 0.5);
+    const shuffled = this._weightedShuffle(others);
 
     for (const skill of shuffled) {
       const ok = await this._setupSkill(skill, ctx);
       if (ok) {
         this.currentSkill = skill;
-        this.goalTarget = this._isUpgrade ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+        this.goalTarget = (this._isUpgrade || this._isCollection) ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
         this.goalProgress = 0;
         return skill;
       }
@@ -113,6 +121,7 @@ export class SkillRotation {
   set bankChecked(v) { this._bankChecked = v; }
   get upgradeTarget() { return this._upgradeTarget; }
   get isUpgrade() { return this._isUpgrade; }
+  get isCollection() { return this._isCollection; }
 
   // --- Internal ---
 
@@ -127,6 +136,17 @@ export class SkillRotation {
     this._bankChecked = false;
     this._upgradeTarget = null;
     this._isUpgrade = false;
+    this._isCollection = false;
+  }
+
+  _weightedShuffle(skills) {
+    if (!this.weights) {
+      return [...skills].sort(() => Math.random() - 0.5);
+    }
+    return [...skills]
+      .map(s => ({ skill: s, score: -Math.log(Math.random()) / (this.weights[s] || 1) }))
+      .sort((a, b) => a.score - b.score)
+      .map(e => e.skill);
   }
 
   async _setupSkill(skill, ctx) {
@@ -160,7 +180,9 @@ export class SkillRotation {
   }
 
   async _setupCrafting(skill, ctx) {
-    // 1. Try to find an equipment upgrade for this craft skill
+    const level = ctx.skillLevel(skill);
+
+    // Tier 1: Equipment upgrade
     const upgrade = gameData.findBestUpgrade(ctx, { craftSkill: skill });
     if (upgrade) {
       const plan = gameData.resolveRecipeChain(upgrade.recipe);
@@ -176,33 +198,109 @@ export class SkillRotation {
       }
     }
 
-    // 2. Fallback: highest-level recipe for XP, scored by bank availability
-    const level = ctx.skillLevel(skill);
+    // Tier 2: Collection — craft 1 of each missing item
+    if (this.craftCollection[skill]) {
+      const result = await this._setupCollectionCraft(skill, level, ctx);
+      if (result) return true;
+    }
+
+    // Tier 3: XP grinding
+    return this._setupXpGrind(skill, level, ctx);
+  }
+
+  /**
+   * Tier 2: Find a craftable item missing from bank and set up crafting it.
+   * Picks highest craft.level first for maximum XP while filling the collection.
+   * Skips blacklisted items and items with unfulfillable bank-only dependencies.
+   */
+  async _setupCollectionCraft(skill, level, ctx) {
     const recipes = gameData.findItems({ craftSkill: skill, maxLevel: level });
     if (recipes.length === 0) return false;
 
     const bank = await gameData.getBankItems();
+    const blacklist = new Set(this.craftBlacklist[skill] || []);
+
+    // Items missing from bank, sorted by craft level DESC
+    const missing = recipes
+      .filter(item => {
+        if (blacklist.has(item.code)) return false;
+        return (bank.get(item.code) || 0) === 0;
+      })
+      .sort((a, b) => b.craft.level - a.craft.level);
+
+    for (const item of missing) {
+      const plan = gameData.resolveRecipeChain(item.craft);
+      if (!plan || plan.length === 0) continue;
+
+      // Skip if any bank-only dependency can't be met
+      const bankSteps = plan.filter(s => s.type === 'bank');
+      if (bankSteps.length > 0) {
+        const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
+        if (!allMet) continue;
+      }
+
+      this._recipe = item;
+      this._isUpgrade = false;
+      this._isCollection = true;
+      this._upgradeTarget = null;
+      this._productionPlan = plan;
+      this._planStepProgress = new Map();
+      this._bankChecked = false;
+
+      log.info(`[${ctx.name}] Rotation: ${skill} → COLLECT ${item.code} (lv${item.craft.level}, ${plan.length} steps)`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Tier 3: Pick the best recipe for XP grinding.
+   * Sorts by craft.level DESC (XP proxy), with bank availability as tiebreaker.
+   * Skips blacklisted items and recipes with unmet bank-only dependencies.
+   */
+  async _setupXpGrind(skill, level, ctx) {
+    const recipes = gameData.findItems({ craftSkill: skill, maxLevel: level });
+    if (recipes.length === 0) return false;
+
+    const bank = await gameData.getBankItems();
+    const blacklist = new Set(this.craftBlacklist[skill] || []);
 
     const scored = [];
     for (const recipe of recipes) {
+      if (blacklist.has(recipe.code)) continue;
+
       const plan = gameData.resolveRecipeChain(recipe.craft);
       if (!plan || plan.length === 0) continue;
-      const score = this._scoreRecipeAvailability(plan, ctx, bank);
-      scored.push({ recipe, plan, score });
+
+      // Skip recipes with unmet bank-only dependencies
+      const bankSteps = plan.filter(s => s.type === 'bank');
+      if (bankSteps.length > 0) {
+        const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
+        if (!allMet) continue;
+      }
+
+      const availability = this._scoreRecipeAvailability(plan, ctx, bank);
+      scored.push({ recipe, plan, availability });
     }
     if (scored.length === 0) return false;
 
-    scored.sort((a, b) => b.score - a.score || b.recipe.level - a.recipe.level);
+    // Primary: craft.level DESC (XP proxy), tiebreaker: availability DESC
+    scored.sort((a, b) =>
+      b.recipe.craft.level - a.recipe.craft.level ||
+      b.availability - a.availability
+    );
 
     const best = scored[0];
     this._recipe = best.recipe;
     this._isUpgrade = false;
+    this._isCollection = false;
     this._upgradeTarget = null;
     this._productionPlan = best.plan;
     this._planStepProgress = new Map();
     this._bankChecked = false;
 
-    log.info(`[${ctx.name}] Rotation: ${skill} → ${this._recipe.code} (lv${this._recipe.level}, ${best.plan.length} steps, avail: ${(best.score * 100).toFixed(0)}%)`);
+    log.info(`[${ctx.name}] Rotation: ${skill} → XP ${this._recipe.code} (lv${this._recipe.craft.level}, ${best.plan.length} steps, avail: ${(best.availability * 100).toFixed(0)}%)`);
     return true;
   }
 

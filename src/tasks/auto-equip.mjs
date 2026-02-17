@@ -62,19 +62,15 @@ export class AutoEquipTask extends BaseTask {
         if (candidate.code === currentCode) continue;
 
         // Check availability: inventory first, then bank
-        const inInventory = ctx.hasItem(candidate.code);
-        const inBank = bankItems && (bankItems.get(candidate.code) || 0) >= 1;
-
-        if (inInventory) {
+        if (ctx.hasItem(candidate.code)) {
           bestItem = candidate;
           bestScore = score;
           bestSource = 'inventory';
-        } else if (inBank) {
+        } else if (bankItems && (bankItems.get(candidate.code) || 0) >= 1) {
           bestItem = candidate;
           bestScore = score;
           bestSource = 'bank';
         }
-        // Skip items we don't actually own
       }
 
       if (bestItem) {

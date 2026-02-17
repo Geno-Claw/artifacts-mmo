@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Artifacts MMO Bot Sell Rules",
+  "description": "Controls which items get sold on the Grand Exchange and how they're priced.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "sellDuplicateEquipment": {
+      "type": "boolean",
+      "default": true,
+      "description": "Sell surplus equipment from bank (keeps 'keepPerEquipmentCode' copies of each)"
+    },
+    "keepPerEquipmentCode": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 0,
+      "description": "Number of copies to keep per equipment item code before selling extras"
+    },
+
+    "alwaysSell": {
+      "type": "array",
+      "default": [],
+      "description": "Items to always sell when found in bank",
+      "items": {
+        "type": "object",
+        "required": ["code"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Item code to sell (e.g. 'copper_ore', 'ash_plank')"
+          },
+          "keepInBank": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "description": "Quantity to keep in bank before selling the rest"
+          }
+        }
+      }
+    },
+
+    "neverSell": {
+      "type": "array",
+      "default": [],
+      "description": "Item codes that should never be sold, even if they match other rules",
+      "items": {
+        "type": "string",
+        "description": "Item code (e.g. 'tasks_coin')"
+      }
+    },
+
+    "pricingStrategy": {
+      "type": "string",
+      "enum": ["undercut"],
+      "default": "undercut",
+      "description": "Pricing strategy. Currently only 'undercut' is implemented — queries GE listings and undercuts the lowest price."
+    },
+    "undercutPercent": {
+      "type": "number",
+      "default": 5,
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percentage to undercut the lowest GE listing by (e.g. 1 = 1% below lowest)"
+    },
+    "minPrice": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "description": "Minimum sell price floor (never list below this)"
+    },
+
+    "cancelStaleAfterHours": {
+      "type": "number",
+      "default": 0,
+      "minimum": 0,
+      "description": "Cancel unsold GE orders older than this many hours. 0 = never cancel."
+    }
+  }
+}

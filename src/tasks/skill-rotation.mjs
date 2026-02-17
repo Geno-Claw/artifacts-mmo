@@ -69,6 +69,10 @@ export class SkillRotationTask extends BaseTask {
       return true;
     }
 
+    // Smelt/process raw materials before gathering more
+    const smelted = await this._trySmelting(ctx);
+    if (smelted) return !ctx.inventoryFull();
+
     await moveTo(ctx, loc.x, loc.y);
     const result = await gatherOnce(ctx);
 
@@ -80,6 +84,42 @@ export class SkillRotationTask extends BaseTask {
     log.info(`[${ctx.name}] ${res.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
 
     return !ctx.inventoryFull();
+  }
+
+  // --- Smelting (process raw ores/materials before gathering more) ---
+
+  async _trySmelting(ctx) {
+    const skill = this.rotation.currentSkill;
+    const level = ctx.skillLevel(skill);
+
+    const recipes = gameData.findItems({ craftSkill: skill, maxLevel: level });
+    if (recipes.length === 0) return false;
+
+    // Sort highest level first for best XP
+    recipes.sort((a, b) => b.craft.level - a.craft.level);
+
+    for (const item of recipes) {
+      if (!item.craft?.items) continue;
+      const maxQty = Math.min(
+        ...item.craft.items.map(mat => Math.floor(ctx.itemCount(mat.code) / mat.quantity))
+      );
+      if (maxQty <= 0) continue;
+
+      const workshops = await gameData.getWorkshops();
+      const ws = workshops[skill];
+      if (!ws) return false;
+
+      await moveTo(ctx, ws.x, ws.y);
+      const result = await api.craft(item.code, maxQty, ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+
+      this.rotation.recordProgress(maxQty);
+      log.info(`[${ctx.name}] ${skill}: smelted ${item.code} x${maxQty} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+      return true;
+    }
+
+    return false;
   }
 
   // --- Combat ---
@@ -129,6 +169,12 @@ export class SkillRotationTask extends BaseTask {
       return true;
     }
 
+    // Append final craft step if not already in the plan
+    // (resolveRecipeChain only returns dependency steps, not the final recipe)
+    if (plan.length === 0 || plan[plan.length - 1].itemCode !== recipe.code) {
+      plan.push({ type: 'craft', itemCode: recipe.code, recipe: recipe.craft, quantity: 1 });
+    }
+
     // Withdraw matching ingredients from bank once per recipe
     if (!this.rotation.bankChecked) {
       this.rotation.bankChecked = true;
@@ -150,9 +196,9 @@ export class SkillRotationTask extends BaseTask {
       }
 
       if (step.type === 'gather') {
-        // Check if we already have enough of this material
-        const have = ctx.itemCount(step.itemCode);
-        if (have >= step.quantity) continue;
+        // Check if we already have enough (accounting for intermediates already crafted)
+        const needed = this._rawMaterialNeeded(ctx, plan, step.itemCode);
+        if (ctx.itemCount(step.itemCode) >= needed) continue;
 
         // Gather one batch from the resource
         const loc = await gameData.getResourceLocation(step.resource.code);
@@ -170,6 +216,9 @@ export class SkillRotationTask extends BaseTask {
       }
 
       if (step.type === 'craft') {
+        // Skip intermediates we already have enough of (final step is goal-driven)
+        if (i < plan.length - 1 && ctx.itemCount(step.itemCode) >= step.quantity) continue;
+
         // Check if we have all ingredients for this intermediate/final craft
         const craftItem = gameData.getItem(step.itemCode);
         if (!craftItem?.craft) continue;
@@ -200,6 +249,9 @@ export class SkillRotationTask extends BaseTask {
           this.rotation.recordProgress(1);
           log.info(`[${ctx.name}] ${this.rotation.currentSkill}: ${recipe.code} complete (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
 
+          // Allow re-withdrawal from bank for next iteration
+          this.rotation.bankChecked = false;
+
           // Auto-equip if this was an upgrade craft
           if (this.rotation.isUpgrade && this.rotation.upgradeTarget) {
             await this._equipUpgrade(ctx, this.rotation.upgradeTarget);
@@ -212,6 +264,32 @@ export class SkillRotationTask extends BaseTask {
     // If we get here, couldn't make progress — try next iteration
     // (bank deposit may have freed inventory, or we already have materials)
     return !ctx.inventoryFull();
+  }
+
+  // --- Dynamic gather quantity (accounts for already-crafted intermediates) ---
+
+  _rawMaterialNeeded(ctx, plan, itemCode) {
+    let total = 0;
+    let usedByCraft = false;
+
+    for (const step of plan) {
+      if (step.type !== 'craft') continue;
+      for (const mat of step.recipe.items) {
+        if (mat.code !== itemCode) continue;
+        usedByCraft = true;
+        // Final step is goal-driven — always need 1 batch of materials
+        const isFinalStep = step === plan[plan.length - 1];
+        const remaining = isFinalStep ? 1 : Math.max(0, step.quantity - ctx.itemCount(step.itemCode));
+        total += remaining * mat.quantity;
+      }
+    }
+
+    if (!usedByCraft) {
+      const gatherStep = plan.find(s => s.type === 'gather' && s.itemCode === itemCode);
+      return gatherStep ? gatherStep.quantity : 0;
+    }
+
+    return total;
   }
 
   // --- Bank withdrawal for crafting ---

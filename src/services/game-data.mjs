@@ -17,6 +17,7 @@ let resourceLocationCache = {}; // { resourceCode: { x, y } }
 let workshopCache = null;       // { skill: { x, y } }
 let bankItemsCache = null;      // Map<code, quantity>
 let lastBankFetch = 0;
+let geLocationCache = null;     // { x, y } or null
 
 const BANK_CACHE_TTL = 60_000; // 1 minute
 
@@ -24,7 +25,7 @@ const BANK_CACHE_TTL = 60_000; // 1 minute
 
 export async function initialize() {
   log.info('[GameData] Loading items, monsters, and resources...');
-  await Promise.all([loadAllItems(), loadAllMonsters(), loadAllResources()]);
+  await Promise.all([loadAllItems(), loadAllMonsters(), loadAllResources(), discoverGELocation()]);
 
   // Log discovered types to help debug slot-to-type mapping
   const types = new Map();
@@ -148,11 +149,11 @@ export function findItems({ type, subtype, maxLevel, minLevel, craftSkill } = {}
  */
 const SLOT_TO_TYPE = {
   weapon:     [{ type: 'weapon' }],
-  shield:     [{ type: 'equipment', subtype: 'shield' }, { subtype: 'shield' }],
-  helmet:     [{ type: 'equipment', subtype: 'helmet' }, { subtype: 'helmet' }],
-  body_armor: [{ type: 'equipment', subtype: 'body_armor' }, { subtype: 'body_armor' }],
-  leg_armor:  [{ type: 'equipment', subtype: 'leg_armor' }, { subtype: 'leg_armor' }],
-  boots:      [{ type: 'equipment', subtype: 'boots' }, { subtype: 'boots' }],
+  shield:     [{ type: 'shield' }],
+  helmet:     [{ type: 'helmet' }],
+  body_armor: [{ type: 'body_armor' }],
+  leg_armor:  [{ type: 'leg_armor' }],
+  boots:      [{ type: 'boots' }],
   ring1:      [{ type: 'ring' }],
   ring2:      [{ type: 'ring' }],
   amulet:     [{ type: 'amulet' }],
@@ -183,10 +184,13 @@ export function scoreItem(item) {
     const name = effect.name || effect.code;
     const value = effect.value || 0;
     if (name.startsWith('attack_'))     score += value * 3;
-    else if (name.startsWith('dmg_'))   score += value * 2;
+    else if (name === 'dmg' || name.startsWith('dmg_'))   score += value * 2;
     else if (name.startsWith('res_'))   score += value * 1.5;
     else if (name === 'hp')             score += value * 0.5;
     else if (name === 'haste')          score += value * 4;
+    else if (name === 'initiative')     score += value * 0.2;
+    else if (name === 'prospecting')    score += value * 0.1;
+    else if (name === 'wisdom')         score += value * 0.2;
     else                                score += value;
   }
   return score;
@@ -270,6 +274,71 @@ export async function getBankItems(forceRefresh = false) {
 export async function bankHasItem(code, quantity = 1) {
   const bank = await getBankItems();
   return (bank.get(code) || 0) >= quantity;
+}
+
+// --- Grand Exchange location ---
+
+async function discoverGELocation() {
+  try {
+    const maps = await api.getMaps({ content_type: 'grand_exchange' });
+    const list = Array.isArray(maps) ? maps : [];
+    if (list.length > 0) {
+      geLocationCache = { x: list[0].x, y: list[0].y };
+      log.info(`[GameData] Grand Exchange at (${geLocationCache.x},${geLocationCache.y})`);
+    } else {
+      log.warn('[GameData] Grand Exchange location not found');
+    }
+  } catch (err) {
+    log.warn(`[GameData] Could not discover GE location: ${err.message}`);
+  }
+}
+
+export function getGELocation() {
+  return geLocationCache;
+}
+
+// --- Equipment type helpers ---
+
+const EQUIPMENT_TYPES = new Set([
+  'weapon', 'shield', 'helmet', 'body_armor',
+  'leg_armor', 'boots', 'ring', 'amulet',
+]);
+
+export function isEquipmentType(item) {
+  return item != null && EQUIPMENT_TYPES.has(item.type);
+}
+
+/**
+ * Find equipment upgrades available in bank for a character.
+ * Returns array of { slot, itemCode, scoreDelta } sorted by biggest improvement.
+ */
+export function findBankUpgrades(ctx, bankItems) {
+  const char = ctx.get();
+  const upgrades = [];
+
+  for (const slot of EQUIP_SLOTS) {
+    const currentCode = char[`${slot}_slot`] || null;
+    const currentItem = currentCode ? getItem(currentCode) : null;
+    const currentScore = currentItem ? scoreItem(currentItem) : 0;
+
+    const candidates = getEquipmentForSlot(slot, char.level);
+    let bestItem = null;
+    let bestScore = currentScore;
+
+    for (const candidate of candidates) {
+      const score = scoreItem(candidate);
+      if (score <= bestScore || candidate.code === currentCode) continue;
+      if ((bankItems.get(candidate.code) || 0) < 1) continue;
+      bestItem = candidate;
+      bestScore = score;
+    }
+
+    if (bestItem) {
+      upgrades.push({ slot, itemCode: bestItem.code, scoreDelta: bestScore - currentScore });
+    }
+  }
+
+  return upgrades.sort((a, b) => b.scoreDelta - a.scoreDelta);
 }
 
 // --- Recipe chain resolution ---

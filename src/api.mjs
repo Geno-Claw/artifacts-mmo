@@ -116,6 +116,37 @@ export async function sellGE(code, quantity, price, name = CHARACTER) {
   return request('POST', `/my/${name}/action/grandexchange/sell`, { code, quantity, price });
 }
 
+export async function cancelGE(id, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/grandexchange/cancel`, { id });
+}
+
+// --- Gold banking ---
+
+export async function depositGold(quantity, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/bank/deposit/gold`, { quantity });
+}
+
+export async function withdrawGold(quantity, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/bank/withdraw/gold`, { quantity });
+}
+
+// --- Grand Exchange data ---
+
+export async function getMyGEOrders(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/my/grandexchange/orders${qs ? '?' + qs : ''}`);
+}
+
+export async function getMyGEHistory(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/my/grandexchange/history${qs ? '?' + qs : ''}`);
+}
+
+export async function getAllGEOrders(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/grandexchange/orders${qs ? '?' + qs : ''}`);
+}
+
 // --- Bank data ---
 
 export async function getBankItems(params = {}) {
