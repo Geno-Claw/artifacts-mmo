@@ -16,9 +16,9 @@ const DEFAULT_GOALS = {
   fishing: 20,
   cooking: 5,
   alchemy: 5,
-  weaponcrafting: 10,
-  gearcrafting: 10,
-  jewelrycrafting: 10,
+  weaponcrafting: 2,
+  gearcrafting: 2,
+  jewelrycrafting: 2,
   combat: 10,
   npc_task: 1,
 };

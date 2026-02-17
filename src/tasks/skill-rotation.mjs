@@ -139,6 +139,16 @@ export class SkillRotationTask extends BaseTask {
     for (let i = 0; i < plan.length; i++) {
       const step = plan[i];
 
+      if (step.type === 'bank') {
+        // Must come from bank (monster drops, etc.) — already withdrawn above
+        const have = ctx.itemCount(step.itemCode);
+        if (have >= step.quantity) continue;
+        // Don't have enough and can't gather it — skip this recipe
+        log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`);
+        await this.rotation.forceRotate(ctx);
+        return true;
+      }
+
       if (step.type === 'gather') {
         // Check if we already have enough of this material
         const have = ctx.itemCount(step.itemCode);

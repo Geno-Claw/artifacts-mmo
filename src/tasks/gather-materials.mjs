@@ -77,6 +77,13 @@ export class GatherMaterialsTask extends BaseTask {
 
   _findNextStep(ctx) {
     for (const step of this._plan) {
+      // Bank-only items (monster drops, etc.) — skip if have enough, can't gather
+      if (step.type === 'bank') {
+        if (ctx.itemCount(step.itemCode) >= step.quantity) continue;
+        // Can't do anything about this — bank withdrawal already attempted
+        continue;
+      }
+
       if (step.type === 'gather') {
         const needed = this._rawMaterialNeeded(ctx, step.itemCode);
         if (ctx.itemCount(step.itemCode) >= needed) continue;

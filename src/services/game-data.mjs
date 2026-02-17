@@ -276,14 +276,16 @@ export async function bankHasItem(code, quantity = 1) {
 
 /**
  * Resolve a recipe into an ordered production plan.
- * Each step is either { type: 'gather', itemCode, resource, quantity }
- * or { type: 'craft', itemCode, recipe, quantity }.
+ * Each step is one of:
+ *   { type: 'gather', itemCode, resource, quantity } — gatherable resource
+ *   { type: 'craft', itemCode, recipe, quantity }   — craftable intermediate
+ *   { type: 'bank', itemCode, quantity }             — must come from bank (monster drops, etc.)
  *
  * Handles multi-level recipe chains (e.g., copper_dagger needs copper,
  * copper needs copper_ore). Returns steps in dependency order:
- * gather raw materials first, then craft intermediates.
+ * gather/obtain raw materials first, then craft intermediates.
  *
- * Returns null if any material in the chain cannot be resolved.
+ * Returns null only for circular dependencies.
  */
 export function resolveRecipeChain(recipe) {
   const steps = [];
@@ -327,9 +329,13 @@ export function resolveRecipeChain(recipe) {
         continue;
       }
 
-      // 3. Unresolvable
-      log.warn(`[GameData] Cannot resolve material "${mat.code}": not a resource drop and not craftable`);
-      return false;
+      // 3. Must come from bank (monster drops, event items, etc.)
+      const existing = steps.find(s => s.itemCode === mat.code && s.type === 'bank');
+      if (existing) {
+        existing.quantity += needed;
+      } else {
+        steps.push({ type: 'bank', itemCode: mat.code, quantity: needed });
+      }
     }
     return true;
   }
