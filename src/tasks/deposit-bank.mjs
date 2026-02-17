@@ -3,7 +3,6 @@ import { depositAll, moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import * as gameData from '../services/game-data.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
 
 export class DepositBankTask extends BaseTask {
@@ -59,10 +58,8 @@ export class DepositBankTask extends BaseTask {
 
   async _sellOnGE(ctx) {
     try {
-      // Force-refresh bank since we just deposited + possibly equipped
-      const bankItems = await gameData.getBankItems(true);
       await moveTo(ctx, BANK.x, BANK.y);
-      await geSeller.executeSellFlow(ctx, bankItems);
+      await geSeller.executeSellFlow(ctx);
     } catch (err) {
       log.error(`[${ctx.name}] GE sell flow error: ${err.message}`);
     }

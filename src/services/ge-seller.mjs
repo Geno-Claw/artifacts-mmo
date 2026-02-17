@@ -12,6 +12,22 @@ import { BANK } from '../data/locations.mjs';
 
 let sellRules = null;
 
+// --- Concurrency control ---
+
+let _sellLock = null;
+
+async function withSellLock(fn) {
+  while (_sellLock) await _sellLock;
+  let release;
+  _sellLock = new Promise(r => { release = r; });
+  try {
+    return await fn();
+  } finally {
+    _sellLock = null;
+    release();
+  }
+}
+
 // --- Config ---
 
 export function loadSellRules() {
@@ -171,101 +187,111 @@ export async function cancelStaleOrders(ctx, activeOrders) {
 /**
  * Execute the full GE sell flow for a character.
  * Assumes character is at the bank. Will move to GE and back.
+ * Uses an async mutex so only one character sells at a time,
+ * preventing concurrent reads of stale bank state.
  *
  * @param {import('../context.mjs').CharacterContext} ctx
- * @param {Map<string, number>} bankItems
  * @returns {Promise<number>} Number of new sell orders created
  */
-export async function executeSellFlow(ctx, bankItems) {
-  const geLocation = gameData.getGELocation();
-  if (!geLocation) {
-    log.warn(`[${ctx.name}] GE: location unknown, skipping sell flow`);
-    return 0;
+export async function executeSellFlow(ctx) {
+  if (_sellLock) {
+    log.info(`[${ctx.name}] GE: waiting for another character's sell flow to finish`);
   }
 
-  const candidates = analyzeSellCandidates(ctx, bankItems);
-  if (candidates.length === 0) {
-    log.info(`[${ctx.name}] GE: no items to sell`);
-    return 0;
-  }
-
-  log.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity}`).join(', ')}`);
-
-  // Step 1: Withdraw sell candidates from bank (must be at bank)
-  await moveTo(ctx, BANK.x, BANK.y);
-  const withdrawn = [];
-
-  for (const candidate of candidates) {
-    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-    if (space <= 0) {
-      log.warn(`[${ctx.name}] GE: inventory full, stopping withdrawals`);
-      break;
+  return withSellLock(async () => {
+    const geLocation = gameData.getGELocation();
+    if (!geLocation) {
+      log.warn(`[${ctx.name}] GE: location unknown, skipping sell flow`);
+      return 0;
     }
 
-    const qty = Math.min(candidate.quantity, space);
-    if (qty <= 0) continue;
+    // Force-refresh bank inside the lock to get current state
+    const bankItems = await gameData.getBankItems(true);
 
-    try {
-      const result = await api.withdrawBank([{ code: candidate.code, quantity: qty }], ctx.name);
-      await api.waitForCooldown(result);
-      await ctx.refresh();
-      withdrawn.push({ code: candidate.code, quantity: qty });
-    } catch (err) {
-      log.warn(`[${ctx.name}] GE: could not withdraw ${candidate.code}: ${err.message}`);
+    const candidates = analyzeSellCandidates(ctx, bankItems);
+    if (candidates.length === 0) {
+      log.info(`[${ctx.name}] GE: no items to sell`);
+      return 0;
     }
-  }
 
-  if (withdrawn.length === 0) return 0;
+    log.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity}`).join(', ')}`);
 
-  // Step 2: Determine prices and ensure we have gold for listing fees (still at bank)
-  const priced = [];
-  for (const item of withdrawn) {
-    const price = await determinePrice(item.code);
-    priced.push({ ...item, price });
-  }
+    // Step 1: Withdraw sell candidates from bank (must be at bank)
+    await moveTo(ctx, BANK.x, BANK.y);
+    const withdrawn = [];
 
-  const totalFees = priced.reduce((sum, p) => sum + Math.ceil(p.price * p.quantity * 0.05), 0);
-  const charGold = ctx.get().gold;
-  if (totalFees > charGold) {
-    const needed = totalFees - charGold;
-    try {
-      log.info(`[${ctx.name}] GE: withdrawing ${needed}g from bank for listing fees`);
-      const result = await api.withdrawGold(needed, ctx.name);
-      await api.waitForCooldown(result);
-      await ctx.refresh();
-    } catch (err) {
-      log.warn(`[${ctx.name}] GE: could not withdraw gold for fees: ${err.message}`);
-    }
-  }
-
-  // Step 3: Move to GE
-  await moveTo(ctx, geLocation.x, geLocation.y);
-
-  // Step 4: Check active orders (for logging + stale cancellation)
-  const activeOrders = await collectCompletedOrders(ctx);
-  await cancelStaleOrders(ctx, activeOrders);
-
-  // Step 5: Create sell orders
-  let ordersCreated = 0;
-
-  for (const item of priced) {
-    try {
-      const result = await api.sellGE(item.code, item.quantity, item.price, ctx.name);
-      await api.waitForCooldown(result);
-      await ctx.refresh();
-      ordersCreated++;
-      log.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${item.price}g each`);
-    } catch (err) {
-      if (err.code === 437) {
-        log.info(`[${ctx.name}] GE: ${item.code} cannot be sold on GE, will re-deposit`);
-      } else if (err.code === 433) {
-        log.warn(`[${ctx.name}] GE: order limit reached (100), stopping`);
+    for (const candidate of candidates) {
+      const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+      if (space <= 0) {
+        log.warn(`[${ctx.name}] GE: inventory full, stopping withdrawals`);
         break;
-      } else {
-        log.warn(`[${ctx.name}] GE: failed to sell ${item.code}: ${err.message}`);
+      }
+
+      const qty = Math.min(candidate.quantity, space);
+      if (qty <= 0) continue;
+
+      try {
+        const result = await api.withdrawBank([{ code: candidate.code, quantity: qty }], ctx.name);
+        await api.waitForCooldown(result);
+        await ctx.refresh();
+        withdrawn.push({ code: candidate.code, quantity: qty });
+      } catch (err) {
+        log.warn(`[${ctx.name}] GE: could not withdraw ${candidate.code}: ${err.message}`);
       }
     }
-  }
 
-  return ordersCreated;
+    if (withdrawn.length === 0) return 0;
+
+    // Step 2: Determine prices and ensure we have gold for listing fees (still at bank)
+    const priced = [];
+    for (const item of withdrawn) {
+      const price = await determinePrice(item.code);
+      priced.push({ ...item, price });
+    }
+
+    const totalFees = priced.reduce((sum, p) => sum + Math.ceil(p.price * p.quantity * 0.05), 0);
+    const charGold = ctx.get().gold;
+    if (totalFees > charGold) {
+      const needed = totalFees - charGold;
+      try {
+        log.info(`[${ctx.name}] GE: withdrawing ${needed}g from bank for listing fees`);
+        const result = await api.withdrawGold(needed, ctx.name);
+        await api.waitForCooldown(result);
+        await ctx.refresh();
+      } catch (err) {
+        log.warn(`[${ctx.name}] GE: could not withdraw gold for fees: ${err.message}`);
+      }
+    }
+
+    // Step 3: Move to GE
+    await moveTo(ctx, geLocation.x, geLocation.y);
+
+    // Step 4: Check active orders (for logging + stale cancellation)
+    const activeOrders = await collectCompletedOrders(ctx);
+    await cancelStaleOrders(ctx, activeOrders);
+
+    // Step 5: Create sell orders
+    let ordersCreated = 0;
+
+    for (const item of priced) {
+      try {
+        const result = await api.sellGE(item.code, item.quantity, item.price, ctx.name);
+        await api.waitForCooldown(result);
+        await ctx.refresh();
+        ordersCreated++;
+        log.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${item.price}g each`);
+      } catch (err) {
+        if (err.code === 437) {
+          log.info(`[${ctx.name}] GE: ${item.code} cannot be sold on GE, will re-deposit`);
+        } else if (err.code === 433) {
+          log.warn(`[${ctx.name}] GE: order limit reached (100), stopping`);
+          break;
+        } else {
+          log.warn(`[${ctx.name}] GE: failed to sell ${item.code}: ${err.message}`);
+        }
+      }
+    }
+
+    return ordersCreated;
+  });
 }
