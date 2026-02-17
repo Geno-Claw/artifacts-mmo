@@ -72,16 +72,20 @@ export async function rest(name = CHARACTER) {
   return request('POST', `/my/${name}/action/rest`);
 }
 
+export async function useItem(code, quantity = 1, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/use`, { code, quantity });
+}
+
 export async function craft(code, quantity = 1, name = CHARACTER) {
   return request('POST', `/my/${name}/action/crafting`, { code, quantity });
 }
 
-export async function depositBank(code, quantity, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/bank/deposit`, { code, quantity });
+export async function depositBank(items, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/bank/deposit/item`, items);
 }
 
-export async function withdrawBank(code, quantity, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/bank/withdraw`, { code, quantity });
+export async function withdrawBank(items, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/bank/withdraw/item`, items);
 }
 
 export async function equipItem(slot, code, name = CHARACTER) {
@@ -100,12 +104,23 @@ export async function completeTask(name = CHARACTER) {
   return request('POST', `/my/${name}/action/task/complete`);
 }
 
-export async function buyGE(code, quantity, price, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/ge/buy`, { code, quantity, price });
+export async function cancelTask(name = CHARACTER) {
+  return request('POST', `/my/${name}/action/task/cancel`);
+}
+
+export async function buyGE(id, quantity, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/grandexchange/buy`, { id, quantity });
 }
 
 export async function sellGE(code, quantity, price, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/ge/sell`, { code, quantity, price });
+  return request('POST', `/my/${name}/action/grandexchange/sell`, { code, quantity, price });
+}
+
+// --- Bank data ---
+
+export async function getBankItems(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/my/bank/items${qs ? '?' + qs : ''}`);
 }
 
 // --- World data ---

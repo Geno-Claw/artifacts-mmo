@@ -3,12 +3,35 @@
     {
       "name": "GenoClaw",
       "tasks": [
-        { "type": "rest", "triggerPct": 40, "targetPct": 80 },
-        { "type": "depositBank", "threshold": 0.8 },
-        { "type": "completeNpcTask" },
-        { "type": "fightTaskMonster" },
-        { "type": "acceptNpcTask" },
-        { "type": "fightMonsters", "monster": "chicken", "priority": 10 }
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0.8
+        },
+        {
+          "type": "autoEquip",
+          "checkInterval": 300000
+        },
+        {
+          "type": "skillRotation",
+          "skills": ["mining", "woodcutting", "fishing", "cooking", "alchemy", "weaponcrafting", "gearcrafting", "jewelrycrafting", "combat", "npc_task"],
+          "goals": {
+            "mining": 100,
+            "woodcutting": 100,
+            "fishing": 100,
+            "cooking": 20,
+            "alchemy": 20,
+            "weaponcrafting": 10,
+            "gearcrafting": 10,
+            "jewelrycrafting": 10,
+            "combat": 50,
+            "npc_task": 1
+          }
+        }
       ]
     }
   ]

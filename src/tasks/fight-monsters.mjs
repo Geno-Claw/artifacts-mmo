@@ -1,7 +1,8 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce } from '../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
+import { canBeatMonster } from '../services/combat-simulator.mjs';
 
 export class FightMonstersTask extends BaseTask {
   /**
@@ -10,27 +11,25 @@ export class FightMonstersTask extends BaseTask {
    * @param {number} [opts.restThreshold=30] — HP% below which to bail (let RestTask take over)
    * @param {number} [opts.priority=10]
    */
-  constructor(monster, { restThreshold = 30, priority = 10 } = {}) {
+  constructor(monster, { priority = 10 } = {}) {
     const loc = MONSTERS[monster];
     if (!loc) throw new Error(`Unknown monster: ${monster}`);
 
     super({ name: `Fight ${monster}`, priority, loop: true });
     this.monster = monster;
     this.loc = loc;
-    this.restThreshold = restThreshold;
   }
 
   canRun(ctx) {
     if (ctx.get().level < this.loc.level) return false;
-    if (ctx.hpPercent() < this.restThreshold) return false;
+    if (!canBeatMonster(ctx, this.monster)) return false;
     if (ctx.inventoryFull()) return false;
     return true;
   }
 
   async execute(ctx) {
     await moveTo(ctx, this.loc.x, this.loc.y);
-
-    if (ctx.hpPercent() < this.restThreshold) return false;
+    await restBeforeFight(ctx, this.monster);
 
     const result = await fightOnce(ctx);
     const f = result.fight;
@@ -47,6 +46,6 @@ export class FightMonstersTask extends BaseTask {
       return false;
     }
 
-    return !ctx.inventoryFull() && ctx.hpPercent() >= this.restThreshold;
+    return !ctx.inventoryFull();
   }
 }

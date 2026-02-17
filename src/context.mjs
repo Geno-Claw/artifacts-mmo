@@ -8,10 +8,21 @@ export class CharacterContext {
   constructor(name) {
     this.name = name;
     this._char = null;
+    this._losses = {};       // { monsterCode: count }
+    this._lastLevel = null;  // for detecting level-ups
+    this.craftTarget = null;  // shared craft target for gather/craft tasks
   }
 
   async refresh() {
     this._char = await getCharacter(this.name);
+
+    // Reset all losses on level-up so bot retries task monsters
+    const level = this._char.level;
+    if (this._lastLevel !== null && level > this._lastLevel) {
+      this._losses = {};
+    }
+    this._lastLevel = level;
+
     return this._char;
   }
 
@@ -40,18 +51,24 @@ export class CharacterContext {
     return slot ? slot.quantity : 0;
   }
 
-  inventoryUsed() {
-    return this.get().inventory?.filter(s => s.code).length || 0;
+  inventoryCount() {
+    const inv = this.get().inventory;
+    if (!inv) return 0;
+    let total = 0;
+    for (const slot of inv) {
+      if (slot.code) total += slot.quantity;
+    }
+    return total;
   }
 
-  inventorySlots() {
-    return this.get().inventory?.length || 0;
+  inventoryCapacity() {
+    return this.get().inventory_max_items || 0;
   }
 
   inventoryFull() {
-    const inv = this.get().inventory;
-    if (!inv) return false;
-    return inv.every(s => s.code);
+    const cap = this.inventoryCapacity();
+    if (cap === 0) return false;
+    return this.inventoryCount() >= cap;
   }
 
   hasTask() {
@@ -65,5 +82,27 @@ export class CharacterContext {
 
   skillLevel(skill) {
     return this.get()[`${skill}_level`] || 0;
+  }
+
+  equippedItem(slot) {
+    return this.get()[`${slot}_slot`] || null;
+  }
+
+  // --- Loss tracking ---
+
+  recordLoss(monsterCode) {
+    this._losses[monsterCode] = (this._losses[monsterCode] || 0) + 1;
+  }
+
+  consecutiveLosses(monsterCode) {
+    return this._losses[monsterCode] || 0;
+  }
+
+  clearLosses(monsterCode) {
+    delete this._losses[monsterCode];
+  }
+
+  taskCoins() {
+    return this.get().tasks_coins || 0;
   }
 }

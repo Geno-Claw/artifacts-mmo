@@ -8,9 +8,9 @@ export class DepositBankTask extends BaseTask {
   }
 
   canRun(ctx) {
-    const used = ctx.inventoryUsed();
-    const total = ctx.inventorySlots();
-    return total > 0 && (used / total) >= this.threshold;
+    const count = ctx.inventoryCount();
+    const cap = ctx.inventoryCapacity();
+    return cap > 0 && (count / cap) >= this.threshold;
   }
 
   async execute(ctx) {

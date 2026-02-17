@@ -18,18 +18,6 @@ export const MONSTERS = {
   spider:       { x: -3, y: 12, level: 12 },
 };
 
-export const RESOURCES = {
-  // Mining
-  copper_ore:  { x: 2, y: 0, skill: 'mining', level: 1 },
-  iron_ore:    { x: 1, y: 7, skill: 'mining', level: 10 },
-  // Woodcutting
-  ash_tree:    { x: -1, y: 0, skill: 'woodcutting', level: 1 },
-  spruce_tree: { x: 2, y: 6, skill: 'woodcutting', level: 10 },
-  // Fishing
-  gudgeon:     { x: 4, y: 2, skill: 'fishing', level: 1 },
-  shrimp:      { x: 5, y: 2, skill: 'fishing', level: 10 },
-};
-
 export const BANK = { x: 4, y: 1 };
 
 export const TASKS_MASTER = {

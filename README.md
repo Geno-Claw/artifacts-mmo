@@ -17,3 +17,4 @@ Geno-Claw's automated player for [Artifacts MMO](https://artifactsmmo.com/) — 
 
 - [API Reference](https://api.artifactsmmo.com/docs/)
 - [Game Docs](https://docs.artifactsmmo.com/)
+= [SKILL](~/.claude/skills/artifacts-mmo/)

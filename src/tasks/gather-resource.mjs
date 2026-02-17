@@ -1,16 +1,16 @@
 import { BaseTask } from './base.mjs';
 import * as log from '../log.mjs';
 import { moveTo, gatherOnce } from '../helpers.mjs';
-import { RESOURCES } from '../data/locations.mjs';
+import * as gameData from '../services/game-data.mjs';
 
 export class GatherResourceTask extends BaseTask {
   /**
-   * @param {string} resource — key from RESOURCES table
+   * @param {string} resource — resource code from the API (e.g. "copper_rocks", "ash_tree")
    * @param {object} [opts]
    * @param {number} [opts.priority=10]
    */
   constructor(resource, { priority = 10 } = {}) {
-    const res = RESOURCES[resource];
+    const res = gameData.getResource(resource);
     if (!res) throw new Error(`Unknown resource: ${resource}`);
 
     super({ name: `Gather ${resource}`, priority, loop: true });
@@ -25,7 +25,13 @@ export class GatherResourceTask extends BaseTask {
   }
 
   async execute(ctx) {
-    await moveTo(ctx, this.res.x, this.res.y);
+    const location = await gameData.getResourceLocation(this.resource);
+    if (!location) {
+      log.error(`[${ctx.name}] No map location found for resource ${this.resource}`);
+      return false;
+    }
+
+    await moveTo(ctx, location.x, location.y);
 
     const result = await gatherOnce(ctx);
     const items = result.details?.items || [];

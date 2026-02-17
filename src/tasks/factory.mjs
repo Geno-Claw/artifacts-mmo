@@ -7,15 +7,25 @@ import { CompleteNpcTask, AcceptNpcTask } from './do-task.mjs';
 import { FightTaskMonsterTask } from './fight-task-monster.mjs';
 import { FightMonstersTask } from './fight-monsters.mjs';
 import { GatherResourceTask } from './gather-resource.mjs';
+import { CancelNpcTask } from './cancel-task.mjs';
+import { AutoEquipTask } from './auto-equip.mjs';
+import { CraftGearTask } from './craft-gear.mjs';
+import { GatherMaterialsTask } from './gather-materials.mjs';
+import { SkillRotationTask } from './skill-rotation.mjs';
 
 const TASK_TYPES = {
   rest:              (cfg) => new RestTask(cfg),
   depositBank:       (cfg) => new DepositBankTask(cfg),
   completeNpcTask:   (cfg) => new CompleteNpcTask(cfg),
   acceptNpcTask:     (cfg) => new AcceptNpcTask(cfg),
+  cancelNpcTask:     (cfg) => new CancelNpcTask(cfg),
   fightTaskMonster:  (cfg) => new FightTaskMonsterTask(cfg),
   fightMonsters:     (cfg) => new FightMonstersTask(cfg.monster, cfg),
   gatherResource:    (cfg) => new GatherResourceTask(cfg.resource, cfg),
+  autoEquip:         (cfg) => new AutoEquipTask(cfg),
+  craftGear:         (cfg) => new CraftGearTask(cfg),
+  gatherMaterials:   (cfg) => new GatherMaterialsTask(cfg),
+  skillRotation:     (cfg) => new SkillRotationTask(cfg),
 };
 
 export function buildTasks(taskConfigs) {

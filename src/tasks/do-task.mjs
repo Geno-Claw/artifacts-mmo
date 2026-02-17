@@ -10,7 +10,9 @@ export class CompleteNpcTask extends BaseTask {
   }
 
   canRun(ctx) {
-    return ctx.taskComplete();
+    if (!ctx.taskComplete()) return false;
+    if (ctx.inventoryFull()) return false;
+    return true;
   }
 
   async execute(ctx) {
@@ -29,7 +31,9 @@ export class AcceptNpcTask extends BaseTask {
   }
 
   canRun(ctx) {
-    return !ctx.hasTask();
+    if (ctx.hasTask()) return false;
+    if (ctx.inventoryFull()) return false;
+    return true;
   }
 
   async execute(ctx) {
