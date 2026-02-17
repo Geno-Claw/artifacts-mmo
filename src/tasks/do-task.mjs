@@ -1,45 +1,44 @@
 import { BaseTask } from './base.mjs';
-import * as state from '../state.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { moveTo } from '../helpers.mjs';
 import { TASKS_MASTER } from '../data/locations.mjs';
 
 export class CompleteNpcTask extends BaseTask {
-  constructor() {
-    super({ name: 'Complete NPC Task', priority: 60, loop: false });
+  constructor({ priority = 60 } = {}) {
+    super({ name: 'Complete NPC Task', priority, loop: false });
   }
 
-  canRun(_char) {
-    return state.taskComplete();
+  canRun(ctx) {
+    return ctx.taskComplete();
   }
 
-  async execute(_char) {
-    const c = state.get();
-    log.info(`Completing task: ${c.task} (${c.task_progress}/${c.task_total})`);
-    await moveTo(TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
-    const result = await api.completeTask();
+  async execute(ctx) {
+    const c = ctx.get();
+    log.info(`[${ctx.name}] Completing task: ${c.task} (${c.task_progress}/${c.task_total})`);
+    await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
+    const result = await api.completeTask(ctx.name);
     await api.waitForCooldown(result);
-    await state.refresh();
+    await ctx.refresh();
   }
 }
 
 export class AcceptNpcTask extends BaseTask {
-  constructor() {
-    super({ name: 'Accept NPC Task', priority: 15, loop: false });
+  constructor({ priority = 15 } = {}) {
+    super({ name: 'Accept NPC Task', priority, loop: false });
   }
 
-  canRun(_char) {
-    return !state.hasTask();
+  canRun(ctx) {
+    return !ctx.hasTask();
   }
 
-  async execute(_char) {
-    log.info('Accepting new task');
-    await moveTo(TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
-    const result = await api.acceptTask();
+  async execute(ctx) {
+    log.info(`[${ctx.name}] Accepting new task`);
+    await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
+    const result = await api.acceptTask(ctx.name);
     await api.waitForCooldown(result);
-    await state.refresh();
-    const c = state.get();
-    log.info(`New task: ${c.task} (0/${c.task_total})`);
+    await ctx.refresh();
+    const c = ctx.get();
+    log.info(`[${ctx.name}] New task: ${c.task} (0/${c.task_total})`);
   }
 }

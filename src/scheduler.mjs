@@ -1,7 +1,7 @@
 /**
  * The brain — picks the highest-priority task that can run and executes it.
+ * Operates on a single CharacterContext.
  */
-import * as state from './state.mjs';
 import * as log from './log.mjs';
 
 function sleep(ms) {
@@ -9,51 +9,52 @@ function sleep(ms) {
 }
 
 export class Scheduler {
-  constructor(tasks = []) {
+  constructor(ctx, tasks = []) {
+    this.ctx = ctx;
     this.tasks = [...tasks].sort((a, b) => b.priority - a.priority);
   }
 
   /** Return the highest-priority task whose canRun() passes. */
-  pickTask(char) {
+  pickTask() {
     for (const task of this.tasks) {
-      if (task.canRun(char)) return task;
+      if (task.canRun(this.ctx)) return task;
     }
     return null;
   }
 
   /** Main loop — runs forever. */
   async run() {
-    log.info('Bot loop started');
+    log.info(`[${this.ctx.name}] Bot loop started`);
 
     while (true) {
-      const char = await state.refresh();
-      const task = this.pickTask(char);
+      await this.ctx.refresh();
+      const task = this.pickTask();
 
       if (!task) {
-        log.warn('No runnable tasks — idling 30s');
+        log.warn(`[${this.ctx.name}] No runnable tasks — idling 30s`);
         await sleep(30_000);
         continue;
       }
 
-      log.info(`→ ${task.name}`);
+      log.info(`[${this.ctx.name}] → ${task.name}`);
 
       try {
         if (task.loop) {
           let keepGoing = true;
           while (keepGoing) {
-            const fresh = await state.refresh();
-            if (!task.canRun(fresh)) {
-              log.info(`${task.name}: conditions changed, yielding`);
+            await this.ctx.refresh();
+            if (!task.canRun(this.ctx)) {
+              log.info(`[${this.ctx.name}] ${task.name}: conditions changed, yielding`);
               break;
             }
-            keepGoing = await task.execute(fresh);
+            keepGoing = await task.execute(this.ctx);
           }
         } else {
-          await task.execute(char);
+          await task.execute(this.ctx);
         }
-        log.info(`${task.name}: done`);
+        log.info(`[${this.ctx.name}] ${task.name}: done`);
       } catch (err) {
-        log.error(`${task.name} failed`, err.message);
+        log.error(`[${this.ctx.name}] ${task.name} failed`, err.message);
         await sleep(10_000);
       }
 

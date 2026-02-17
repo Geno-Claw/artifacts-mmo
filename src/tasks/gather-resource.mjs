@@ -1,5 +1,4 @@
 import { BaseTask } from './base.mjs';
-import * as state from '../state.mjs';
 import * as log from '../log.mjs';
 import { moveTo, gatherOnce } from '../helpers.mjs';
 import { RESOURCES } from '../data/locations.mjs';
@@ -19,19 +18,19 @@ export class GatherResourceTask extends BaseTask {
     this.res = res;
   }
 
-  canRun(_char) {
-    if (state.skillLevel(this.res.skill) < this.res.level) return false;
-    if (state.inventoryFull()) return false;
+  canRun(ctx) {
+    if (ctx.skillLevel(this.res.skill) < this.res.level) return false;
+    if (ctx.inventoryFull()) return false;
     return true;
   }
 
-  async execute(_char) {
-    await moveTo(this.res.x, this.res.y);
+  async execute(ctx) {
+    await moveTo(ctx, this.res.x, this.res.y);
 
-    const result = await gatherOnce();
+    const result = await gatherOnce(ctx);
     const items = result.details?.items || [];
-    log.info(`${this.resource}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'}`);
+    log.info(`[${ctx.name}] ${this.resource}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'}`);
 
-    return !state.inventoryFull();
+    return !ctx.inventoryFull();
   }
 }

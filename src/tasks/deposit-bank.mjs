@@ -1,21 +1,19 @@
 import { BaseTask } from './base.mjs';
-import * as state from '../state.mjs';
 import { depositAll } from '../helpers.mjs';
 
-const THRESHOLD = 0.8; // trigger when 80% of inventory slots used
-
 export class DepositBankTask extends BaseTask {
-  constructor() {
-    super({ name: 'Deposit to Bank', priority: 50, loop: false });
+  constructor({ threshold = 0.8, priority = 50 } = {}) {
+    super({ name: 'Deposit to Bank', priority, loop: false });
+    this.threshold = threshold;
   }
 
-  canRun(_char) {
-    const used = state.inventoryUsed();
-    const total = state.inventorySlots();
-    return total > 0 && (used / total) >= THRESHOLD;
+  canRun(ctx) {
+    const used = ctx.inventoryUsed();
+    const total = ctx.inventorySlots();
+    return total > 0 && (used / total) >= this.threshold;
   }
 
-  async execute(_char) {
-    await depositAll();
+  async execute(ctx) {
+    await depositAll(ctx);
   }
 }

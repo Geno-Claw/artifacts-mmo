@@ -1,20 +1,18 @@
 import { BaseTask } from './base.mjs';
-import * as state from '../state.mjs';
 import { restUntil } from '../helpers.mjs';
 
-const TRIGGER_PCT = 40;
-const TARGET_PCT = 80;
-
 export class RestTask extends BaseTask {
-  constructor() {
-    super({ name: 'Rest', priority: 100, loop: false });
+  constructor({ triggerPct = 40, targetPct = 80, priority = 100 } = {}) {
+    super({ name: 'Rest', priority, loop: false });
+    this.triggerPct = triggerPct;
+    this.targetPct = targetPct;
   }
 
-  canRun(_char) {
-    return state.hpPercent() < TRIGGER_PCT;
+  canRun(ctx) {
+    return ctx.hpPercent() < this.triggerPct;
   }
 
-  async execute(_char) {
-    await restUntil(TARGET_PCT);
+  async execute(ctx) {
+    await restUntil(ctx, this.targetPct);
   }
 }

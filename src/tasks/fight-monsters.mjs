@@ -1,9 +1,7 @@
 import { BaseTask } from './base.mjs';
-import * as state from '../state.mjs';
 import * as log from '../log.mjs';
 import { moveTo, fightOnce } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
-import { CHARACTER } from '../api.mjs';
 
 export class FightMonstersTask extends BaseTask {
   /**
@@ -22,33 +20,33 @@ export class FightMonstersTask extends BaseTask {
     this.restThreshold = restThreshold;
   }
 
-  canRun(char) {
-    if (char.level < this.loc.level) return false;
-    if (state.hpPercent() < this.restThreshold) return false;
-    if (state.inventoryFull()) return false;
+  canRun(ctx) {
+    if (ctx.get().level < this.loc.level) return false;
+    if (ctx.hpPercent() < this.restThreshold) return false;
+    if (ctx.inventoryFull()) return false;
     return true;
   }
 
-  async execute(_char) {
-    await moveTo(this.loc.x, this.loc.y);
+  async execute(ctx) {
+    await moveTo(ctx, this.loc.x, this.loc.y);
 
-    if (state.hpPercent() < this.restThreshold) return false;
+    if (ctx.hpPercent() < this.restThreshold) return false;
 
-    const result = await fightOnce();
+    const result = await fightOnce(ctx);
     const f = result.fight;
-    const cr = f.characters?.find(c => c.character_name === CHARACTER)
+    const cr = f.characters?.find(c => c.character_name === ctx.name)
             || f.characters?.[0] || {};
 
     if (f.result === 'win') {
       const drops = cr.drops?.map(d => `${d.code}x${d.quantity}`).join(', ') || '';
-      const c = state.get();
+      const c = ctx.get();
       const task = c.task ? ` [task: ${c.task_progress}/${c.task_total}]` : '';
-      log.info(`${this.monster}: WIN ${f.turns}t | +${cr.xp || 0}xp +${cr.gold || 0}g${drops ? ' | ' + drops : ''} (${cr.final_hp}hp)${task}`);
+      log.info(`[${ctx.name}] ${this.monster}: WIN ${f.turns}t | +${cr.xp || 0}xp +${cr.gold || 0}g${drops ? ' | ' + drops : ''} (${cr.final_hp}hp)${task}`);
     } else {
-      log.warn(`${this.monster}: LOSS ${f.turns}t`);
+      log.warn(`[${ctx.name}] ${this.monster}: LOSS ${f.turns}t`);
       return false;
     }
 
-    return !state.inventoryFull() && state.hpPercent() >= this.restThreshold;
+    return !ctx.inventoryFull() && ctx.hpPercent() >= this.restThreshold;
   }
 }

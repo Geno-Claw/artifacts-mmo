@@ -1,0 +1,15 @@
+{
+  "characters": [
+    {
+      "name": "GenoClaw",
+      "tasks": [
+        { "type": "rest", "triggerPct": 40, "targetPct": 80 },
+        { "type": "depositBank", "threshold": 0.8 },
+        { "type": "completeNpcTask" },
+        { "type": "fightTaskMonster" },
+        { "type": "acceptNpcTask" },
+        { "type": "fightMonsters", "monster": "chicken", "priority": 10 }
+      ]
+    }
+  ]
+}
