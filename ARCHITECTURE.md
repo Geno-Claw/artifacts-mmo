@@ -150,8 +150,15 @@ Considers items from bank, inventory, and currently equipped. Handles ring dedup
 Grand Exchange selling automation:
 - Identify sell candidates (duplicate equipment, always-sell rules)
 - Price via undercut strategy (configured % below lowest listing)
-- Withdraw → list → deposit flow
+- Withdraw → list → deposit flow with inventory verification before each sell order
 - Order collection and stale order cancellation
+- Concurrency control: async mutex ensures only one character sells at a time
+
+### Bank Data (`getBankItems` in `services/game-data.mjs`)
+Bank contents are fetched via paginated API (100 items/page) and cached with a 60s TTL. Key safeguards:
+- **Last-write-wins**: Each item code exists once in the bank (items stack). If pagination shifts cause a duplicate across pages, the latest value is used rather than accumulating — prevents over-counting when concurrent deposits/withdrawals shift items between pages.
+- **In-flight fetch guard**: If a fetch is already in progress, concurrent callers reuse the same promise instead of starting parallel fetches.
+- **Local-then-assign**: The map is built in a local variable and assigned to the cache only when complete, so concurrent readers never see a partially-built map.
 
 ### Skill Rotation (`services/skill-rotation.mjs`)
 State machine for `SkillRotationTask`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.

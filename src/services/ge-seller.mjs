@@ -47,39 +47,14 @@ export function getSellRules() {
 // --- Analysis ---
 
 /**
- * Build a Map<itemCode, quantity> of all items held by characters
- * (inventories + equipped slots). Does NOT include bank items.
- * @param {Array} characters - array from api.getMyCharacters()
- * @returns {Map<string, number>}
- */
-function buildCharacterItemCounts(characters) {
-  const counts = new Map();
-
-  for (const char of characters) {
-    for (const slot of (char.inventory || [])) {
-      if (!slot.code) continue;
-      counts.set(slot.code, (counts.get(slot.code) || 0) + slot.quantity);
-    }
-
-    for (const slot of gameData.EQUIPMENT_SLOTS) {
-      const code = char[`${slot}_slot`] || null;
-      if (code) {
-        counts.set(code, (counts.get(code) || 0) + 1);
-      }
-    }
-  }
-
-  return counts;
-}
-
-/**
  * Determine which items to sell from bank contents.
+ * Only considers bank quantities — items on characters are in use and not
+ * part of the sell decision. Rings auto-double the keep value (2 slots per char).
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {Map<string, number>} bankItems - code → quantity
- * @param {Map<string, number>} charItemCounts - code → quantity across all characters
  * @returns {Array<{ code: string, quantity: number, reason: string }>}
  */
-export function analyzeSellCandidates(ctx, bankItems, charItemCounts = new Map()) {
+export function analyzeSellCandidates(ctx, bankItems) {
   if (!sellRules) return [];
 
   const candidates = [];
@@ -87,7 +62,7 @@ export function analyzeSellCandidates(ctx, bankItems, charItemCounts = new Map()
 
   // 1. Equipment duplicate detection
   if (sellRules.sellDuplicateEquipment) {
-    const keep = sellRules.keepPerEquipmentCode ?? 1;
+    const baseKeep = sellRules.keepPerEquipmentCode ?? 1;
 
     for (const [code, bankQty] of bankItems.entries()) {
       if (neverSellSet.has(code)) continue;
@@ -95,20 +70,15 @@ export function analyzeSellCandidates(ctx, bankItems, charItemCounts = new Map()
       const item = gameData.getItem(code);
       if (!item || !gameData.isEquipmentType(item)) continue;
 
-      // Total owned = bank + all character inventories + all character equipped
-      const charQty = charItemCounts.get(code) || 0;
-      const totalOwned = bankQty + charQty;
-      const surplus = totalOwned - keep;
+      // Rings need 2 per character (ring1 + ring2 slots), so double the keep
+      const keep = item.type === 'ring' ? baseKeep * 2 : baseKeep;
+      const surplus = bankQty - keep;
       if (surplus <= 0) continue;
-
-      // Can only sell what is actually in the bank
-      const sellQty = Math.min(surplus, bankQty);
-      if (sellQty <= 0) continue;
 
       candidates.push({
         code,
-        quantity: sellQty,
-        reason: `duplicate equipment (keeping ${keep}, total owned: ${totalOwned})`,
+        quantity: surplus,
+        reason: `duplicate equipment (bank: ${bankQty}, keeping ${keep}${item.type === 'ring' ? ' (ring x2)' : ''})`,
       });
     }
   }
@@ -242,17 +212,13 @@ export async function executeSellFlow(ctx) {
     // Force-refresh bank inside the lock to get current state
     const bankItems = await gameData.getBankItems(true);
 
-    // Fetch all character data to count items outside the bank
-    const allCharacters = await api.getMyCharacters();
-    const charItemCounts = buildCharacterItemCounts(allCharacters);
-
-    const candidates = analyzeSellCandidates(ctx, bankItems, charItemCounts);
+    const candidates = analyzeSellCandidates(ctx, bankItems);
     if (candidates.length === 0) {
       log.info(`[${ctx.name}] GE: no items to sell`);
       return 0;
     }
 
-    log.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity}`).join(', ')}`);
+    log.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity} (${c.reason})`).join(', ')}`);
 
     // Step 1: Withdraw sell candidates from bank (must be at bank)
     await moveTo(ctx, BANK.x, BANK.y);
@@ -304,7 +270,7 @@ export async function executeSellFlow(ctx) {
     // Step 3: Move to GE
     await moveTo(ctx, geLocation.x, geLocation.y);
 
-    // Step 4: Check active orders (for logging + stale cancellation)
+    // Step 4: Log active orders + stale cancellation
     const activeOrders = await collectCompletedOrders(ctx);
     await cancelStaleOrders(ctx, activeOrders);
 
@@ -312,6 +278,14 @@ export async function executeSellFlow(ctx) {
     let ordersCreated = 0;
 
     for (const item of priced) {
+      // Safety net: verify we actually have the items before listing
+      const actualQty = ctx.itemCount(item.code);
+      if (actualQty < item.quantity) {
+        log.warn(`[${ctx.name}] GE: ${item.code} — inventory has ${actualQty}, expected ${item.quantity}, adjusting`);
+        item.quantity = actualQty;
+      }
+      if (item.quantity <= 0) continue;
+
       try {
         const result = await api.sellGE(item.code, item.quantity, item.price, ctx.name);
         await api.waitForCooldown(result);

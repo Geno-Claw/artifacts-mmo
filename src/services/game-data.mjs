@@ -18,6 +18,7 @@ let resourceLocationCache = {}; // { resourceCode: { x, y } }
 let workshopCache = null;       // { skill: { x, y } }
 let bankItemsCache = null;      // Map<code, quantity>
 let lastBankFetch = 0;
+let _bankFetchPromise = null;   // in-flight fetch guard
 let geLocationCache = null;     // { x, y } or null
 let taskRewardsCache = null;    // Array of reward objects
 let taskRewardCodes = null;     // Set<itemCode> for fast lookup
@@ -228,20 +229,36 @@ export async function getBankItems(forceRefresh = false) {
     return bankItemsCache;
   }
 
-  bankItemsCache = new Map();
+  // If a fetch is already in-flight, reuse it instead of starting a concurrent one
+  if (_bankFetchPromise) return _bankFetchPromise;
+
+  _bankFetchPromise = _fetchBankItems();
+  try {
+    return await _bankFetchPromise;
+  } finally {
+    _bankFetchPromise = null;
+  }
+}
+
+async function _fetchBankItems() {
+  const newMap = new Map();
   let page = 1;
   while (true) {
     const result = await api.getBankItems({ page, size: 100 });
     const items = Array.isArray(result) ? result : [];
     if (items.length === 0) break;
     for (const item of items) {
-      const prev = bankItemsCache.get(item.code) || 0;
-      bankItemsCache.set(item.code, prev + item.quantity);
+      // Last-write-wins: bank items stack, so each code appears once.
+      // If pagination shifts cause a duplicate, don't accumulate.
+      newMap.set(item.code, item.quantity);
     }
     if (items.length < 100) break;
     page++;
   }
-  lastBankFetch = now;
+
+  bankItemsCache = newMap;
+  lastBankFetch = Date.now();
+  log.info(`[GameData] Bank refreshed: ${newMap.size} unique items`);
   return bankItemsCache;
 }
 

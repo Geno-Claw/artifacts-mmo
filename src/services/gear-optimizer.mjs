@@ -122,6 +122,7 @@ function isBetterResult(a, b) {
   if (!a) return false;
   if (a.win && !b.win) return true;
   if (!a.win && b.win) return false;
+  if (!a.win && !b.win) return false; // Both losses — don't change gear
   if (a.remainingHp !== b.remainingHp) return a.remainingHp > b.remainingHp;
   return a.turns < b.turns;
 }
