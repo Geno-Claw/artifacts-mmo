@@ -20,16 +20,30 @@ async function request(method, path, body = null) {
   };
   if (body) opts.body = JSON.stringify(body);
 
-  const res = await fetch(`${API}${path}`, opts);
-  const json = await res.json();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(`${API}${path}`, opts);
+    const json = await res.json();
 
-  if (!res.ok) {
-    const err = new Error(json.error?.message || `HTTP ${res.status}`);
-    err.code = json.error?.code || res.status;
+    if (res.ok) return json.data;
+
+    const code = json.error?.code || res.status;
+    const message = json.error?.message || `HTTP ${res.status}`;
+
+    // Auto-retry on cooldown (code 499)
+    if (code === 499) {
+      const match = message.match(/([\d.]+)\s*seconds?\s*remaining/);
+      const wait = match ? parseFloat(match[1]) * 1000 + 500 : 3000;
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
+
+    const err = new Error(message);
+    err.code = code;
     err.data = json.error?.data;
     throw err;
   }
-  return json.data;
+
+  throw new Error(`Still in cooldown after 5 retries: ${method} ${path}`);
 }
 
 // --- Character endpoints ---
