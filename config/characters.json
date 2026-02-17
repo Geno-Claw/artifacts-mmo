@@ -55,6 +55,226 @@
           "craftBlacklist": {}
         }
       ]
+    },
+    {
+      "name": "GenoClaw2",
+      "tasks": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0.8,
+          "sellOnGE": true,
+          "depositGold": true,
+          "autoEquipOnBank": true
+        },
+        {
+          "type": "autoEquip",
+          "checkInterval": 300000
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 1,
+            "woodcutting": 1,
+            "fishing": 1,
+            "cooking": 1,
+            "alchemy": 2,
+            "weaponcrafting": 1,
+            "gearcrafting": 1,
+            "jewelrycrafting": 1,
+            "combat": 1,
+            "npc_task": 1
+          },
+          "goals": {
+            "mining": 20,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 10,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 1
+          },
+          "craftCollection": {
+            "gearcrafting": true,
+            "weaponcrafting": true,
+            "jewelrycrafting": true,
+            "alchemy": true
+          },
+          "craftBlacklist": {}
+        }
+      ]
+    },
+    {
+      "name": "GenoClaw3",
+      "tasks": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0.8,
+          "sellOnGE": true,
+          "depositGold": true,
+          "autoEquipOnBank": true
+        },
+        {
+          "type": "autoEquip",
+          "checkInterval": 300000
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 1,
+            "woodcutting": 1,
+            "fishing": 1,
+            "cooking": 0,
+            "alchemy": 1,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 1,
+            "npc_task": 0
+          },
+          "goals": {
+            "mining": 20,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 10,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 1
+          },
+          "craftCollection": {
+            "gearcrafting": true,
+            "weaponcrafting": true,
+            "jewelrycrafting": true,
+            "alchemy": true
+          },
+          "craftBlacklist": {}
+        }
+      ]
+    },
+    {
+      "name": "GenoClaw4",
+      "tasks": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0.8,
+          "sellOnGE": true,
+          "depositGold": true,
+          "autoEquipOnBank": true
+        },
+        {
+          "type": "autoEquip",
+          "checkInterval": 300000
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 0,
+            "woodcutting": 1,
+            "fishing": 0,
+            "cooking": 1,
+            "alchemy": 0,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 0,
+            "npc_task": 0
+          },
+          "goals": {
+            "mining": 20,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 10,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 1
+          },
+          "craftCollection": {
+            "gearcrafting": true,
+            "weaponcrafting": true,
+            "jewelrycrafting": true,
+            "alchemy": true
+          },
+          "craftBlacklist": {}
+        }
+      ]
+    },
+    {
+      "name": "GenoClaw5",
+      "tasks": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0.8,
+          "sellOnGE": true,
+          "depositGold": true,
+          "autoEquipOnBank": true
+        },
+        {
+          "type": "autoEquip",
+          "checkInterval": 300000
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 1,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 0,
+            "alchemy": 0,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 0,
+            "npc_task": 0
+          },
+          "goals": {
+            "mining": 50,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 10,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 1
+          },
+          "craftCollection": {
+            "gearcrafting": true,
+            "weaponcrafting": true,
+            "jewelrycrafting": true,
+            "alchemy": true
+          },
+          "craftBlacklist": {}
+        }
+      ]
     }
   ]
 }

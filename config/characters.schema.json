@@ -12,7 +12,12 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Character name (must match an existing game character)"
+            "description": "Character name (created automatically if it doesn't exist)"
+          },
+          "skin": {
+            "type": "string",
+            "description": "Character skin for creation (default: men1)",
+            "default": "men1"
           },
           "tasks": {
             "type": "array",

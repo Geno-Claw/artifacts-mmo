@@ -56,6 +56,10 @@ export async function getMyCharacters() {
   return request('GET', '/my/characters');
 }
 
+export async function createCharacter(name, skin = 'men1') {
+  return request('POST', '/characters/create', { name, skin });
+}
+
 export async function move(x, y, name = CHARACTER) {
   return request('POST', `/my/${name}/action/move`, { x, y });
 }
