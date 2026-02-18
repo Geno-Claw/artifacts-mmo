@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artifacts MMO Bot Manager — Sakura Garden</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   SAKURA GARDEN — 16-bit Pixel RPG Dashboard
+   ============================================================ */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+:root {
+  --pale-pink: #f0d0d8;
+  --lavender: #d0c0e8;
+  --cream: #f8f0e8;
+  --dark-plum: #3a1828;
+  --border-dark: #4a2838;
+  --rose-red: #d06878;
+  --rose-red-bg: #f0c8d0;
+  --wisteria: #9878b8;
+  --wisteria-bg: #e0d0f0;
+  --wood-light: #e8d0a8;
+  --wood-mid: #d0b888;
+  --wood-dark: #a08058;
+  --wood-shadow: #786040;
+  --petal-pink: #f0a0b8;
+  --petal-light: #f8c8d8;
+  --branch-dark: #684848;
+  --branch-mid: #886060;
+  --branch-light: #a08070;
+  --leaf-green: #88b878;
+  --card-bg: #faf4ee;
+  --card-inset: #f0e8e0;
+  --inset-border: #d8c8b8;
+  --text-muted: #785868;
+  --ready-glow: #c8f0a0;
+}
+
+html {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  color: var(--dark-plum);
+  background: var(--cream);
+}
+
+body {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, var(--lavender) 0%, var(--cream) 40%, var(--pale-pink) 100%);
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Subtle pixel dot pattern overlay */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image:
+    radial-gradient(circle, var(--border-dark) 0.5px, transparent 0.5px);
+  background-size: 16px 16px;
+  opacity: 0.025;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   PETAL ANIMATION — floating cherry blossom squares
+   ============================================================ */
+.petals-container {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.petal {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  opacity: 0;
+  animation: petalFall linear infinite;
+}
+
+@keyframes petalFall {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) translateX(0px) rotate(0deg);
+  }
+  5% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  95% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(100vh) translateX(80px) rotate(720deg);
+  }
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.page-header {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 40px 16px 8px;
+}
+
+.page-header h1 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--dark-plum);
+  text-shadow: 2px 2px 0 var(--pale-pink);
+  margin-bottom: 6px;
+}
+
+.page-header .subtitle {
+  font-size: 7px;
+  color: var(--text-muted);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+/* Decorative divider */
+.divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 16px auto;
+  max-width: 400px;
+}
+
+.divider-line {
+  flex: 1;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--border-dark), transparent);
+}
+
+.divider-diamond {
+  width: 6px;
+  height: 6px;
+  background: var(--petal-pink);
+  transform: rotate(45deg);
+  border: 1px solid var(--border-dark);
+}
+
+/* ============================================================
+   CARDS CONTAINER
+   ============================================================ */
+.cards-container {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 24px;
+  padding: 16px 24px 48px;
+}
+
+/* ============================================================
+   CHARACTER CARD — shoji screen panel
+   ============================================================ */
+.card {
+  width: 280px;
+  background: var(--card-bg);
+  border: 2px solid var(--border-dark);
+  position: relative;
+  padding: 0;
+  box-shadow:
+    4px 4px 0 0 rgba(74, 40, 56, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+/* Inner shoji frame lines */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px; right: 3px; bottom: 3px;
+  border: 1px solid rgba(74, 40, 56, 0.12);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Light inner glow */
+.card::after {
+  content: '';
+  position: absolute;
+  top: 4px; left: 4px; right: 4px; bottom: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.card-inner {
+  position: relative;
+  z-index: 2;
+  padding: 0 16px 16px;
+}
+
+/* ============================================================
+   CHERRY BRANCH DECORATION (top of each card)
+   ============================================================ */
+.cherry-branch {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.cherry-branch canvas {
+  display: block;
+  width: 100%;
+  height: 40px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   CHARACTER NAME
+   ============================================================ */
+.char-name {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--dark-plum);
+  margin-bottom: 10px;
+  text-shadow: 1px 1px 0 rgba(240, 208, 216, 0.6);
+}
+
+/* ============================================================
+   PORTRAIT FRAME
+   ============================================================ */
+.portrait-frame {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.portrait-border {
+  border: 2px solid var(--border-dark);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+    2px 2px 0 0 rgba(74, 40, 56, 0.1);
+  background: var(--card-inset);
+  padding: 3px;
+  line-height: 0;
+}
+
+.portrait-border canvas {
+  display: block;
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   LEVEL BADGE
+   ============================================================ */
+.level-row {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.level-badge {
+  display: inline-block;
+  font-size: 8px;
+  color: var(--dark-plum);
+  background: var(--wood-light);
+  border: 1px solid var(--border-dark);
+  padding: 3px 10px;
+  letter-spacing: 1px;
+  box-shadow: 1px 1px 0 rgba(74, 40, 56, 0.1);
+}
+
+/* ============================================================
+   STAT BARS (HP / XP)
+   ============================================================ */
+.stat-bars {
+  margin-bottom: 10px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.stat-label {
+  font-size: 7px;
+  width: 20px;
+  text-align: right;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.stat-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--rose-red-bg);
+  border: 1px solid var(--border-dark);
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-bar-track.xp-track {
+  background: var(--wisteria-bg);
+}
+
+.stat-bar-fill {
+  height: 100%;
+  background: var(--rose-red);
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+/* Pixel shine on bar */
+.stat-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.stat-bar-fill.xp-fill {
+  background: var(--wisteria);
+}
+
+.stat-value {
+  font-size: 6px;
+  width: 62px;
+  text-align: left;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   COOLDOWN TIMER
+   ============================================================ */
+.cooldown-section {
+  margin-bottom: 10px;
+}
+
+.cooldown-label {
+  font-size: 6px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+
+.cooldown-bar-track {
+  height: 10px;
+  background: var(--card-inset);
+  border: 1px solid var(--border-dark);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.cooldown-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--wood-light), var(--wood-mid));
+  transition: width 0.1s linear;
+  position: relative;
+}
+
+.cooldown-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.cooldown-bar-fill.ready {
+  background: var(--ready-glow);
+}
+
+.cooldown-text {
+  font-size: 9px;
+  text-align: center;
+  color: var(--dark-plum);
+  letter-spacing: 1px;
+  min-height: 12px;
+}
+
+.cooldown-text.ready-flash {
+  color: var(--leaf-green);
+  animation: readyPulse 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes readyPulse {
+  0% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+/* ============================================================
+   INFO PANELS — log & task (subtle inset areas)
+   ============================================================ */
+.info-panel {
+  background: var(--card-inset);
+  border: 1px solid var(--inset-border);
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  min-height: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.info-panel-label {
+  font-size: 5px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.info-panel-text {
+  font-size: 7px;
+  line-height: 1.6;
+  color: var(--dark-plum);
+  word-break: break-word;
+}
+
+/* ============================================================
+   ACTION BUTTONS — wooden plaque style, diamond layout
+   ============================================================ */
+.buttons-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.action-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--dark-plum);
+  background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 100%);
+  border: 1px solid var(--border-dark);
+  padding: 5px 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  box-shadow:
+    1px 1px 0 rgba(74, 40, 56, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.action-btn:hover {
+  background: linear-gradient(180deg, #f0dbb8 0%, #d8c090 100%);
+}
+
+.action-btn:active {
+  background: var(--wood-dark);
+  color: var(--cream);
+  box-shadow:
+    inset 1px 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+.page-footer {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 8px 16px 24px;
+}
+
+.page-footer p {
+  font-size: 6px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 920px) {
+  .cards-container {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- Floating petals container -->
+<div class="petals-container" id="petalsContainer"></div>
+
+<!-- Header -->
+<header class="page-header">
+  <h1>ARTIFACTS MMO</h1>
+  <p class="subtitle">Bot Manager</p>
+  <div class="divider">
+    <span class="divider-line"></span>
+    <span class="divider-diamond"></span>
+    <span class="divider-line"></span>
+  </div>
+</header>
+
+<!-- Cards -->
+<main class="cards-container" id="cardsContainer"></main>
+
+<!-- Footer -->
+<footer class="page-footer">
+  <div class="divider" style="margin-bottom: 12px;">
+    <span class="divider-line"></span>
+    <span class="divider-diamond"></span>
+    <span class="divider-line"></span>
+  </div>
+  <p>SAKURA GARDEN v1.0</p>
+</footer>
+
+<script>
+/* ==============================================================
+   MOCK DATA
+   ============================================================== */
+const characters = [
+  {
+    name: 'Artifax',
+    level: 25,
+    hp: 340,
+    maxHp: 450,
+    xp: 12500,
+    maxXp: 18000,
+    portraitType: 'warrior',
+    cooldown: 12.0,
+    maxCooldown: 15.0,
+    log: 'Fighting Chicken (Lv.3)...',
+    task: 'Kill 50 Chickens (32/50)',
+    logs: [
+      'Fighting Chicken (Lv.3)...',
+      'Defeated Chicken! +15 XP',
+      'Looted Feather x2',
+      'Moving to Hen House...'
+    ]
+  },
+  {
+    name: 'Luminos',
+    level: 18,
+    hp: 180,
+    maxHp: 220,
+    xp: 8200,
+    maxXp: 12000,
+    portraitType: 'mage',
+    cooldown: 8.0,
+    maxCooldown: 12.0,
+    log: 'Crafting Iron Sword...',
+    task: 'Craft 10 Iron Swords (7/10)',
+    logs: [
+      'Crafting Iron Sword...',
+      'Iron Sword crafted! +80 XP',
+      'Withdrawing Iron Ore x5...',
+      'Moving to Forge...'
+    ]
+  },
+  {
+    name: 'Verdant',
+    level: 22,
+    hp: 260,
+    maxHp: 300,
+    xp: 15600,
+    maxXp: 20000,
+    portraitType: 'gatherer',
+    cooldown: 3.0,
+    maxCooldown: 8.0,
+    log: 'Gathering Ash Wood...',
+    task: 'Gather 100 Ash Wood (89/100)',
+    logs: [
+      'Gathering Ash Wood...',
+      'Gathered Ash Wood x3!',
+      'Inventory: 89/100 Ash Wood',
+      'Moving to Ash Forest...'
+    ]
+  }
+];
+
+/* ==============================================================
+   PORTRAIT PIXEL ART DEFINITIONS
+   16x16 grid, drawn at native res then displayed at 96x96 via CSS
+   ============================================================== */
+const PORTRAITS = {
+  warrior: {
+    // Steel blue helmet + armor, warm skin
+    pixels: [
+      // Row 0-1: helmet top
+      { x: 5, y: 0, c: '#607890' }, { x: 6, y: 0, c: '#607890' }, { x: 7, y: 0, c: '#607890' }, { x: 8, y: 0, c: '#607890' }, { x: 9, y: 0, c: '#607890' },
+      { x: 4, y: 1, c: '#607890' }, { x: 5, y: 1, c: '#789cb8' }, { x: 6, y: 1, c: '#789cb8' }, { x: 7, y: 1, c: '#90b8d0' }, { x: 8, y: 1, c: '#789cb8' }, { x: 9, y: 1, c: '#789cb8' }, { x: 10, y: 1, c: '#607890' },
+      // Row 2: helmet mid with visor
+      { x: 3, y: 2, c: '#607890' }, { x: 4, y: 2, c: '#789cb8' }, { x: 5, y: 2, c: '#90b8d0' }, { x: 6, y: 2, c: '#789cb8' }, { x: 7, y: 2, c: '#90b8d0' }, { x: 8, y: 2, c: '#789cb8' }, { x: 9, y: 2, c: '#90b8d0' }, { x: 10, y: 2, c: '#789cb8' }, { x: 11, y: 2, c: '#607890' },
+      // Row 3: helmet brim
+      { x: 2, y: 3, c: '#506878' }, { x: 3, y: 3, c: '#607890' }, { x: 4, y: 3, c: '#607890' }, { x: 5, y: 3, c: '#607890' }, { x: 6, y: 3, c: '#607890' }, { x: 7, y: 3, c: '#607890' }, { x: 8, y: 3, c: '#607890' }, { x: 9, y: 3, c: '#607890' }, { x: 10, y: 3, c: '#607890' }, { x: 11, y: 3, c: '#607890' }, { x: 12, y: 3, c: '#506878' },
+      // Row 4: face top — forehead skin under helmet
+      { x: 4, y: 4, c: '#e8c8a0' }, { x: 5, y: 4, c: '#e8c8a0' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#e8c8a0' }, { x: 10, y: 4, c: '#e8c8a0' },
+      // Row 5: eyes
+      { x: 3, y: 5, c: '#e8c8a0' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#382828' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#382828' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#e8c8a0' },
+      // Row 6: nose area
+      { x: 3, y: 6, c: '#e8c8a0' }, { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' }, { x: 11, y: 6, c: '#e8c8a0' },
+      // Row 7: mouth
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#c09880' }, { x: 7, y: 7, c: '#c09880' }, { x: 8, y: 7, c: '#c09880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      // Row 8: chin / neck
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' },
+      // Row 10-12: armor shoulders + chest
+      { x: 2, y: 10, c: '#607890' }, { x: 3, y: 10, c: '#789cb8' }, { x: 4, y: 10, c: '#789cb8' }, { x: 5, y: 10, c: '#607890' }, { x: 6, y: 10, c: '#607890' }, { x: 7, y: 10, c: '#607890' }, { x: 8, y: 10, c: '#607890' }, { x: 9, y: 10, c: '#607890' }, { x: 10, y: 10, c: '#789cb8' }, { x: 11, y: 10, c: '#789cb8' }, { x: 12, y: 10, c: '#607890' },
+      { x: 1, y: 11, c: '#506878' }, { x: 2, y: 11, c: '#789cb8' }, { x: 3, y: 11, c: '#90b8d0' }, { x: 4, y: 11, c: '#789cb8' }, { x: 5, y: 11, c: '#607890' }, { x: 6, y: 11, c: '#789cb8' }, { x: 7, y: 11, c: '#90b8d0' }, { x: 8, y: 11, c: '#789cb8' }, { x: 9, y: 11, c: '#607890' }, { x: 10, y: 11, c: '#789cb8' }, { x: 11, y: 11, c: '#90b8d0' }, { x: 12, y: 11, c: '#789cb8' }, { x: 13, y: 11, c: '#506878' },
+      { x: 1, y: 12, c: '#506878' }, { x: 2, y: 12, c: '#607890' }, { x: 3, y: 12, c: '#789cb8' }, { x: 4, y: 12, c: '#607890' }, { x: 5, y: 12, c: '#607890' }, { x: 6, y: 12, c: '#789cb8' }, { x: 7, y: 12, c: '#c0c0c0' }, { x: 8, y: 12, c: '#789cb8' }, { x: 9, y: 12, c: '#607890' }, { x: 10, y: 12, c: '#607890' }, { x: 11, y: 12, c: '#789cb8' }, { x: 12, y: 12, c: '#607890' }, { x: 13, y: 12, c: '#506878' },
+      { x: 2, y: 13, c: '#607890' }, { x: 3, y: 13, c: '#607890' }, { x: 4, y: 13, c: '#607890' }, { x: 5, y: 13, c: '#607890' }, { x: 6, y: 13, c: '#607890' }, { x: 7, y: 13, c: '#607890' }, { x: 8, y: 13, c: '#607890' }, { x: 9, y: 13, c: '#607890' }, { x: 10, y: 13, c: '#607890' }, { x: 11, y: 13, c: '#607890' }, { x: 12, y: 13, c: '#607890' },
+    ]
+  },
+  mage: {
+    // Deep purple hat + robe, warm skin
+    pixels: [
+      // Row 0-1: hat tip
+      { x: 7, y: 0, c: '#584078' },
+      { x: 6, y: 1, c: '#584078' }, { x: 7, y: 1, c: '#7858a0' }, { x: 8, y: 1, c: '#584078' },
+      // Row 2: hat mid
+      { x: 5, y: 2, c: '#584078' }, { x: 6, y: 2, c: '#7858a0' }, { x: 7, y: 2, c: '#9070b8' }, { x: 8, y: 2, c: '#7858a0' }, { x: 9, y: 2, c: '#584078' },
+      // Row 3: hat brim
+      { x: 2, y: 3, c: '#483068' }, { x: 3, y: 3, c: '#584078' }, { x: 4, y: 3, c: '#584078' }, { x: 5, y: 3, c: '#7858a0' }, { x: 6, y: 3, c: '#7858a0' }, { x: 7, y: 3, c: '#f8e060' }, { x: 8, y: 3, c: '#7858a0' }, { x: 9, y: 3, c: '#7858a0' }, { x: 10, y: 3, c: '#584078' }, { x: 11, y: 3, c: '#584078' }, { x: 12, y: 3, c: '#483068' },
+      // Row 4: hair peeking + forehead
+      { x: 3, y: 4, c: '#c0c0d0' }, { x: 4, y: 4, c: '#e8c8a0' }, { x: 5, y: 4, c: '#f0d8b8' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#f0d8b8' }, { x: 10, y: 4, c: '#e8c8a0' }, { x: 11, y: 4, c: '#c0c0d0' },
+      // Row 5: eyes
+      { x: 3, y: 5, c: '#c0c0d0' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#382858' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#382858' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#c0c0d0' },
+      // Row 6: nose
+      { x: 3, y: 6, c: '#c0c0d0' }, { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' }, { x: 11, y: 6, c: '#c0c0d0' },
+      // Row 7: mouth
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#b88880' }, { x: 7, y: 7, c: '#f0d8b8' }, { x: 8, y: 7, c: '#b88880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      // Row 8: chin
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      // Row 9: beard / neck
+      { x: 5, y: 9, c: '#c0c0d0' }, { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' }, { x: 9, y: 9, c: '#c0c0d0' },
+      // Row 10-13: robe
+      { x: 3, y: 10, c: '#584078' }, { x: 4, y: 10, c: '#7858a0' }, { x: 5, y: 10, c: '#584078' }, { x: 6, y: 10, c: '#584078' }, { x: 7, y: 10, c: '#584078' }, { x: 8, y: 10, c: '#584078' }, { x: 9, y: 10, c: '#584078' }, { x: 10, y: 10, c: '#7858a0' }, { x: 11, y: 10, c: '#584078' },
+      { x: 2, y: 11, c: '#483068' }, { x: 3, y: 11, c: '#7858a0' }, { x: 4, y: 11, c: '#9070b8' }, { x: 5, y: 11, c: '#7858a0' }, { x: 6, y: 11, c: '#584078' }, { x: 7, y: 11, c: '#f8e060' }, { x: 8, y: 11, c: '#584078' }, { x: 9, y: 11, c: '#7858a0' }, { x: 10, y: 11, c: '#9070b8' }, { x: 11, y: 11, c: '#7858a0' }, { x: 12, y: 11, c: '#483068' },
+      { x: 2, y: 12, c: '#483068' }, { x: 3, y: 12, c: '#584078' }, { x: 4, y: 12, c: '#7858a0' }, { x: 5, y: 12, c: '#584078' }, { x: 6, y: 12, c: '#7858a0' }, { x: 7, y: 12, c: '#9070b8' }, { x: 8, y: 12, c: '#7858a0' }, { x: 9, y: 12, c: '#584078' }, { x: 10, y: 12, c: '#7858a0' }, { x: 11, y: 12, c: '#584078' }, { x: 12, y: 12, c: '#483068' },
+      { x: 3, y: 13, c: '#584078' }, { x: 4, y: 13, c: '#584078' }, { x: 5, y: 13, c: '#584078' }, { x: 6, y: 13, c: '#584078' }, { x: 7, y: 13, c: '#584078' }, { x: 8, y: 13, c: '#584078' }, { x: 9, y: 13, c: '#584078' }, { x: 10, y: 13, c: '#584078' }, { x: 11, y: 13, c: '#584078' },
+    ]
+  },
+  gatherer: {
+    // Forest green hood + tunic, warm skin
+    pixels: [
+      // Row 0-1: hood top
+      { x: 5, y: 0, c: '#3a6838' }, { x: 6, y: 0, c: '#3a6838' }, { x: 7, y: 0, c: '#3a6838' }, { x: 8, y: 0, c: '#3a6838' }, { x: 9, y: 0, c: '#3a6838' },
+      { x: 4, y: 1, c: '#3a6838' }, { x: 5, y: 1, c: '#508848' }, { x: 6, y: 1, c: '#508848' }, { x: 7, y: 1, c: '#60a058' }, { x: 8, y: 1, c: '#508848' }, { x: 9, y: 1, c: '#508848' }, { x: 10, y: 1, c: '#3a6838' },
+      // Row 2: hood mid
+      { x: 3, y: 2, c: '#3a6838' }, { x: 4, y: 2, c: '#508848' }, { x: 5, y: 2, c: '#60a058' }, { x: 6, y: 2, c: '#508848' }, { x: 7, y: 2, c: '#60a058' }, { x: 8, y: 2, c: '#508848' }, { x: 9, y: 2, c: '#60a058' }, { x: 10, y: 2, c: '#508848' }, { x: 11, y: 2, c: '#3a6838' },
+      // Row 3: hood brim / face shadow
+      { x: 3, y: 3, c: '#2a5028' }, { x: 4, y: 3, c: '#3a6838' }, { x: 5, y: 3, c: '#3a6838' }, { x: 6, y: 3, c: '#3a6838' }, { x: 7, y: 3, c: '#3a6838' }, { x: 8, y: 3, c: '#3a6838' }, { x: 9, y: 3, c: '#3a6838' }, { x: 10, y: 3, c: '#3a6838' }, { x: 11, y: 3, c: '#2a5028' },
+      // Row 4: face top
+      { x: 3, y: 4, c: '#3a6838' }, { x: 4, y: 4, c: '#e0c098' }, { x: 5, y: 4, c: '#f0d8b8' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#f0d8b8' }, { x: 10, y: 4, c: '#e0c098' }, { x: 11, y: 4, c: '#3a6838' },
+      // Row 5: eyes
+      { x: 3, y: 5, c: '#3a6838' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#283818' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#283818' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#3a6838' },
+      // Row 6: nose / cheeks
+      { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' },
+      // Row 7: smile
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#c09880' }, { x: 7, y: 7, c: '#c09880' }, { x: 8, y: 7, c: '#c09880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      // Row 8: chin
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      // Row 9: neck / scarf
+      { x: 5, y: 9, c: '#a07848' }, { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' }, { x: 9, y: 9, c: '#a07848' },
+      // Row 10-13: tunic
+      { x: 3, y: 10, c: '#3a6838' }, { x: 4, y: 10, c: '#508848' }, { x: 5, y: 10, c: '#3a6838' }, { x: 6, y: 10, c: '#3a6838' }, { x: 7, y: 10, c: '#3a6838' }, { x: 8, y: 10, c: '#3a6838' }, { x: 9, y: 10, c: '#3a6838' }, { x: 10, y: 10, c: '#508848' }, { x: 11, y: 10, c: '#3a6838' },
+      { x: 2, y: 11, c: '#2a5028' }, { x: 3, y: 11, c: '#508848' }, { x: 4, y: 11, c: '#60a058' }, { x: 5, y: 11, c: '#508848' }, { x: 6, y: 11, c: '#3a6838' }, { x: 7, y: 11, c: '#a07848' }, { x: 8, y: 11, c: '#3a6838' }, { x: 9, y: 11, c: '#508848' }, { x: 10, y: 11, c: '#60a058' }, { x: 11, y: 11, c: '#508848' }, { x: 12, y: 11, c: '#2a5028' },
+      { x: 2, y: 12, c: '#2a5028' }, { x: 3, y: 12, c: '#3a6838' }, { x: 4, y: 12, c: '#508848' }, { x: 5, y: 12, c: '#3a6838' }, { x: 6, y: 12, c: '#508848' }, { x: 7, y: 12, c: '#60a058' }, { x: 8, y: 12, c: '#508848' }, { x: 9, y: 12, c: '#3a6838' }, { x: 10, y: 12, c: '#508848' }, { x: 11, y: 12, c: '#3a6838' }, { x: 12, y: 12, c: '#2a5028' },
+      { x: 3, y: 13, c: '#3a6838' }, { x: 4, y: 13, c: '#3a6838' }, { x: 5, y: 13, c: '#3a6838' }, { x: 6, y: 13, c: '#3a6838' }, { x: 7, y: 13, c: '#3a6838' }, { x: 8, y: 13, c: '#3a6838' }, { x: 9, y: 13, c: '#3a6838' }, { x: 10, y: 13, c: '#3a6838' }, { x: 11, y: 13, c: '#3a6838' },
+    ]
+  }
+};
+
+/* ==============================================================
+   DRAW PORTRAIT ON CANVAS
+   ============================================================== */
+function drawPortrait(canvas, type) {
+  const size = 14;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // soft background
+  ctx.fillStyle = '#f0e8e0';
+  ctx.fillRect(0, 0, size, size);
+
+  const data = PORTRAITS[type];
+  if (!data) return;
+  data.pixels.forEach(p => {
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x, p.y, 1, 1);
+  });
+}
+
+/* ==============================================================
+   DRAW CHERRY BRANCH ON CANVAS
+   ============================================================== */
+function drawCherryBranch(canvas) {
+  const w = 280;
+  const h = 40;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+
+  // transparent background
+  ctx.clearRect(0, 0, w, h);
+
+  // Branch path — a gentle curve from left to right
+  const branchPoints = [
+    [0, 24], [20, 22], [40, 18], [60, 16], [80, 15], [100, 16],
+    [120, 18], [140, 17], [160, 14], [180, 12], [200, 13],
+    [220, 15], [240, 18], [260, 20], [280, 22]
+  ];
+
+  // Draw branch with 2px thickness
+  ctx.fillStyle = '#684848';
+  for (let i = 0; i < branchPoints.length - 1; i++) {
+    const [x1, y1] = branchPoints[i];
+    const [x2, y2] = branchPoints[i + 1];
+    const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+    for (let s = 0; s <= steps; s++) {
+      const t = steps === 0 ? 0 : s / steps;
+      const x = Math.round(x1 + (x2 - x1) * t);
+      const y = Math.round(y1 + (y2 - y1) * t);
+      ctx.fillRect(x, y, 2, 2);
+    }
+  }
+
+  // Sub-branches
+  const subBranches = [
+    [[60, 16], [50, 8], [45, 4]],
+    [[120, 18], [130, 10], [135, 6]],
+    [[180, 12], [170, 6], [165, 2]],
+    [[220, 15], [230, 8], [235, 5]],
+    [[100, 16], [95, 10]],
+    [[160, 14], [155, 8]],
+  ];
+
+  ctx.fillStyle = '#886060';
+  subBranches.forEach(branch => {
+    for (let i = 0; i < branch.length - 1; i++) {
+      const [x1, y1] = branch[i];
+      const [x2, y2] = branch[i + 1];
+      const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+      for (let s = 0; s <= steps; s++) {
+        const t = steps === 0 ? 0 : s / steps;
+        const x = Math.round(x1 + (x2 - x1) * t);
+        const y = Math.round(y1 + (y2 - y1) * t);
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  });
+
+  // Blossoms — small clusters of pink pixels
+  const blossomPositions = [
+    [45, 3], [48, 5], [42, 6],
+    [130, 6], [133, 8], [127, 9], [135, 4],
+    [165, 1], [168, 3], [162, 4], [170, 5],
+    [230, 4], [233, 6], [227, 7], [235, 3],
+    [95, 8], [92, 10], [98, 9],
+    [155, 6], [152, 8], [158, 7],
+  ];
+
+  const petalColors = ['#f0a0b8', '#f8c8d8', '#e88898', '#f0b0c0', '#f8d0d8'];
+  blossomPositions.forEach(([bx, by]) => {
+    // Each blossom is a small cross/cluster of 5 pixels
+    const offsets = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+    offsets.forEach(([dx, dy], i) => {
+      ctx.fillStyle = petalColors[i % petalColors.length];
+      ctx.fillRect(bx + dx * 2, by + dy * 2, 2, 2);
+    });
+    // Center dot
+    ctx.fillStyle = '#f8e060';
+    ctx.fillRect(bx, by, 1, 1);
+  });
+}
+
+/* ==============================================================
+   BUILD CARD HTML
+   ============================================================== */
+function buildCard(char, index) {
+  const hpPct = (char.hp / char.maxHp * 100).toFixed(1);
+  const xpPct = (char.xp / char.maxXp * 100).toFixed(1);
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="cherry-branch">
+      <canvas class="branch-canvas" data-idx="${index}"></canvas>
+    </div>
+    <div class="card-inner">
+      <div class="char-name">${char.name}</div>
+
+      <div class="portrait-frame">
+        <div class="portrait-border">
+          <canvas class="portrait-canvas" data-type="${char.portraitType}"></canvas>
+        </div>
+      </div>
+
+      <div class="level-row">
+        <span class="level-badge">LV ${char.level}</span>
+      </div>
+
+      <div class="stat-bars">
+        <div class="stat-row">
+          <span class="stat-label">HP</span>
+          <div class="stat-bar-track">
+            <div class="stat-bar-fill" style="width: ${hpPct}%"></div>
+          </div>
+          <span class="stat-value">${char.hp} / ${char.maxHp}</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">XP</span>
+          <div class="stat-bar-track xp-track">
+            <div class="stat-bar-fill xp-fill" style="width: ${xpPct}%"></div>
+          </div>
+          <span class="stat-value">${char.xp} / ${char.maxXp}</span>
+        </div>
+      </div>
+
+      <div class="cooldown-section">
+        <div class="cooldown-label">COOLDOWN</div>
+        <div class="cooldown-bar-track">
+          <div class="cooldown-bar-fill" data-cd-bar="${index}" style="width: ${(char.cooldown / char.maxCooldown * 100).toFixed(1)}%"></div>
+        </div>
+        <div class="cooldown-text" data-cd-text="${index}">${char.cooldown.toFixed(1)}s</div>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-label">LOG</div>
+        <div class="info-panel-text" data-log="${index}">${char.log}</div>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-label">TASK</div>
+        <div class="info-panel-text">${char.task}</div>
+      </div>
+
+      <div class="buttons-section">
+        <div class="btn-row">
+          <button class="action-btn">EQUIP</button>
+          <button class="action-btn">INVEN</button>
+        </div>
+        <div class="btn-row">
+          <button class="action-btn">SKILLS</button>
+        </div>
+        <div class="btn-row">
+          <button class="action-btn">STATS</button>
+          <button class="action-btn">ACHIEV</button>
+        </div>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
+/* ==============================================================
+   FLOATING PETALS
+   ============================================================== */
+function createPetals() {
+  const container = document.getElementById('petalsContainer');
+  const petalColors = ['#f0a0b8', '#f8c8d8', '#e88898', '#f0b0c0', '#f8d0d8', '#f8e0e8'];
+  const count = 25;
+
+  for (let i = 0; i < count; i++) {
+    const petal = document.createElement('div');
+    petal.className = 'petal';
+    const size = Math.random() > 0.5 ? 4 : 3;
+    petal.style.width = size + 'px';
+    petal.style.height = size + 'px';
+    petal.style.backgroundColor = petalColors[Math.floor(Math.random() * petalColors.length)];
+    petal.style.left = Math.random() * 100 + '%';
+    petal.style.top = -10 + 'px';
+    petal.style.animationDuration = (8 + Math.random() * 12) + 's';
+    petal.style.animationDelay = (Math.random() * 15) + 's';
+    container.appendChild(petal);
+  }
+}
+
+/* ==============================================================
+   COOLDOWN TIMERS
+   ============================================================== */
+const cooldowns = characters.map(c => ({
+  current: c.cooldown,
+  max: c.maxCooldown,
+  readyAt: 0, // timestamp when it became ready (for 1.5s flash)
+  isReady: false
+}));
+
+function tickCooldowns() {
+  const now = Date.now();
+  cooldowns.forEach((cd, i) => {
+    if (cd.isReady) {
+      // Check if 1.5s have passed since ready
+      if (now - cd.readyAt >= 1500) {
+        // Reset to max
+        cd.current = cd.max;
+        cd.isReady = false;
+      }
+    } else {
+      cd.current -= 0.1;
+      if (cd.current <= 0) {
+        cd.current = 0;
+        cd.isReady = true;
+        cd.readyAt = now;
+      }
+    }
+
+    // Update DOM
+    const bar = document.querySelector(`[data-cd-bar="${i}"]`);
+    const text = document.querySelector(`[data-cd-text="${i}"]`);
+    if (!bar || !text) return;
+
+    if (cd.isReady) {
+      bar.style.width = '100%';
+      bar.classList.add('ready');
+      text.textContent = 'READY';
+      text.classList.add('ready-flash');
+    } else {
+      const pct = (cd.current / cd.max * 100).toFixed(1);
+      bar.style.width = pct + '%';
+      bar.classList.remove('ready');
+      text.textContent = cd.current.toFixed(1) + 's';
+      text.classList.remove('ready-flash');
+    }
+  });
+}
+
+/* ==============================================================
+   LOG ROTATION
+   ============================================================== */
+const logIndices = characters.map(() => 0);
+
+function rotateLogs() {
+  characters.forEach((char, i) => {
+    logIndices[i] = (logIndices[i] + 1) % char.logs.length;
+    const el = document.querySelector(`[data-log="${i}"]`);
+    if (el) {
+      el.textContent = char.logs[logIndices[i]];
+    }
+  });
+}
+
+/* ==============================================================
+   INIT
+   ============================================================== */
+function init() {
+  const container = document.getElementById('cardsContainer');
+
+  // Build cards
+  characters.forEach((char, i) => {
+    container.appendChild(buildCard(char, i));
+  });
+
+  // Draw portraits
+  document.querySelectorAll('.portrait-canvas').forEach(canvas => {
+    drawPortrait(canvas, canvas.dataset.type);
+  });
+
+  // Draw cherry branches
+  document.querySelectorAll('.branch-canvas').forEach(canvas => {
+    drawCherryBranch(canvas);
+  });
+
+  // Create floating petals
+  createPetals();
+
+  // Start cooldown ticker (100ms)
+  setInterval(tickCooldowns, 100);
+
+  // Start log rotation (3s)
+  setInterval(rotateLogs, 3000);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

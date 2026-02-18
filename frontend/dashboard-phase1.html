@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artifacts MMO Bot Manager — Sumi-e Ink Wash</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   SAKURA GARDEN — SUMI-E INK WASH VARIANT
+   Handmade washi paper + ink painting aesthetic
+   ============================================================ */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+:root {
+  --paper: #f4ece0;
+  --paper-warm: #f0e8d8;
+  --paper-dark: #e8dcc8;
+  --ink: #2a2420;
+  --ink-light: #584840;
+  --ink-faint: #8a7868;
+  --ink-ghost: rgba(42, 36, 32, 0.08);
+  --vermillion: #c83028;
+  --vermillion-dark: #a02820;
+  --vermillion-light: #e04838;
+  --indigo: #384878;
+  --indigo-light: #506090;
+  --ink-track: #3a3430;
+  --ready-green: #607848;
+  --petal-pink: #d88898;
+  --petal-light: #e8a8b0;
+  --petal-gray: #a09890;
+  --petal-gray-light: #b8b0a8;
+  --brush-dark: #382c28;
+  --branch-ink: #483830;
+  --branch-mid: #685848;
+  --blossom-yellow: #c8a850;
+}
+
+html {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+body {
+  min-height: 100vh;
+  /* Washi paper texture — layered noise simulation */
+  background:
+    /* Fine fiber grain */
+    repeating-linear-gradient(
+      87deg,
+      transparent 0px,
+      transparent 2px,
+      rgba(42, 36, 32, 0.012) 2px,
+      rgba(42, 36, 32, 0.012) 3px
+    ),
+    repeating-linear-gradient(
+      177deg,
+      transparent 0px,
+      transparent 3px,
+      rgba(42, 36, 32, 0.008) 3px,
+      rgba(42, 36, 32, 0.008) 4px
+    ),
+    /* Warm paper gradient — subtle tea stain effect */
+    radial-gradient(ellipse at 30% 20%, rgba(200, 168, 120, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(180, 148, 100, 0.06) 0%, transparent 50%),
+    linear-gradient(180deg, #f2e8d8 0%, var(--paper) 30%, #f0e4d4 70%, #ecdcc8 100%);
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Additional paper fiber texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  /* Organic dot pattern — like paper fibers */
+  background-image:
+    radial-gradient(circle, rgba(42, 36, 32, 0.04) 0.5px, transparent 0.5px),
+    radial-gradient(circle, rgba(42, 36, 32, 0.03) 0.3px, transparent 0.3px);
+  background-size: 11px 13px, 7px 9px;
+  background-position: 0 0, 4px 5px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   PETAL + INK DROP ANIMATION
+   ============================================================ */
+.petals-container {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.petal {
+  position: absolute;
+  opacity: 0;
+  animation: petalFall linear infinite;
+}
+
+.petal--blossom {
+  width: 4px;
+  height: 4px;
+}
+
+.petal--ink {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+}
+
+@keyframes petalFall {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) translateX(0px) rotate(0deg);
+  }
+  5% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  95% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(100vh) translateX(60px) rotate(540deg);
+  }
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.page-header {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 40px 16px 8px;
+}
+
+.page-header h1 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--ink);
+  text-shadow: 1px 1px 0 rgba(244, 236, 224, 0.8);
+  margin-bottom: 6px;
+}
+
+.page-header .subtitle {
+  font-size: 7px;
+  color: var(--ink-faint);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+/* Brush stroke divider */
+.divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 16px auto;
+  max-width: 400px;
+}
+
+.divider-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(42, 36, 32, 0.15) 10%,
+    rgba(42, 36, 32, 0.4) 30%,
+    rgba(42, 36, 32, 0.5) 50%,
+    rgba(42, 36, 32, 0.4) 70%,
+    rgba(42, 36, 32, 0.15) 90%,
+    transparent);
+  /* Uneven ink wash stroke feel */
+  box-shadow:
+    0 -1px 0 rgba(42, 36, 32, 0.05),
+    0 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.divider-diamond {
+  width: 6px;
+  height: 6px;
+  background: var(--vermillion);
+  transform: rotate(45deg);
+  box-shadow: 0 0 0 1px rgba(42, 36, 32, 0.3);
+}
+
+/* ============================================================
+   CARDS CONTAINER
+   ============================================================ */
+.cards-container {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 24px;
+  padding: 16px 24px 48px;
+}
+
+/* ============================================================
+   CHARACTER CARD — rice paper sheet with brush stroke borders
+   ============================================================ */
+.card {
+  width: 280px;
+  background: var(--paper-warm);
+  position: relative;
+  padding: 0;
+  /* Brush stroke borders — uneven thickness like a real brush */
+  box-shadow:
+    /* Top edge: thick brush start */
+    0 -3px 0 0 var(--ink),
+    /* Right edge: thin upstroke */
+    1px 0 0 0 var(--ink),
+    /* Bottom edge: medium pressure */
+    0 2px 0 0 var(--ink),
+    /* Left edge: thin-to-medium */
+    -1px 0 0 0 var(--ink),
+    /* Ink bleed / paper shadow */
+    3px 4px 0 0 rgba(42, 36, 32, 0.06),
+    -1px -1px 0 0 rgba(42, 36, 32, 0.03);
+}
+
+.card.offline {
+  opacity: 0.72;
+  filter: saturate(0.5);
+}
+
+/* Ink splatter at top-right corner */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 3px;
+  height: 3px;
+  background: rgba(42, 36, 32, 0.15);
+  border-radius: 50%;
+  box-shadow:
+    4px 2px 0 0 rgba(42, 36, 32, 0.1),
+    -2px 4px 0 0 rgba(42, 36, 32, 0.08),
+    6px 5px 0 0 rgba(42, 36, 32, 0.06),
+    1px 6px 0 0 rgba(42, 36, 32, 0.12);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Ink splatter at bottom-left corner */
+.card::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  width: 2px;
+  height: 2px;
+  background: rgba(42, 36, 32, 0.12);
+  border-radius: 50%;
+  box-shadow:
+    3px -1px 0 0 rgba(42, 36, 32, 0.09),
+    -1px 3px 0 0 rgba(42, 36, 32, 0.07),
+    5px 2px 0 0 rgba(42, 36, 32, 0.05);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.card-inner {
+  position: relative;
+  z-index: 2;
+  padding: 0 16px 16px;
+}
+
+/* ============================================================
+   CHERRY BRANCH DECORATION (top of each card)
+   ============================================================ */
+.cherry-branch {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.cherry-branch canvas {
+  display: block;
+  width: 100%;
+  height: 40px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   CHARACTER NAME — vermillion ink
+   ============================================================ */
+.char-name {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--vermillion);
+  margin-bottom: 10px;
+  text-shadow: 1px 1px 0 rgba(244, 236, 224, 0.6);
+}
+
+/* ============================================================
+   PORTRAIT FRAME — ink border on paper
+   ============================================================ */
+.portrait-frame {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.portrait-border {
+  /* Brush stroke border — uneven like hand-drawn rectangle */
+  box-shadow:
+    0 -2px 0 0 var(--ink),
+    2px 0 0 0 var(--ink),
+    0 1px 0 0 var(--ink),
+    -1px 0 0 0 var(--ink),
+    2px 2px 0 0 rgba(42, 36, 32, 0.08);
+  background: var(--paper-dark);
+  padding: 3px;
+  line-height: 0;
+}
+
+.portrait-border canvas {
+  display: block;
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   LEVEL BADGE — hanko seal style
+   ============================================================ */
+.level-row {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.level-badge {
+  display: inline-block;
+  font-size: 8px;
+  color: var(--paper);
+  background: var(--vermillion);
+  border: none;
+  padding: 4px 10px;
+  letter-spacing: 1px;
+  transform: rotate(-1deg);
+  box-shadow:
+    1px 1px 0 rgba(42, 36, 32, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================
+   STAT BARS (HP / XP) — ink wash style
+   ============================================================ */
+.stat-bars {
+  margin-bottom: 10px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.stat-label {
+  font-size: 7px;
+  width: 20px;
+  text-align: right;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.stat-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--ink-track);
+  border: none;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.1);
+}
+
+.stat-bar-track.xp-track {
+  background: var(--ink-track);
+}
+
+.stat-bar-fill {
+  height: 100%;
+  background: var(--vermillion);
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+/* Subtle ink shine on bar */
+.stat-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.stat-bar-fill.xp-fill {
+  background: var(--indigo);
+}
+
+.stat-value {
+  font-size: 6px;
+  width: 62px;
+  text-align: left;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   COOLDOWN TIMER
+   ============================================================ */
+.cooldown-section {
+  margin-bottom: 10px;
+}
+
+.cooldown-label {
+  font-size: 6px;
+  color: var(--ink-faint);
+  text-align: center;
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+
+.cooldown-bar-track {
+  height: 10px;
+  background: var(--paper-dark);
+  border: 1px solid rgba(42, 36, 32, 0.25);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.cooldown-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--ink-faint), var(--ink-light));
+  transition: width 0.1s linear;
+  position: relative;
+}
+
+.cooldown-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.cooldown-bar-fill.ready {
+  background: var(--ready-green);
+}
+
+.cooldown-text {
+  font-size: 9px;
+  text-align: center;
+  color: var(--ink);
+  letter-spacing: 1px;
+  min-height: 12px;
+}
+
+.cooldown-text.ready-flash {
+  color: var(--ready-green);
+  animation: readyPulse 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes readyPulse {
+  0% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+/* ============================================================
+   INFO PANELS — inset paper areas
+   ============================================================ */
+.info-panel {
+  background: rgba(42, 36, 32, 0.03);
+  border: none;
+  border-left: 2px solid rgba(42, 36, 32, 0.12);
+  border-bottom: 1px solid rgba(42, 36, 32, 0.06);
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  min-height: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.info-panel-label {
+  font-size: 5px;
+  color: var(--ink-faint);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.info-panel-text {
+  font-size: 7px;
+  line-height: 1.6;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+/* ============================================================
+   ACTION BUTTONS — hanko seal / ink stamp style
+   ============================================================ */
+.buttons-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.action-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--paper);
+  background: var(--vermillion);
+  border: none;
+  padding: 5px 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  box-shadow:
+    1px 1px 0 rgba(42, 36, 32, 0.2);
+  transition: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Slight rotation on each button — hand-stamped feel */
+.btn-row:nth-child(1) .action-btn:nth-child(1) { transform: rotate(-1.2deg); }
+.btn-row:nth-child(1) .action-btn:nth-child(2) { transform: rotate(0.8deg); }
+.btn-row:nth-child(2) .action-btn:nth-child(1) { transform: rotate(1.5deg); }
+.btn-row:nth-child(3) .action-btn:nth-child(1) { transform: rotate(-0.5deg); }
+.btn-row:nth-child(3) .action-btn:nth-child(2) { transform: rotate(1.8deg); }
+
+.action-btn:hover {
+  background: var(--vermillion-light);
+}
+
+.action-btn:active {
+  background: var(--vermillion-dark);
+  color: var(--paper);
+  box-shadow:
+    inset 1px 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+.action-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+.page-footer {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 8px 16px 24px;
+}
+
+.page-footer p {
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 2px;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 920px) {
+  .cards-container {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- Floating petals + ink drops container -->
+<div class="petals-container" id="petalsContainer"></div>
+
+<!-- Header -->
+<header class="page-header">
+  <h1>ARTIFACTS MMO</h1>
+  <p class="subtitle">Bot Manager</p>
+  <div class="divider">
+    <span class="divider-line"></span>
+    <span class="divider-diamond"></span>
+    <span class="divider-line"></span>
+  </div>
+</header>
+
+<!-- Cards -->
+<main class="cards-container" id="cardsContainer"></main>
+
+<!-- Footer -->
+<footer class="page-footer">
+  <div class="divider" style="margin-bottom: 12px;">
+    <span class="divider-line"></span>
+    <span class="divider-diamond"></span>
+    <span class="divider-line"></span>
+  </div>
+  <p>SUMI-E INK WASH v1.0</p>
+</footer>
+
+<script>
+const PLACEHOLDER_LOG = 'OFFLINE — waiting for runtime updates';
+
+/* ==============================================================
+   PORTRAIT PIXEL ART DEFINITIONS
+   16x16 grid, drawn at native res then displayed at 96x96 via CSS
+   ============================================================== */
+const PORTRAITS = {
+  warrior: {
+    pixels: [
+      { x: 5, y: 0, c: '#607890' }, { x: 6, y: 0, c: '#607890' }, { x: 7, y: 0, c: '#607890' }, { x: 8, y: 0, c: '#607890' }, { x: 9, y: 0, c: '#607890' },
+      { x: 4, y: 1, c: '#607890' }, { x: 5, y: 1, c: '#789cb8' }, { x: 6, y: 1, c: '#789cb8' }, { x: 7, y: 1, c: '#90b8d0' }, { x: 8, y: 1, c: '#789cb8' }, { x: 9, y: 1, c: '#789cb8' }, { x: 10, y: 1, c: '#607890' },
+      { x: 3, y: 2, c: '#607890' }, { x: 4, y: 2, c: '#789cb8' }, { x: 5, y: 2, c: '#90b8d0' }, { x: 6, y: 2, c: '#789cb8' }, { x: 7, y: 2, c: '#90b8d0' }, { x: 8, y: 2, c: '#789cb8' }, { x: 9, y: 2, c: '#90b8d0' }, { x: 10, y: 2, c: '#789cb8' }, { x: 11, y: 2, c: '#607890' },
+      { x: 2, y: 3, c: '#506878' }, { x: 3, y: 3, c: '#607890' }, { x: 4, y: 3, c: '#607890' }, { x: 5, y: 3, c: '#607890' }, { x: 6, y: 3, c: '#607890' }, { x: 7, y: 3, c: '#607890' }, { x: 8, y: 3, c: '#607890' }, { x: 9, y: 3, c: '#607890' }, { x: 10, y: 3, c: '#607890' }, { x: 11, y: 3, c: '#607890' }, { x: 12, y: 3, c: '#506878' },
+      { x: 4, y: 4, c: '#e8c8a0' }, { x: 5, y: 4, c: '#e8c8a0' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#e8c8a0' }, { x: 10, y: 4, c: '#e8c8a0' },
+      { x: 3, y: 5, c: '#e8c8a0' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#382828' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#382828' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#e8c8a0' },
+      { x: 3, y: 6, c: '#e8c8a0' }, { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' }, { x: 11, y: 6, c: '#e8c8a0' },
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#c09880' }, { x: 7, y: 7, c: '#c09880' }, { x: 8, y: 7, c: '#c09880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' },
+      { x: 2, y: 10, c: '#607890' }, { x: 3, y: 10, c: '#789cb8' }, { x: 4, y: 10, c: '#789cb8' }, { x: 5, y: 10, c: '#607890' }, { x: 6, y: 10, c: '#607890' }, { x: 7, y: 10, c: '#607890' }, { x: 8, y: 10, c: '#607890' }, { x: 9, y: 10, c: '#607890' }, { x: 10, y: 10, c: '#789cb8' }, { x: 11, y: 10, c: '#789cb8' }, { x: 12, y: 10, c: '#607890' },
+      { x: 1, y: 11, c: '#506878' }, { x: 2, y: 11, c: '#789cb8' }, { x: 3, y: 11, c: '#90b8d0' }, { x: 4, y: 11, c: '#789cb8' }, { x: 5, y: 11, c: '#607890' }, { x: 6, y: 11, c: '#789cb8' }, { x: 7, y: 11, c: '#90b8d0' }, { x: 8, y: 11, c: '#789cb8' }, { x: 9, y: 11, c: '#607890' }, { x: 10, y: 11, c: '#789cb8' }, { x: 11, y: 11, c: '#90b8d0' }, { x: 12, y: 11, c: '#789cb8' }, { x: 13, y: 11, c: '#506878' },
+      { x: 1, y: 12, c: '#506878' }, { x: 2, y: 12, c: '#607890' }, { x: 3, y: 12, c: '#789cb8' }, { x: 4, y: 12, c: '#607890' }, { x: 5, y: 12, c: '#607890' }, { x: 6, y: 12, c: '#789cb8' }, { x: 7, y: 12, c: '#c0c0c0' }, { x: 8, y: 12, c: '#789cb8' }, { x: 9, y: 12, c: '#607890' }, { x: 10, y: 12, c: '#607890' }, { x: 11, y: 12, c: '#789cb8' }, { x: 12, y: 12, c: '#607890' }, { x: 13, y: 12, c: '#506878' },
+      { x: 2, y: 13, c: '#607890' }, { x: 3, y: 13, c: '#607890' }, { x: 4, y: 13, c: '#607890' }, { x: 5, y: 13, c: '#607890' }, { x: 6, y: 13, c: '#607890' }, { x: 7, y: 13, c: '#607890' }, { x: 8, y: 13, c: '#607890' }, { x: 9, y: 13, c: '#607890' }, { x: 10, y: 13, c: '#607890' }, { x: 11, y: 13, c: '#607890' }, { x: 12, y: 13, c: '#607890' },
+    ]
+  },
+  mage: {
+    pixels: [
+      { x: 7, y: 0, c: '#584078' },
+      { x: 6, y: 1, c: '#584078' }, { x: 7, y: 1, c: '#7858a0' }, { x: 8, y: 1, c: '#584078' },
+      { x: 5, y: 2, c: '#584078' }, { x: 6, y: 2, c: '#7858a0' }, { x: 7, y: 2, c: '#9070b8' }, { x: 8, y: 2, c: '#7858a0' }, { x: 9, y: 2, c: '#584078' },
+      { x: 2, y: 3, c: '#483068' }, { x: 3, y: 3, c: '#584078' }, { x: 4, y: 3, c: '#584078' }, { x: 5, y: 3, c: '#7858a0' }, { x: 6, y: 3, c: '#7858a0' }, { x: 7, y: 3, c: '#f8e060' }, { x: 8, y: 3, c: '#7858a0' }, { x: 9, y: 3, c: '#7858a0' }, { x: 10, y: 3, c: '#584078' }, { x: 11, y: 3, c: '#584078' }, { x: 12, y: 3, c: '#483068' },
+      { x: 3, y: 4, c: '#c0c0d0' }, { x: 4, y: 4, c: '#e8c8a0' }, { x: 5, y: 4, c: '#f0d8b8' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#f0d8b8' }, { x: 10, y: 4, c: '#e8c8a0' }, { x: 11, y: 4, c: '#c0c0d0' },
+      { x: 3, y: 5, c: '#c0c0d0' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#382858' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#382858' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#c0c0d0' },
+      { x: 3, y: 6, c: '#c0c0d0' }, { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' }, { x: 11, y: 6, c: '#c0c0d0' },
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#b88880' }, { x: 7, y: 7, c: '#f0d8b8' }, { x: 8, y: 7, c: '#b88880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 5, y: 9, c: '#c0c0d0' }, { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' }, { x: 9, y: 9, c: '#c0c0d0' },
+      { x: 3, y: 10, c: '#584078' }, { x: 4, y: 10, c: '#7858a0' }, { x: 5, y: 10, c: '#584078' }, { x: 6, y: 10, c: '#584078' }, { x: 7, y: 10, c: '#584078' }, { x: 8, y: 10, c: '#584078' }, { x: 9, y: 10, c: '#584078' }, { x: 10, y: 10, c: '#7858a0' }, { x: 11, y: 10, c: '#584078' },
+      { x: 2, y: 11, c: '#483068' }, { x: 3, y: 11, c: '#7858a0' }, { x: 4, y: 11, c: '#9070b8' }, { x: 5, y: 11, c: '#7858a0' }, { x: 6, y: 11, c: '#584078' }, { x: 7, y: 11, c: '#f8e060' }, { x: 8, y: 11, c: '#584078' }, { x: 9, y: 11, c: '#7858a0' }, { x: 10, y: 11, c: '#9070b8' }, { x: 11, y: 11, c: '#7858a0' }, { x: 12, y: 11, c: '#483068' },
+      { x: 2, y: 12, c: '#483068' }, { x: 3, y: 12, c: '#584078' }, { x: 4, y: 12, c: '#7858a0' }, { x: 5, y: 12, c: '#584078' }, { x: 6, y: 12, c: '#7858a0' }, { x: 7, y: 12, c: '#9070b8' }, { x: 8, y: 12, c: '#7858a0' }, { x: 9, y: 12, c: '#584078' }, { x: 10, y: 12, c: '#7858a0' }, { x: 11, y: 12, c: '#584078' }, { x: 12, y: 12, c: '#483068' },
+      { x: 3, y: 13, c: '#584078' }, { x: 4, y: 13, c: '#584078' }, { x: 5, y: 13, c: '#584078' }, { x: 6, y: 13, c: '#584078' }, { x: 7, y: 13, c: '#584078' }, { x: 8, y: 13, c: '#584078' }, { x: 9, y: 13, c: '#584078' }, { x: 10, y: 13, c: '#584078' }, { x: 11, y: 13, c: '#584078' },
+    ]
+  },
+  gatherer: {
+    pixels: [
+      { x: 5, y: 0, c: '#3a6838' }, { x: 6, y: 0, c: '#3a6838' }, { x: 7, y: 0, c: '#3a6838' }, { x: 8, y: 0, c: '#3a6838' }, { x: 9, y: 0, c: '#3a6838' },
+      { x: 4, y: 1, c: '#3a6838' }, { x: 5, y: 1, c: '#508848' }, { x: 6, y: 1, c: '#508848' }, { x: 7, y: 1, c: '#60a058' }, { x: 8, y: 1, c: '#508848' }, { x: 9, y: 1, c: '#508848' }, { x: 10, y: 1, c: '#3a6838' },
+      { x: 3, y: 2, c: '#3a6838' }, { x: 4, y: 2, c: '#508848' }, { x: 5, y: 2, c: '#60a058' }, { x: 6, y: 2, c: '#508848' }, { x: 7, y: 2, c: '#60a058' }, { x: 8, y: 2, c: '#508848' }, { x: 9, y: 2, c: '#60a058' }, { x: 10, y: 2, c: '#508848' }, { x: 11, y: 2, c: '#3a6838' },
+      { x: 3, y: 3, c: '#2a5028' }, { x: 4, y: 3, c: '#3a6838' }, { x: 5, y: 3, c: '#3a6838' }, { x: 6, y: 3, c: '#3a6838' }, { x: 7, y: 3, c: '#3a6838' }, { x: 8, y: 3, c: '#3a6838' }, { x: 9, y: 3, c: '#3a6838' }, { x: 10, y: 3, c: '#3a6838' }, { x: 11, y: 3, c: '#2a5028' },
+      { x: 3, y: 4, c: '#3a6838' }, { x: 4, y: 4, c: '#e0c098' }, { x: 5, y: 4, c: '#f0d8b8' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#f0d8b8' }, { x: 10, y: 4, c: '#e0c098' }, { x: 11, y: 4, c: '#3a6838' },
+      { x: 3, y: 5, c: '#3a6838' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#283818' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#283818' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#3a6838' },
+      { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' },
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#c09880' }, { x: 7, y: 7, c: '#c09880' }, { x: 8, y: 7, c: '#c09880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 5, y: 9, c: '#a07848' }, { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' }, { x: 9, y: 9, c: '#a07848' },
+      { x: 3, y: 10, c: '#3a6838' }, { x: 4, y: 10, c: '#508848' }, { x: 5, y: 10, c: '#3a6838' }, { x: 6, y: 10, c: '#3a6838' }, { x: 7, y: 10, c: '#3a6838' }, { x: 8, y: 10, c: '#3a6838' }, { x: 9, y: 10, c: '#3a6838' }, { x: 10, y: 10, c: '#508848' }, { x: 11, y: 10, c: '#3a6838' },
+      { x: 2, y: 11, c: '#2a5028' }, { x: 3, y: 11, c: '#508848' }, { x: 4, y: 11, c: '#60a058' }, { x: 5, y: 11, c: '#508848' }, { x: 6, y: 11, c: '#3a6838' }, { x: 7, y: 11, c: '#a07848' }, { x: 8, y: 11, c: '#3a6838' }, { x: 9, y: 11, c: '#508848' }, { x: 10, y: 11, c: '#60a058' }, { x: 11, y: 11, c: '#508848' }, { x: 12, y: 11, c: '#2a5028' },
+      { x: 2, y: 12, c: '#2a5028' }, { x: 3, y: 12, c: '#3a6838' }, { x: 4, y: 12, c: '#508848' }, { x: 5, y: 12, c: '#3a6838' }, { x: 6, y: 12, c: '#508848' }, { x: 7, y: 12, c: '#60a058' }, { x: 8, y: 12, c: '#508848' }, { x: 9, y: 12, c: '#3a6838' }, { x: 10, y: 12, c: '#508848' }, { x: 11, y: 12, c: '#3a6838' }, { x: 12, y: 12, c: '#2a5028' },
+      { x: 3, y: 13, c: '#3a6838' }, { x: 4, y: 13, c: '#3a6838' }, { x: 5, y: 13, c: '#3a6838' }, { x: 6, y: 13, c: '#3a6838' }, { x: 7, y: 13, c: '#3a6838' }, { x: 8, y: 13, c: '#3a6838' }, { x: 9, y: 13, c: '#3a6838' }, { x: 10, y: 13, c: '#3a6838' }, { x: 11, y: 13, c: '#3a6838' },
+    ]
+  }
+};
+
+/* ==============================================================
+   DRAW PORTRAIT ON CANVAS — paper-colored background
+   ============================================================== */
+function drawPortrait(canvas, type) {
+  const size = 14;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // Warm washi paper background
+  ctx.fillStyle = '#ede4d4';
+  ctx.fillRect(0, 0, size, size);
+
+  const data = PORTRAITS[type];
+  if (!data) return;
+  data.pixels.forEach(p => {
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x, p.y, 1, 1);
+  });
+}
+
+/* ==============================================================
+   DRAW CHERRY BRANCH ON CANVAS — sumi-e brushy style
+   Variable stroke width to simulate brush pressure
+   ============================================================== */
+function drawCherryBranch(canvas) {
+  const w = 280;
+  const h = 40;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Branch path — a gentle curve from left to right
+  const branchPoints = [
+    [0, 24], [20, 22], [40, 18], [60, 16], [80, 15], [100, 16],
+    [120, 18], [140, 17], [160, 14], [180, 12], [200, 13],
+    [220, 15], [240, 18], [260, 20], [280, 22]
+  ];
+
+  // Brush pressure map — width varies along the branch (1-3px)
+  // Thicker at start (brush loaded with ink), thins out, thickens again
+  const pressureMap = [3, 3, 2, 2, 3, 2, 2, 1, 2, 3, 2, 2, 1, 1, 1];
+
+  // Draw branch with variable width — sumi-e brush simulation
+  for (let i = 0; i < branchPoints.length - 1; i++) {
+    const [x1, y1] = branchPoints[i];
+    const [x2, y2] = branchPoints[i + 1];
+    const thickness = pressureMap[i] || 2;
+    const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+
+    for (let s = 0; s <= steps; s++) {
+      const t = steps === 0 ? 0 : s / steps;
+      const x = Math.round(x1 + (x2 - x1) * t);
+      const y = Math.round(y1 + (y2 - y1) * t);
+
+      // Vary ink darkness along stroke — like real ink wash
+      const inkDark = Math.random() > 0.7 ? '#382c28' : '#483830';
+      ctx.fillStyle = inkDark;
+      ctx.fillRect(x, y, thickness, thickness);
+
+      // Add slight ink bleed on thicker strokes
+      if (thickness >= 3 && Math.random() > 0.8) {
+        ctx.fillStyle = 'rgba(56, 44, 40, 0.3)';
+        ctx.fillRect(x - 1, y + thickness, 1, 1);
+      }
+    }
+  }
+
+  // Sub-branches — thinner, like light brush strokes
+  const subBranches = [
+    [[60, 16], [50, 8], [45, 4]],
+    [[120, 18], [130, 10], [135, 6]],
+    [[180, 12], [170, 6], [165, 2]],
+    [[220, 15], [230, 8], [235, 5]],
+    [[100, 16], [95, 10]],
+    [[160, 14], [155, 8]],
+  ];
+
+  subBranches.forEach(branch => {
+    for (let i = 0; i < branch.length - 1; i++) {
+      const [x1, y1] = branch[i];
+      const [x2, y2] = branch[i + 1];
+      const steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+      for (let s = 0; s <= steps; s++) {
+        const t = steps === 0 ? 0 : s / steps;
+        const x = Math.round(x1 + (x2 - x1) * t);
+        const y = Math.round(y1 + (y2 - y1) * t);
+        // Thin sub-branches fade to lighter ink
+        const alpha = 1.0 - (t * 0.4);
+        ctx.fillStyle = `rgba(72, 56, 48, ${alpha})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  });
+
+  // Blossoms — mix of pink AND ink-wash gray blossoms
+  const blossomPositions = [
+    [45, 3], [48, 5], [42, 6],
+    [130, 6], [133, 8], [127, 9], [135, 4],
+    [165, 1], [168, 3], [162, 4], [170, 5],
+    [230, 4], [233, 6], [227, 7], [235, 3],
+    [95, 8], [92, 10], [98, 9],
+    [155, 6], [152, 8], [158, 7],
+  ];
+
+  const pinkColors = ['#d88898', '#e8a8b0', '#c87888', '#d89098', '#e0b0b8'];
+  const grayColors = ['#a09890', '#b8b0a8', '#908880', '#988e84', '#a8a098'];
+
+  blossomPositions.forEach(([bx, by], idx) => {
+    // Every 3rd blossom is ink-wash gray
+    const isGray = idx % 3 === 2;
+    const colors = isGray ? grayColors : pinkColors;
+
+    const offsets = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+    offsets.forEach(([dx, dy], i) => {
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillRect(bx + dx * 2, by + dy * 2, 2, 2);
+    });
+    // Center dot — golden for pink, dark for gray
+    ctx.fillStyle = isGray ? '#685848' : '#c8a850';
+    ctx.fillRect(bx, by, 1, 1);
+  });
+
+  // Ink splatter marks near branch — decorative
+  const splatters = [
+    [30, 28], [75, 20], [145, 22], [210, 18], [250, 25]
+  ];
+  splatters.forEach(([sx, sy]) => {
+    ctx.fillStyle = 'rgba(42, 36, 32, 0.12)';
+    ctx.fillRect(sx, sy, 1, 1);
+    if (Math.random() > 0.5) {
+      ctx.fillRect(sx + 2, sy + 1, 1, 1);
+    }
+    if (Math.random() > 0.5) {
+      ctx.fillRect(sx - 1, sy + 2, 1, 1);
+    }
+  });
+}
+
+/* ==============================================================
+   BUILD CARD HTML
+   ============================================================== */
+const appState = {
+  order: [],
+  characters: new Map(),
+};
+
+const cardRefs = new Map();
+let eventSource = null;
+
+function toNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function safeText(text, fallback = '') {
+  const str = `${text ?? ''}`.trim();
+  return str.length > 0 ? str : fallback;
+}
+
+function hashPortraitType(name) {
+  let hash = 0;
+  const value = `${name || ''}`;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % 3;
+  if (idx === 0) return 'warrior';
+  if (idx === 1) return 'mage';
+  return 'gatherer';
+}
+
+function normalizeCharacter(raw) {
+  const name = safeText(raw?.name, 'Unknown');
+  const status = safeText(raw?.status, 'starting');
+  const stale = !!raw?.stale;
+  const offline = stale || status !== 'running';
+
+  const maxHp = Math.max(0, toNumber(raw?.maxHp, 0));
+  const hp = Math.max(0, toNumber(raw?.hp, 0));
+  const maxXp = Math.max(0, toNumber(raw?.maxXp, 0));
+  const xp = Math.max(0, toNumber(raw?.xp, 0));
+
+  const taskLabel = safeText(raw?.task?.label, offline ? 'OFFLINE' : 'No active task');
+  const logLatest = safeText(raw?.logLatest, offline ? PLACEHOLDER_LOG : 'No activity yet');
+
+  const cooldown = raw?.cooldown || {};
+  const totalSeconds = Math.max(0, toNumber(cooldown.totalSeconds, 0));
+  const endsAtMs = Math.max(0, toNumber(cooldown.endsAtMs, 0));
+
+  return {
+    name,
+    portraitType: safeText(raw?.portraitType, hashPortraitType(name)),
+    status,
+    stale,
+    offline,
+    level: Math.max(0, toNumber(raw?.level, 0)),
+    hp,
+    maxHp,
+    xp,
+    maxXp,
+    taskLabel,
+    logLatest,
+    cooldown: {
+      action: safeText(cooldown.action, ''),
+      totalSeconds,
+      endsAtMs,
+    },
+  };
+}
+
+function statPct(value, maxValue) {
+  if (maxValue <= 0) return 0;
+  return Math.max(0, Math.min(100, (value / maxValue) * 100));
+}
+
+function toKey(name) {
+  return encodeURIComponent(name);
+}
+
+function buildCard(char, index) {
+  const key = toKey(char.name);
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.dataset.charName = char.name;
+  card.dataset.charKey = key;
+
+  card.innerHTML = `
+    <div class="cherry-branch">
+      <canvas class="branch-canvas" data-branch="${key}" data-idx="${index}"></canvas>
+    </div>
+    <div class="card-inner">
+      <div class="char-name" data-name="${key}">${char.name}</div>
+
+      <div class="portrait-frame">
+        <div class="portrait-border">
+          <canvas class="portrait-canvas" data-portrait="${key}"></canvas>
+        </div>
+      </div>
+
+      <div class="level-row">
+        <span class="level-badge" data-level="${key}">LV 0</span>
+      </div>
+
+      <div class="stat-bars">
+        <div class="stat-row">
+          <span class="stat-label">HP</span>
+          <div class="stat-bar-track">
+            <div class="stat-bar-fill" data-hp-fill="${key}" style="width: 0%"></div>
+          </div>
+          <span class="stat-value" data-hp-text="${key}">0 / 0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">XP</span>
+          <div class="stat-bar-track xp-track">
+            <div class="stat-bar-fill xp-fill" data-xp-fill="${key}" style="width: 0%"></div>
+          </div>
+          <span class="stat-value" data-xp-text="${key}">0 / 0</span>
+        </div>
+      </div>
+
+      <div class="cooldown-section">
+        <div class="cooldown-label">COOLDOWN</div>
+        <div class="cooldown-bar-track">
+          <div class="cooldown-bar-fill" data-cd-bar="${key}" style="width: 0%"></div>
+        </div>
+        <div class="cooldown-text" data-cd-text="${key}">--</div>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-label">LOG</div>
+        <div class="info-panel-text" data-log="${key}">${PLACEHOLDER_LOG}</div>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-label">TASK</div>
+        <div class="info-panel-text" data-task="${key}">OFFLINE</div>
+      </div>
+
+      <div class="buttons-section">
+        <div class="btn-row">
+          <button class="action-btn" disabled title="Phase 2">EQUIP</button>
+          <button class="action-btn" disabled title="Phase 2">INVEN</button>
+        </div>
+        <div class="btn-row">
+          <button class="action-btn" disabled title="Phase 2">SKILLS</button>
+        </div>
+        <div class="btn-row">
+          <button class="action-btn" disabled title="Phase 2">STATS</button>
+          <button class="action-btn" disabled title="Phase 2">ACHIEV</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const refs = {
+    root: card,
+    key,
+    portraitType: null,
+    nameEl: card.querySelector(`[data-name="${key}"]`),
+    portraitCanvas: card.querySelector(`[data-portrait="${key}"]`),
+    levelEl: card.querySelector(`[data-level="${key}"]`),
+    hpFill: card.querySelector(`[data-hp-fill="${key}"]`),
+    hpText: card.querySelector(`[data-hp-text="${key}"]`),
+    xpFill: card.querySelector(`[data-xp-fill="${key}"]`),
+    xpText: card.querySelector(`[data-xp-text="${key}"]`),
+    cdBar: card.querySelector(`[data-cd-bar="${key}"]`),
+    cdText: card.querySelector(`[data-cd-text="${key}"]`),
+    logText: card.querySelector(`[data-log="${key}"]`),
+    taskText: card.querySelector(`[data-task="${key}"]`),
+  };
+
+  const branchCanvas = card.querySelector(`[data-branch="${key}"]`);
+  if (branchCanvas) drawCherryBranch(branchCanvas);
+
+  cardRefs.set(char.name, refs);
+  return card;
+}
+
+function updateCooldown(refs, char) {
+  if (!refs || !refs.cdBar || !refs.cdText) return;
+  if (char.offline) {
+    refs.cdBar.style.width = '0%';
+    refs.cdBar.classList.remove('ready');
+    refs.cdText.classList.remove('ready-flash');
+    refs.cdText.textContent = '--';
+    return;
+  }
+
+  const total = char.cooldown.totalSeconds;
+  const endsAtMs = char.cooldown.endsAtMs;
+
+  if (total <= 0 || endsAtMs <= 0) {
+    refs.cdBar.style.width = '100%';
+    refs.cdBar.classList.add('ready');
+    refs.cdText.classList.add('ready-flash');
+    refs.cdText.textContent = 'READY';
+    return;
+  }
+
+  const remaining = Math.max(0, (endsAtMs - Date.now()) / 1000);
+  if (remaining <= 0) {
+    refs.cdBar.style.width = '100%';
+    refs.cdBar.classList.add('ready');
+    refs.cdText.classList.add('ready-flash');
+    refs.cdText.textContent = 'READY';
+    return;
+  }
+
+  const pct = Math.max(0, Math.min(100, (remaining / total) * 100));
+  refs.cdBar.style.width = `${pct.toFixed(1)}%`;
+  refs.cdBar.classList.remove('ready');
+  refs.cdText.classList.remove('ready-flash');
+  refs.cdText.textContent = `${remaining.toFixed(1)}s`;
+}
+
+function applyCharacterState(char) {
+  const refs = cardRefs.get(char.name);
+  if (!refs) return;
+
+  refs.root.classList.toggle('offline', char.offline);
+  refs.nameEl.textContent = char.name;
+  refs.levelEl.textContent = `LV ${char.level}`;
+
+  refs.hpFill.style.width = `${statPct(char.hp, char.maxHp).toFixed(1)}%`;
+  refs.hpText.textContent = `${char.hp} / ${char.maxHp}`;
+
+  refs.xpFill.style.width = `${statPct(char.xp, char.maxXp).toFixed(1)}%`;
+  refs.xpText.textContent = `${char.xp} / ${char.maxXp}`;
+
+  refs.logText.textContent = char.logLatest;
+  refs.taskText.textContent = char.taskLabel;
+
+  if (refs.portraitType !== char.portraitType) {
+    refs.portraitType = char.portraitType;
+    drawPortrait(refs.portraitCanvas, char.portraitType);
+  }
+
+  updateCooldown(refs, char);
+}
+
+function syncCards() {
+  const container = document.getElementById('cardsContainer');
+  const nextNames = new Set(appState.order);
+
+  for (const [name, refs] of cardRefs.entries()) {
+    if (!nextNames.has(name)) {
+      refs.root.remove();
+      cardRefs.delete(name);
+    }
+  }
+
+  appState.order.forEach((name, index) => {
+    const char = appState.characters.get(name);
+    if (!char) return;
+
+    if (!cardRefs.has(name)) {
+      container.appendChild(buildCard(char, index));
+    }
+
+    const refs = cardRefs.get(name);
+    if (refs && refs.root.parentElement === container) {
+      container.appendChild(refs.root);
+    }
+    applyCharacterState(char);
+  });
+}
+
+/* ==============================================================
+   FLOATING PETALS + INK DROPS
+   ============================================================== */
+function createPetals() {
+  const container = document.getElementById('petalsContainer');
+
+  // Pink petal colors (ink-wash muted pinks)
+  const petalColors = ['#d88898', '#e8a8b0', '#c87888', '#d89098', '#e0b0b8'];
+  // Ink drop colors
+  const inkColors = ['rgba(42, 36, 32, 0.3)', 'rgba(42, 36, 32, 0.25)', 'rgba(42, 36, 32, 0.2)', 'rgba(56, 44, 40, 0.25)'];
+
+  const petalCount = 20;
+  const inkCount = 8;
+
+  // Pink petals
+  for (let i = 0; i < petalCount; i++) {
+    const petal = document.createElement('div');
+    petal.className = 'petal petal--blossom';
+    const size = Math.random() > 0.5 ? 4 : 3;
+    petal.style.width = size + 'px';
+    petal.style.height = size + 'px';
+    petal.style.backgroundColor = petalColors[Math.floor(Math.random() * petalColors.length)];
+    petal.style.left = Math.random() * 100 + '%';
+    petal.style.top = -10 + 'px';
+    petal.style.animationDuration = (8 + Math.random() * 12) + 's';
+    petal.style.animationDelay = (Math.random() * 15) + 's';
+    container.appendChild(petal);
+  }
+
+  // Ink drops — smaller, darker, round
+  for (let i = 0; i < inkCount; i++) {
+    const drop = document.createElement('div');
+    drop.className = 'petal petal--ink';
+    drop.style.width = '2px';
+    drop.style.height = '2px';
+    drop.style.backgroundColor = inkColors[Math.floor(Math.random() * inkColors.length)];
+    drop.style.left = Math.random() * 100 + '%';
+    drop.style.top = -10 + 'px';
+    drop.style.animationDuration = (10 + Math.random() * 14) + 's';
+    drop.style.animationDelay = (Math.random() * 18) + 's';
+    container.appendChild(drop);
+  }
+}
+
+function applySnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.characters)) return;
+  appState.order = snapshot.characters.map(char => char.name).filter(Boolean);
+  appState.characters = new Map(
+    snapshot.characters
+      .filter(char => !!char?.name)
+      .map(char => [char.name, normalizeCharacter(char)])
+  );
+  syncCards();
+}
+
+async function loadInitialSnapshot() {
+  const res = await fetch('/api/ui/snapshot', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`snapshot HTTP ${res.status}`);
+  const snapshot = await res.json();
+  applySnapshot(snapshot);
+}
+
+function connectLiveEvents() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/ui/events');
+
+  eventSource.addEventListener('snapshot', (event) => {
+    try {
+      const snapshot = JSON.parse(event.data);
+      applySnapshot(snapshot);
+    } catch (err) {
+      console.error('Could not parse snapshot event', err);
+    }
+  });
+
+  eventSource.addEventListener('heartbeat', () => {
+    // Connection keepalive marker, no UI action needed.
+  });
+}
+
+/* ==============================================================
+   INIT
+   ============================================================== */
+async function init() {
+  createPetals();
+
+  try {
+    await loadInitialSnapshot();
+  } catch (err) {
+    console.error('Failed to load initial snapshot', err);
+  }
+
+  connectLiveEvents();
+
+  setInterval(() => {
+    for (const name of appState.order) {
+      const char = appState.characters.get(name);
+      const refs = cardRefs.get(name);
+      if (!char || !refs) continue;
+      updateCooldown(refs, char);
+    }
+  }, 100);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

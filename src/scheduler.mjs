@@ -3,6 +3,7 @@
  * Operates on a single CharacterContext.
  */
 import * as log from './log.mjs';
+import { recordRoutineState } from './services/ui-state.mjs';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -31,11 +32,21 @@ export class Scheduler {
       const routine = this.pickRoutine();
 
       if (!routine) {
+        recordRoutineState(this.ctx.name, {
+          routineName: null,
+          phase: 'idle',
+          priority: null,
+        });
         log.warn(`[${this.ctx.name}] No runnable routines — idling 30s`);
         await sleep(30_000);
         continue;
       }
 
+      recordRoutineState(this.ctx.name, {
+        routineName: routine.name,
+        phase: 'start',
+        priority: routine.priority,
+      });
       log.info(`[${this.ctx.name}] → ${routine.name}`);
 
       try {
@@ -58,8 +69,19 @@ export class Scheduler {
         } else {
           await routine.execute(this.ctx);
         }
+        recordRoutineState(this.ctx.name, {
+          routineName: routine.name,
+          phase: 'done',
+          priority: routine.priority,
+        });
         log.info(`[${this.ctx.name}] ${routine.name}: done`);
       } catch (err) {
+        recordRoutineState(this.ctx.name, {
+          routineName: routine.name,
+          phase: 'error',
+          priority: routine.priority,
+          error: err.message,
+        });
         log.error(`[${this.ctx.name}] ${routine.name} failed`, err.message);
         await sleep(10_000);
       }

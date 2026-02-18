@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artifacts MMO Bot Manager — Ocean Depths</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+:root {
+  --ocean-black: #080818;
+  --midnight-blue: #101030;
+  --bio-cyan: #20eedd;
+  --seafoam: #40cc88;
+  --deep-aqua: #1868a0;
+  --pale-aqua: #b0e8e0;
+  --xp-purple: #6040cc;
+  --border-glow: 0 0 6px rgba(32, 238, 221, 0.4), 0 0 12px rgba(32, 238, 221, 0.15);
+  --border-glow-strong: 0 0 8px rgba(32, 238, 221, 0.6), 0 0 18px rgba(32, 238, 221, 0.3);
+  --text-glow: 0 0 8px rgba(32, 238, 221, 0.5);
+}
+
+body {
+  font-family: 'Press Start 2P', monospace;
+  background: var(--ocean-black);
+  color: var(--pale-aqua);
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Deep ocean gradient background */
+.bg-layer {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(180deg, #040410 0%, #080818 20%, #0c0c28 50%, #101040 80%, #141850 100%);
+  z-index: 0;
+}
+
+/* Caustic light patterns */
+.caustics {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1;
+  opacity: 0.06;
+  background:
+    radial-gradient(ellipse 300px 200px at 20% 30%, rgba(32, 238, 221, 0.8), transparent),
+    radial-gradient(ellipse 250px 350px at 70% 60%, rgba(64, 204, 136, 0.6), transparent),
+    radial-gradient(ellipse 400px 250px at 50% 80%, rgba(24, 104, 160, 0.7), transparent),
+    radial-gradient(ellipse 200px 300px at 80% 20%, rgba(32, 238, 221, 0.5), transparent);
+  animation: causticDrift 12s ease-in-out infinite alternate;
+}
+
+@keyframes causticDrift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 50% 50%, 80% 20%;
+  }
+  33% {
+    background-position: 10% 5%, 90% 95%, 40% 55%, 75% 25%;
+  }
+  66% {
+    background-position: -5% 10%, 105% 90%, 60% 45%, 85% 15%;
+  }
+  100% {
+    background-position: 5% -5%, 95% 105%, 45% 60%, 70% 30%;
+  }
+}
+
+.caustics-2 {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1;
+  opacity: 0.04;
+  background:
+    radial-gradient(ellipse 350px 180px at 40% 50%, rgba(96, 64, 204, 0.6), transparent),
+    radial-gradient(ellipse 200px 400px at 60% 30%, rgba(32, 238, 221, 0.4), transparent);
+  animation: causticDrift2 18s ease-in-out infinite alternate;
+}
+
+@keyframes causticDrift2 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(30px, -20px) scale(1.05); }
+  100% { transform: translate(-20px, 30px) scale(0.95); }
+}
+
+/* Bubble container */
+.bubbles {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bubble {
+  position: absolute;
+  bottom: -10px;
+  background: rgba(32, 238, 221, 0.25);
+  border: 1px solid rgba(32, 238, 221, 0.35);
+  box-shadow: 0 0 3px rgba(32, 238, 221, 0.2);
+}
+
+/* Main content */
+.main-content {
+  position: relative;
+  z-index: 10;
+  padding: 30px 20px 60px;
+}
+
+/* Header */
+.header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.header h1 {
+  font-size: 14px;
+  color: var(--bio-cyan);
+  text-shadow: var(--text-glow), 0 0 20px rgba(32, 238, 221, 0.3);
+  letter-spacing: 3px;
+  margin-bottom: 8px;
+}
+
+.header .subtitle {
+  font-size: 7px;
+  color: var(--deep-aqua);
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+/* Triangular / diamond layout */
+.card-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.top-row {
+  display: flex;
+  justify-content: center;
+}
+
+.bottom-row {
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+}
+
+/* Character card */
+.char-card {
+  width: 320px;
+  background: linear-gradient(180deg, rgba(16, 16, 48, 0.95) 0%, rgba(8, 8, 24, 0.98) 100%);
+  border: 2px solid rgba(32, 238, 221, 0.3);
+  box-shadow: var(--border-glow), inset 0 0 30px rgba(8, 8, 24, 0.5);
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+
+.char-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--bio-cyan), transparent);
+  opacity: 0.5;
+}
+
+.char-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--deep-aqua), transparent);
+  opacity: 0.3;
+}
+
+.char-card:hover {
+  border-color: rgba(32, 238, 221, 0.55);
+  box-shadow: var(--border-glow-strong), inset 0 0 30px rgba(8, 8, 24, 0.5);
+}
+
+/* Portrait area */
+.portrait-area {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 0 0;
+  position: relative;
+}
+
+.portrait-frame {
+  border: 2px solid rgba(32, 238, 221, 0.4);
+  box-shadow: 0 0 8px rgba(32, 238, 221, 0.3), inset 0 0 8px rgba(8, 8, 24, 0.8);
+  background: var(--ocean-black);
+  padding: 2px;
+  line-height: 0;
+}
+
+.portrait-canvas {
+  display: block;
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+/* Name banner */
+.name-banner {
+  text-align: center;
+  background: linear-gradient(90deg, transparent, rgba(16, 16, 48, 0.9) 20%, rgba(16, 16, 48, 0.9) 80%, transparent);
+  padding: 10px 16px 8px;
+  margin-top: -4px;
+  position: relative;
+}
+
+.name-banner .char-name {
+  font-size: 10px;
+  color: var(--bio-cyan);
+  text-shadow: var(--text-glow);
+  letter-spacing: 2px;
+}
+
+.name-banner .char-level {
+  font-size: 7px;
+  color: var(--seafoam);
+  margin-top: 4px;
+  letter-spacing: 1px;
+}
+
+/* Stats zone */
+.stats-zone {
+  padding: 10px 16px;
+}
+
+/* Stat bars */
+.stat-row {
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 6px;
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+
+.stat-label .label-text {
+  color: var(--pale-aqua);
+  opacity: 0.8;
+}
+
+.stat-label .label-value {
+  color: var(--pale-aqua);
+}
+
+.bar-outer {
+  width: 100%;
+  height: 10px;
+  background: rgba(8, 8, 24, 0.8);
+  border: 1px solid rgba(32, 238, 221, 0.15);
+  position: relative;
+  overflow: hidden;
+}
+
+.bar-inner {
+  height: 100%;
+  position: relative;
+  transition: width 0.5s ease;
+}
+
+.bar-inner.hp {
+  background: var(--seafoam);
+  box-shadow: 0 0 6px rgba(64, 204, 136, 0.5), inset 0 -2px 0 rgba(0,0,0,0.2);
+}
+
+.bar-inner.hp::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255,255,255,0.15);
+}
+
+.bar-inner.xp {
+  background: var(--xp-purple);
+  box-shadow: 0 0 6px rgba(96, 64, 204, 0.5), inset 0 -2px 0 rgba(0,0,0,0.2);
+}
+
+.bar-inner.xp::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255,255,255,0.12);
+}
+
+/* Cooldown bar */
+.cooldown-row {
+  margin-bottom: 6px;
+}
+
+.cooldown-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 6px;
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+
+.cooldown-label .label-text {
+  color: var(--pale-aqua);
+  opacity: 0.8;
+}
+
+.cooldown-label .cd-value {
+  color: var(--bio-cyan);
+  text-shadow: 0 0 4px rgba(32, 238, 221, 0.4);
+  min-width: 50px;
+  text-align: right;
+}
+
+.cooldown-label .cd-value.ready {
+  color: var(--seafoam);
+  text-shadow: 0 0 8px rgba(64, 204, 136, 0.7);
+  animation: readyFlash 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes readyFlash {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+.bar-outer.cd-bar {
+  height: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.bar-inner.cooldown {
+  background: linear-gradient(90deg, var(--deep-aqua), var(--bio-cyan));
+  box-shadow: 0 0 6px rgba(32, 238, 221, 0.4), inset 0 -2px 0 rgba(0,0,0,0.2);
+  transition: width 0.1s linear;
+  position: relative;
+}
+
+.bar-inner.cooldown::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    110deg,
+    transparent,
+    transparent 4px,
+    rgba(255,255,255,0.06) 4px,
+    rgba(255,255,255,0.06) 8px
+  );
+  animation: waveScroll 1.5s linear infinite;
+}
+
+@keyframes waveScroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-16px); }
+}
+
+.bar-inner.cooldown::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: rgba(255,255,255,0.15);
+}
+
+/* Log/task panels */
+.info-panels {
+  padding: 0 16px 10px;
+}
+
+.info-panel {
+  background: rgba(8, 8, 24, 0.6);
+  border: 1px solid rgba(32, 238, 221, 0.12);
+  padding: 7px 8px;
+  margin-bottom: 6px;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+}
+
+.info-panel .panel-icon {
+  font-size: 6px;
+  color: var(--deep-aqua);
+  margin-right: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+
+.info-panel .panel-text {
+  font-size: 6px;
+  line-height: 1.6;
+  color: var(--pale-aqua);
+  opacity: 0.85;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.info-panel.log-panel .panel-text {
+  color: var(--bio-cyan);
+  opacity: 0.9;
+}
+
+/* Action buttons */
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  padding: 6px 16px 16px;
+  gap: 4px;
+  /* Semi-circle arc arrangement */
+  position: relative;
+}
+
+.action-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 5px;
+  color: var(--pale-aqua);
+  background: linear-gradient(180deg, rgba(16, 16, 48, 0.9), rgba(8, 8, 24, 0.95));
+  border: 1px solid rgba(32, 238, 221, 0.2);
+  padding: 6px 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+  position: relative;
+  min-width: 48px;
+  text-align: center;
+}
+
+.action-btn:hover {
+  border-color: rgba(32, 238, 221, 0.6);
+  color: var(--bio-cyan);
+  box-shadow: 0 0 8px rgba(32, 238, 221, 0.35), 0 0 16px rgba(32, 238, 221, 0.15);
+  text-shadow: 0 0 6px rgba(32, 238, 221, 0.5);
+  background: linear-gradient(180deg, rgba(24, 24, 64, 0.95), rgba(12, 12, 36, 0.98));
+}
+
+.action-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 0 4px rgba(32, 238, 221, 0.3);
+}
+
+/* Arc button positioning */
+.action-buttons .action-btn:nth-child(1) { transform: translateY(4px); }
+.action-buttons .action-btn:nth-child(2) { transform: translateY(1px); }
+.action-buttons .action-btn:nth-child(3) { transform: translateY(0px); }
+.action-buttons .action-btn:nth-child(4) { transform: translateY(1px); }
+.action-buttons .action-btn:nth-child(5) { transform: translateY(4px); }
+
+.action-buttons .action-btn:hover:nth-child(1) { transform: translateY(3px); }
+.action-buttons .action-btn:hover:nth-child(2) { transform: translateY(0px); }
+.action-buttons .action-btn:hover:nth-child(3) { transform: translateY(-1px); }
+.action-buttons .action-btn:hover:nth-child(4) { transform: translateY(0px); }
+.action-buttons .action-btn:hover:nth-child(5) { transform: translateY(3px); }
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 30px 0 20px;
+  font-size: 6px;
+  color: var(--deep-aqua);
+  opacity: 0.5;
+  letter-spacing: 2px;
+}
+
+/* Responsive */
+@media (max-width: 740px) {
+  .bottom-row {
+    flex-direction: column;
+    align-items: center;
+  }
+  .char-card {
+    width: 300px;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="bg-layer"></div>
+<div class="caustics"></div>
+<div class="caustics-2"></div>
+<div class="bubbles" id="bubbles"></div>
+
+<div class="main-content">
+  <div class="header">
+    <h1>ARTIFACTS MMO</h1>
+    <div class="subtitle">BOT MANAGER &mdash; OCEAN DEPTHS</div>
+  </div>
+
+  <div class="card-layout">
+    <div class="top-row" id="top-row"></div>
+    <div class="bottom-row" id="bottom-row"></div>
+  </div>
+
+  <div class="footer">SYSTEM ONLINE &mdash; 3 AGENTS ACTIVE</div>
+</div>
+
+<script>
+// ---- Mock data ----
+const characters = [
+  {
+    name: 'Artifax', level: 25, hp: 340, maxHp: 450, xp: 12500, maxXp: 18000,
+    portraitType: 'warrior', cooldown: 12.0, maxCooldown: 15.0,
+    logs: [
+      'Fighting Chicken (Lv.3)...',
+      'Looted Feather x2',
+      'Equipped Iron Shield',
+      'Resting at camp...',
+      'Fighting Cow (Lv.8)...'
+    ],
+    task: 'Kill 50 Chickens (32/50)'
+  },
+  {
+    name: 'Luminos', level: 18, hp: 180, maxHp: 220, xp: 8200, maxXp: 12000,
+    portraitType: 'mage', cooldown: 8.0, maxCooldown: 12.0,
+    logs: [
+      'Crafting Iron Sword...',
+      'Gathered Copper Ore x5',
+      'Smelting Iron Bar...',
+      'Deposited 10 Iron Bars',
+      'Withdrew Coal x8'
+    ],
+    task: 'Craft 10 Iron Swords (7/10)'
+  },
+  {
+    name: 'Verdant', level: 22, hp: 260, maxHp: 300, xp: 15600, maxXp: 20000,
+    portraitType: 'gatherer', cooldown: 3.0, maxCooldown: 8.0,
+    logs: [
+      'Gathering Ash Wood...',
+      'Harvested Sunflower x3',
+      'Inventory full, banking...',
+      'Deposited Ash Wood x25',
+      'Travelling to forest...'
+    ],
+    task: 'Gather 100 Ash Wood (89/100)'
+  },
+];
+
+// ---- Portrait drawing ----
+function drawPortrait(canvas, type) {
+  const size = 12;
+  canvas.width = size;
+  canvas.height = size;
+  canvas.style.width = '96px';
+  canvas.style.height = '96px';
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  // Background: deep ocean
+  ctx.fillStyle = '#0a0a20';
+  ctx.fillRect(0, 0, size, size);
+
+  // Subtle depth lines
+  ctx.fillStyle = '#0e0e28';
+  ctx.fillRect(0, 10, size, 1);
+  ctx.fillRect(0, 11, size, 1);
+
+  if (type === 'warrior') {
+    // Barnacle-encrusted helmet — warrior
+    // Neck / body base
+    ctx.fillStyle = '#1a3a4a';
+    ctx.fillRect(4, 9, 4, 3);
+
+    // Face/skin
+    ctx.fillStyle = '#6aa8a0';
+    ctx.fillRect(4, 5, 4, 4);
+
+    // Eyes
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(4, 6, 2, 1);
+    ctx.fillRect(7, 6, 1, 1);
+    ctx.fillStyle = '#20eedd';
+    ctx.fillRect(5, 6, 1, 1);
+    ctx.fillStyle = '#20eedd';
+    ctx.fillRect(7, 6, 1, 1);
+
+    // Mouth
+    ctx.fillStyle = '#3a7a6a';
+    ctx.fillRect(5, 8, 2, 1);
+
+    // Helmet base
+    ctx.fillStyle = '#2a5068';
+    ctx.fillRect(3, 3, 6, 3);
+    ctx.fillRect(2, 4, 8, 2);
+
+    // Helmet top ridge
+    ctx.fillStyle = '#3a6878';
+    ctx.fillRect(4, 2, 4, 1);
+    ctx.fillRect(5, 1, 2, 1);
+
+    // Barnacles
+    ctx.fillStyle = '#5a8a70';
+    ctx.fillRect(2, 4, 1, 1);
+    ctx.fillRect(9, 4, 1, 1);
+    ctx.fillStyle = '#4a7a60';
+    ctx.fillRect(3, 3, 1, 1);
+    ctx.fillRect(8, 3, 1, 1);
+
+    // Helmet side guards
+    ctx.fillStyle = '#2a5068';
+    ctx.fillRect(3, 5, 1, 3);
+    ctx.fillRect(8, 5, 1, 3);
+
+    // Shoulder armor hints
+    ctx.fillStyle = '#1a4058';
+    ctx.fillRect(2, 9, 2, 2);
+    ctx.fillRect(8, 9, 2, 2);
+
+  } else if (type === 'mage') {
+    // Flowing sea-hat — mage
+    // Body/robe
+    ctx.fillStyle = '#1a2858';
+    ctx.fillRect(4, 9, 4, 3);
+
+    // Face
+    ctx.fillStyle = '#7ab8b0';
+    ctx.fillRect(4, 5, 4, 4);
+
+    // Eyes
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(4, 6, 2, 1);
+    ctx.fillRect(7, 6, 1, 1);
+    ctx.fillStyle = '#c060ff';
+    ctx.fillRect(5, 6, 1, 1);
+    ctx.fillStyle = '#c060ff';
+    ctx.fillRect(7, 6, 1, 1);
+
+    // Mouth
+    ctx.fillStyle = '#4a8a80';
+    ctx.fillRect(5, 8, 2, 1);
+
+    // Hat brim
+    ctx.fillStyle = '#2840a0';
+    ctx.fillRect(2, 4, 8, 2);
+
+    // Hat cone
+    ctx.fillStyle = '#2040a0';
+    ctx.fillRect(3, 2, 6, 2);
+    ctx.fillRect(4, 1, 4, 1);
+    ctx.fillRect(5, 0, 3, 1);
+
+    // Hat tip flowing to side
+    ctx.fillStyle = '#3050b0';
+    ctx.fillRect(7, 0, 2, 1);
+    ctx.fillRect(8, 1, 2, 1);
+    ctx.fillRect(9, 2, 2, 1);
+
+    // Star on hat
+    ctx.fillStyle = '#20eedd';
+    ctx.fillRect(5, 2, 1, 1);
+
+    // Robe collar
+    ctx.fillStyle = '#2838a0';
+    ctx.fillRect(3, 9, 1, 1);
+    ctx.fillRect(8, 9, 1, 1);
+
+    // Robe glow edges
+    ctx.fillStyle = '#3050c0';
+    ctx.fillRect(3, 10, 1, 2);
+    ctx.fillRect(8, 10, 1, 2);
+
+  } else if (type === 'gatherer') {
+    // Kelp hood — gatherer
+    // Body
+    ctx.fillStyle = '#1a4030';
+    ctx.fillRect(4, 9, 4, 3);
+
+    // Face
+    ctx.fillStyle = '#68a898';
+    ctx.fillRect(4, 5, 4, 4);
+
+    // Eyes
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(4, 6, 2, 1);
+    ctx.fillRect(7, 6, 1, 1);
+    ctx.fillStyle = '#40cc88';
+    ctx.fillRect(5, 6, 1, 1);
+    ctx.fillStyle = '#40cc88';
+    ctx.fillRect(7, 6, 1, 1);
+
+    // Mouth
+    ctx.fillStyle = '#3a8068';
+    ctx.fillRect(5, 8, 2, 1);
+
+    // Hood
+    ctx.fillStyle = '#1a5838';
+    ctx.fillRect(3, 3, 6, 3);
+    ctx.fillRect(2, 4, 8, 2);
+
+    // Hood top
+    ctx.fillStyle = '#1a6040';
+    ctx.fillRect(4, 2, 4, 1);
+    ctx.fillRect(5, 1, 2, 1);
+
+    // Kelp strands hanging
+    ctx.fillStyle = '#2a7848';
+    ctx.fillRect(2, 5, 1, 4);
+    ctx.fillRect(9, 5, 1, 4);
+    ctx.fillStyle = '#208838';
+    ctx.fillRect(2, 8, 1, 2);
+    ctx.fillRect(9, 8, 1, 2);
+    ctx.fillRect(1, 6, 1, 2);
+    ctx.fillRect(10, 6, 1, 2);
+
+    // Kelp on hood
+    ctx.fillStyle = '#2a8050';
+    ctx.fillRect(3, 2, 1, 1);
+    ctx.fillRect(8, 2, 1, 1);
+
+    // Leaf emblem
+    ctx.fillStyle = '#40cc88';
+    ctx.fillRect(5, 3, 2, 1);
+
+    // Shoulder wraps
+    ctx.fillStyle = '#1a5030';
+    ctx.fillRect(2, 9, 2, 2);
+    ctx.fillRect(8, 9, 2, 2);
+  }
+}
+
+// ---- Build card HTML ----
+function buildCard(charData, index) {
+  const card = document.createElement('div');
+  card.className = 'char-card';
+  card.id = `card-${index}`;
+
+  const hpPct = (charData.hp / charData.maxHp) * 100;
+  const xpPct = (charData.xp / charData.maxXp) * 100;
+  const cdPct = (charData.cooldown / charData.maxCooldown) * 100;
+
+  card.innerHTML = `
+    <div class="portrait-area">
+      <div class="portrait-frame">
+        <canvas class="portrait-canvas" id="portrait-${index}"></canvas>
+      </div>
+    </div>
+    <div class="name-banner">
+      <div class="char-name">${charData.name.toUpperCase()}</div>
+      <div class="char-level">LEVEL ${charData.level}</div>
+    </div>
+    <div class="stats-zone">
+      <div class="stat-row">
+        <div class="stat-label">
+          <span class="label-text">HP</span>
+          <span class="label-value">${charData.hp} / ${charData.maxHp}</span>
+        </div>
+        <div class="bar-outer">
+          <div class="bar-inner hp" style="width: ${hpPct}%"></div>
+        </div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-label">
+          <span class="label-text">XP</span>
+          <span class="label-value">${charData.xp.toLocaleString()} / ${charData.maxXp.toLocaleString()}</span>
+        </div>
+        <div class="bar-outer">
+          <div class="bar-inner xp" style="width: ${xpPct}%"></div>
+        </div>
+      </div>
+      <div class="cooldown-row">
+        <div class="cooldown-label">
+          <span class="label-text">COOLDOWN</span>
+          <span class="cd-value" id="cd-text-${index}">${charData.cooldown.toFixed(1)}s</span>
+        </div>
+        <div class="bar-outer cd-bar">
+          <div class="bar-inner cooldown" id="cd-bar-${index}" style="width: ${cdPct}%"></div>
+        </div>
+      </div>
+    </div>
+    <div class="info-panels">
+      <div class="info-panel log-panel">
+        <span class="panel-icon">LOG</span>
+        <span class="panel-text" id="log-${index}">${charData.logs[0]}</span>
+      </div>
+      <div class="info-panel task-panel">
+        <span class="panel-icon">TASK</span>
+        <span class="panel-text">${charData.task}</span>
+      </div>
+    </div>
+    <div class="action-buttons">
+      <button class="action-btn">EQUIP</button>
+      <button class="action-btn">INVEN</button>
+      <button class="action-btn">SKILLS</button>
+      <button class="action-btn">STATS</button>
+      <button class="action-btn">ACHIEV</button>
+    </div>
+  `;
+
+  return card;
+}
+
+// ---- Initialize ----
+function init() {
+  const topRow = document.getElementById('top-row');
+  const bottomRow = document.getElementById('bottom-row');
+
+  // Card 0 on top, cards 1 and 2 on bottom
+  topRow.appendChild(buildCard(characters[0], 0));
+  bottomRow.appendChild(buildCard(characters[1], 1));
+  bottomRow.appendChild(buildCard(characters[2], 2));
+
+  // Draw portraits
+  characters.forEach((char, i) => {
+    const canvas = document.getElementById(`portrait-${i}`);
+    drawPortrait(canvas, char.portraitType);
+  });
+
+  // Create bubbles
+  createBubbles();
+
+  // Start cooldown timers
+  startCooldowns();
+
+  // Start log cycling
+  startLogCycling();
+}
+
+// ---- Bubbles ----
+function createBubbles() {
+  const container = document.getElementById('bubbles');
+  const count = 18;
+
+  for (let i = 0; i < count; i++) {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    const size = 2 + Math.floor(Math.random() * 5); // 2-6px
+    const left = Math.random() * 100;
+    const duration = 8 + Math.random() * 14; // 8-22s
+    const delay = Math.random() * 12;
+    const wobbleAmt = 10 + Math.random() * 30;
+
+    bubble.style.width = size + 'px';
+    bubble.style.height = size + 'px';
+    bubble.style.left = left + '%';
+    bubble.style.opacity = 0.15 + Math.random() * 0.25;
+    bubble.style.animation = `bubbleRise${i} ${duration}s linear ${delay}s infinite`;
+
+    // Create unique keyframes for each bubble for varied wobble
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes bubbleRise${i} {
+        0% {
+          transform: translateX(0) translateY(0);
+          opacity: ${0.15 + Math.random() * 0.25};
+        }
+        25% {
+          transform: translateX(${wobbleAmt}px) translateY(-25vh);
+        }
+        50% {
+          transform: translateX(-${wobbleAmt * 0.5}px) translateY(-50vh);
+        }
+        75% {
+          transform: translateX(${wobbleAmt * 0.7}px) translateY(-75vh);
+        }
+        100% {
+          transform: translateX(0) translateY(-105vh);
+          opacity: 0;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    container.appendChild(bubble);
+  }
+}
+
+// ---- Cooldown timers ----
+function startCooldowns() {
+  const cooldownState = characters.map(c => ({
+    current: c.cooldown,
+    max: c.maxCooldown,
+    waiting: false,
+    waitTimer: 0
+  }));
+
+  setInterval(() => {
+    cooldownState.forEach((state, i) => {
+      const textEl = document.getElementById(`cd-text-${i}`);
+      const barEl = document.getElementById(`cd-bar-${i}`);
+
+      if (state.waiting) {
+        state.waitTimer -= 0.1;
+        if (state.waitTimer <= 0) {
+          // Reset cooldown
+          state.current = characters[i].maxCooldown * (0.6 + Math.random() * 0.4);
+          state.waiting = false;
+          textEl.classList.remove('ready');
+        }
+        return;
+      }
+
+      state.current -= 0.1;
+      if (state.current <= 0) {
+        state.current = 0;
+        state.waiting = true;
+        state.waitTimer = 1.5;
+        textEl.textContent = 'READY';
+        textEl.classList.add('ready');
+        barEl.style.width = '0%';
+      } else {
+        textEl.textContent = state.current.toFixed(1) + 's';
+        textEl.classList.remove('ready');
+        const pct = (state.current / characters[i].maxCooldown) * 100;
+        barEl.style.width = pct + '%';
+      }
+    });
+  }, 100);
+}
+
+// ---- Log cycling ----
+function startLogCycling() {
+  const logIndices = [0, 0, 0];
+
+  setInterval(() => {
+    characters.forEach((char, i) => {
+      logIndices[i] = (logIndices[i] + 1) % char.logs.length;
+      const logEl = document.getElementById(`log-${i}`);
+      if (logEl) {
+        logEl.style.opacity = '0';
+        logEl.style.transition = 'opacity 0.3s';
+        setTimeout(() => {
+          logEl.textContent = char.logs[logIndices[i]];
+          logEl.style.opacity = '0.9';
+        }, 300);
+      }
+    });
+  }, 3000);
+}
+
+// ---- Start ----
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

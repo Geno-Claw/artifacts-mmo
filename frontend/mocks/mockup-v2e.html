@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artifacts MMO — Clockwork Command Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+:root {
+  --walnut: #1a1008;
+  --walnut-light: #2a1c10;
+  --brass: #c8a030;
+  --brass-light: #e0c050;
+  --brass-dark: #907020;
+  --copper: #b87040;
+  --copper-dark: #885530;
+  --oxidized: #408048;
+  --oxidized-light: #509858;
+  --oxidized-dark: #306038;
+  --ivory: #f0e8d0;
+  --ivory-dim: #c0b898;
+  --dark-iron: #2a2a2a;
+  --dark-iron-light: #3a3a3a;
+  --red-gauge: #c03030;
+  --red-gauge-light: #e04040;
+}
+html { font-size: 16px; }
+body {
+  font-family: 'Press Start 2P', monospace;
+  background-color: var(--walnut);
+  color: var(--ivory);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   WOOD GRAIN BACKGROUND
+   ============================================================ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      rgba(40,28,12,0.3) 2px,
+      transparent 4px,
+      transparent 18px
+    ),
+    repeating-linear-gradient(
+      92deg,
+      transparent 0px,
+      rgba(30,20,8,0.2) 1px,
+      transparent 3px,
+      transparent 30px
+    ),
+    repeating-linear-gradient(
+      88deg,
+      transparent 0px,
+      rgba(50,35,15,0.15) 1px,
+      transparent 2px,
+      transparent 24px
+    ),
+    linear-gradient(180deg, #1a1008 0%, #221810 50%, #1a1008 100%);
+}
+
+/* ============================================================
+   BRASS BORDER MIXIN (using box-shadow for double border + rivets)
+   ============================================================ */
+.brass-frame {
+  border: 3px solid var(--brass);
+  outline: 3px solid var(--dark-iron);
+  outline-offset: 0px;
+  position: relative;
+}
+
+/* ============================================================
+   RIVET DECORATION
+   ============================================================ */
+.rivet {
+  position: absolute;
+  width: 6px; height: 6px;
+  background: var(--brass-light);
+  box-shadow: inset -1px -1px 0 var(--brass-dark), inset 1px 1px 0 #e8d060;
+  z-index: 5;
+}
+.rivet-tl { top: -1px; left: -1px; }
+.rivet-tr { top: -1px; right: -1px; }
+.rivet-bl { bottom: -1px; left: -1px; }
+.rivet-br { bottom: -1px; right: -1px; }
+
+/* ============================================================
+   PIXEL GEAR ANIMATIONS
+   ============================================================ */
+@keyframes gearSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes gearSpinReverse {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes readyFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.gear {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+.gear canvas {
+  animation: gearSpin 6s steps(12) infinite;
+  image-rendering: pixelated;
+}
+.gear.reverse canvas {
+  animation: gearSpinReverse 8s steps(12) infinite;
+}
+.gear.slow canvas {
+  animation: gearSpin 12s steps(12) infinite;
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.header {
+  text-align: center;
+  padding: 20px 20px 10px;
+  position: relative;
+}
+.header h1 {
+  font-size: 14px;
+  color: var(--brass-light);
+  text-shadow: 2px 2px 0 var(--dark-iron), 0 0 8px rgba(200,160,48,0.3);
+  letter-spacing: 2px;
+  line-height: 1.8;
+}
+.header .subtitle {
+  font-size: 7px;
+  color: var(--ivory-dim);
+  margin-top: 6px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+.header-line {
+  height: 3px;
+  background: linear-gradient(90deg, transparent 0%, var(--brass-dark) 20%, var(--brass) 50%, var(--brass-dark) 80%, transparent 100%);
+  margin: 12px auto 0;
+  max-width: 900px;
+}
+.header-line-inner {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--dark-iron-light) 20%, var(--dark-iron) 50%, var(--dark-iron-light) 80%, transparent 100%);
+  margin-top: 2px;
+  max-width: 900px;
+  margin-left: auto; margin-right: auto;
+}
+
+/* ============================================================
+   DASHBOARD CONTAINER
+   ============================================================ */
+.dashboard {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px 20px 30px;
+  flex-wrap: wrap;
+  position: relative;
+  max-width: 1260px;
+  margin: 0 auto;
+}
+
+/* ============================================================
+   CHARACTER CARD
+   ============================================================ */
+.card {
+  width: 380px;
+  background: linear-gradient(180deg, #221810 0%, #1e1410 100%);
+  border: 3px solid var(--brass);
+  outline: 3px solid var(--dark-iron);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Nameplate */
+.nameplate {
+  background: linear-gradient(180deg, var(--brass-light) 0%, var(--brass) 40%, var(--brass-dark) 100%);
+  padding: 8px 12px;
+  text-align: center;
+  border-bottom: 2px solid var(--dark-iron);
+  position: relative;
+}
+.nameplate .name {
+  font-size: 11px;
+  color: var(--walnut);
+  text-shadow: 1px 1px 0 rgba(255,255,255,0.3);
+  letter-spacing: 2px;
+}
+.nameplate .level-badge {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--dark-iron);
+  color: var(--brass-light);
+  font-size: 7px;
+  padding: 3px 6px;
+  border: 1px solid var(--brass-dark);
+}
+/* nameplate rivets */
+.nameplate .rivet { background: var(--walnut); box-shadow: inset -1px -1px 0 rgba(0,0,0,0.3), inset 1px 1px 0 rgba(200,160,48,0.5); }
+.nameplate .rivet-tl { top: 3px; left: 4px; }
+.nameplate .rivet-tr { top: 3px; right: 4px; }
+
+/* Card body */
+.card-body {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  grid-template-rows: auto auto;
+  gap: 0;
+  padding: 8px;
+  flex: 1;
+}
+
+/* ============================================================
+   PORTRAIT (left column, spans 2 rows)
+   ============================================================ */
+.portrait-area {
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+}
+.porthole {
+  width: 96px; height: 96px;
+  border: 3px solid var(--brass);
+  outline: 2px solid var(--dark-iron);
+  background: var(--dark-iron);
+  position: relative;
+  overflow: hidden;
+}
+.porthole canvas {
+  width: 96px; height: 96px;
+  display: block;
+  image-rendering: pixelated;
+}
+/* porthole rivets */
+.porthole .rivet { width: 5px; height: 5px; }
+.porthole .rivet-tl { top: 1px; left: 1px; }
+.porthole .rivet-tr { top: 1px; right: 1px; }
+.porthole .rivet-bl { bottom: 1px; left: 1px; }
+.porthole .rivet-br { bottom: 1px; right: 1px; }
+
+/* Cooldown dial */
+.cooldown-area {
+  width: 96px;
+  text-align: center;
+}
+.dial-frame {
+  width: 80px; height: 80px;
+  margin: 0 auto;
+  border: 3px solid var(--brass);
+  outline: 2px solid var(--dark-iron);
+  background: var(--dark-iron);
+  position: relative;
+  overflow: hidden;
+}
+.dial-frame canvas {
+  width: 80px; height: 80px;
+  display: block;
+  image-rendering: pixelated;
+}
+.cooldown-label {
+  font-size: 6px;
+  color: var(--ivory-dim);
+  margin-top: 3px;
+  letter-spacing: 1px;
+}
+
+/* ============================================================
+   GAUGES AREA (center-right, top)
+   ============================================================ */
+.gauges-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.gauge {
+  position: relative;
+}
+.gauge-label {
+  font-size: 6px;
+  color: var(--ivory-dim);
+  margin-bottom: 2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.gauge-label .gauge-val {
+  color: var(--ivory);
+  font-size: 7px;
+}
+.gauge-bar-outer {
+  height: 14px;
+  border: 2px solid var(--brass);
+  outline: 1px solid var(--dark-iron);
+  background: #0a0a0a;
+  position: relative;
+  overflow: hidden;
+}
+.gauge-bar-inner {
+  height: 100%;
+  position: absolute;
+  top: 0; left: 0;
+  transition: width 0.3s steps(8);
+}
+/* tick marks on gauge */
+.gauge-bar-outer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0px,
+    transparent 9px,
+    rgba(200,160,48,0.15) 9px,
+    rgba(200,160,48,0.15) 10px
+  );
+  z-index: 2;
+}
+.gauge-bar-inner.hp {
+  background: linear-gradient(180deg, var(--red-gauge-light) 0%, var(--red-gauge) 60%, var(--copper-dark) 100%);
+}
+.gauge-bar-inner.xp {
+  background: linear-gradient(180deg, var(--oxidized-light) 0%, var(--oxidized) 60%, var(--oxidized-dark) 100%);
+}
+/* pressure gauge shine */
+.gauge-bar-inner::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: rgba(255,255,255,0.15);
+}
+
+/* ============================================================
+   LOG / TASK AREA (center-right, bottom)
+   ============================================================ */
+.info-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.ticker-frame {
+  border: 2px solid var(--brass-dark);
+  outline: 1px solid var(--dark-iron);
+  background: #0c0804;
+  padding: 6px 8px;
+  min-height: 28px;
+  position: relative;
+}
+.ticker-frame::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: rgba(200,160,48,0.1);
+}
+.ticker-label {
+  font-size: 5px;
+  color: var(--brass-dark);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.ticker-text {
+  font-size: 7px;
+  color: var(--ivory);
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticker-text.task {
+  color: var(--brass-light);
+}
+.ticker-text.log {
+  color: var(--oxidized-light);
+}
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.buttons-row {
+  display: flex;
+  gap: 0;
+  border-top: 2px solid var(--dark-iron);
+}
+.btn {
+  flex: 1;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 5px;
+  color: var(--walnut);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.2);
+  letter-spacing: 1px;
+  padding: 7px 2px;
+  border: none;
+  cursor: pointer;
+  text-align: center;
+  position: relative;
+  background: linear-gradient(180deg, var(--brass-light) 0%, var(--brass) 30%, var(--brass-dark) 100%);
+  border-right: 1px solid var(--dark-iron);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.3),
+    inset 0 -2px 0 rgba(0,0,0,0.3);
+  transition: none;
+}
+.btn:last-child { border-right: none; }
+.btn:hover {
+  background: linear-gradient(180deg, #e8d060 0%, var(--brass-light) 30%, var(--brass) 100%);
+  color: #0a0800;
+}
+.btn:active {
+  background: linear-gradient(180deg, var(--brass-dark) 0%, var(--brass) 70%, var(--brass-light) 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(0,0,0,0.3),
+    inset 0 -1px 0 rgba(255,255,255,0.2);
+  padding-top: 8px;
+  padding-bottom: 6px;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+.footer {
+  text-align: center;
+  padding: 0 20px 20px;
+  font-size: 6px;
+  color: var(--brass-dark);
+  letter-spacing: 2px;
+}
+.footer-line {
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--brass-dark) 30%, var(--brass) 50%, var(--brass-dark) 70%, transparent 100%);
+  max-width: 700px;
+  margin: 0 auto 12px;
+}
+
+/* ============================================================
+   ANALOG METER (decorative, for XP)
+   ============================================================ */
+.analog-meter {
+  width: 100%;
+  height: 50px;
+  border: 2px solid var(--brass);
+  outline: 1px solid var(--dark-iron);
+  background: radial-gradient(ellipse at 50% 120%, #1a1510 0%, #0a0804 70%);
+  position: relative;
+  overflow: hidden;
+  margin-top: 2px;
+}
+.analog-meter canvas {
+  width: 100%; height: 100%;
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 1240px) {
+  .dashboard { gap: 16px; }
+  .card { width: 360px; }
+}
+@media (max-width: 1140px) {
+  .dashboard { flex-direction: column; align-items: center; }
+  .card { width: min(400px, calc(100vw - 40px)); }
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <h1>ARTIFACTS MMO<br>CLOCKWORK CONSOLE</h1>
+  <div class="subtitle">Steam-Powered Bot Management System</div>
+  <div class="header-line"></div>
+  <div class="header-line-inner"></div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="dashboard" id="dashboard">
+  <!-- Cards injected by JS -->
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="footer-line"></div>
+  CLOCKWORK CONSOLE v2.5 &mdash; ALL SYSTEMS NOMINAL
+</div>
+
+<script>
+/* ==============================================================
+   DATA
+   ============================================================== */
+const characters = [
+  {
+    name: 'Artifax', level: 25,
+    hp: 340, maxHp: 450, xp: 12500, maxXp: 18000,
+    portraitType: 'warrior', cooldown: 12.0, maxCooldown: 15.0,
+    log: [
+      'Fighting Chicken (Lv.3)...',
+      'Looted: Feather x3',
+      'Equipped Iron Shield',
+      'HP restored to full',
+    ],
+    task: 'Kill 50 Chickens (32/50)'
+  },
+  {
+    name: 'Luminos', level: 18,
+    hp: 180, maxHp: 220, xp: 8200, maxXp: 12000,
+    portraitType: 'mage', cooldown: 8.0, maxCooldown: 12.0,
+    log: [
+      'Crafting Iron Sword...',
+      'Smelted 5 Iron Bars',
+      'Bought Coal x10',
+      'Moved to Workshop',
+    ],
+    task: 'Craft 10 Iron Swords (7/10)'
+  },
+  {
+    name: 'Verdant', level: 22,
+    hp: 260, maxHp: 300, xp: 15600, maxXp: 20000,
+    portraitType: 'gatherer', cooldown: 3.0, maxCooldown: 8.0,
+    log: [
+      'Gathering Ash Wood...',
+      'Inventory: 89/100 slots',
+      'Deposited Copper Ore x20',
+      'Moved to Forest',
+    ],
+    task: 'Gather 100 Ash Wood (89/100)'
+  },
+];
+
+// Mutable cooldown state
+const cdState = characters.map(c => ({
+  current: c.cooldown,
+  max: c.maxCooldown,
+  ready: false,
+  readyTimer: 0,
+}));
+// Log cycling state
+const logState = characters.map(c => ({ index: 0, timer: 0 }));
+
+/* ==============================================================
+   PIXEL ART: DRAW PORTRAITS
+   ============================================================== */
+function drawPortrait(canvas, type) {
+  const W = 12, H = 14;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  const C = {
+    skin:    '#d4a870',
+    skinDk:  '#b08050',
+    hair:    '#4a3020',
+    hairLt:  '#6a4830',
+    eye:     '#1a1008',
+    mouth:   '#8a5a3a',
+    brass:   '#c8a030',
+    brassDk: '#907020',
+    brassLt: '#e0c050',
+    copper:  '#b87040',
+    copperDk:'#885530',
+    iron:    '#5a5a5a',
+    ironDk:  '#3a3a3a',
+    ironLt:  '#7a7a7a',
+    leather: '#7a5030',
+    lthDk:   '#5a3820',
+    green:   '#408048',
+    greenDk: '#306038',
+    ivory:   '#f0e8d0',
+    white:   '#e0d8c0',
+    bg:      '#0e0a06',
+  };
+  const px = (x,y,c) => { ctx.fillStyle = c; ctx.fillRect(x,y,1,1); };
+
+  // Clear
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0,0,W,H);
+
+  if (type === 'warrior') {
+    // Helmet / Brass Goggles
+    px(4,0,C.brass); px(5,0,C.brassLt); px(6,0,C.brassLt); px(7,0,C.brass);
+    px(3,1,C.brass); px(4,1,C.brassDk); px(5,1,C.ironLt); px(6,1,C.ironLt); px(7,1,C.brassDk); px(8,1,C.brass);
+    // Face
+    px(4,2,C.skin); px(5,2,C.skin); px(6,2,C.skin); px(7,2,C.skin);
+    px(3,2,C.brassDk);px(8,2,C.brassDk);
+    // Goggles row
+    px(3,3,C.brass); px(4,3,C.ironDk); px(5,3,C.ironLt); px(6,3,C.ironLt); px(7,3,C.ironDk); px(8,3,C.brass);
+    // Lower face
+    px(4,4,C.skin); px(5,4,C.skin); px(6,4,C.skin); px(7,4,C.skin);
+    px(3,4,C.skinDk); px(8,4,C.skinDk);
+    px(5,5,C.mouth); px(6,5,C.mouth);
+    px(4,5,C.skin); px(7,5,C.skin);
+    // Neck
+    px(5,6,C.skin); px(6,6,C.skin);
+    // Plate armor
+    for(let x=2;x<=9;x++) px(x,7,C.ironLt);
+    for(let x=1;x<=10;x++) px(x,8,C.iron);
+    for(let x=1;x<=10;x++) px(x,9,C.ironDk);
+    for(let x=1;x<=10;x++) px(x,10,C.iron);
+    px(5,8,C.brassLt); px(6,8,C.brassLt); // brass chest emblem
+    px(5,9,C.brass); px(6,9,C.brass);
+    for(let x=1;x<=10;x++) px(x,11,C.ironDk);
+    for(let x=2;x<=9;x++) px(x,12,C.iron);
+    for(let x=2;x<=9;x++) px(x,13,C.ironDk);
+    // Shoulder plates
+    px(1,7,C.brass); px(10,7,C.brass);
+    px(0,8,C.brassDk); px(11,8,C.brassDk);
+    px(0,9,C.brass); px(11,9,C.brass);
+  }
+  else if (type === 'mage') {
+    // Top hat
+    px(4,0,C.ironDk); px(5,0,C.ironDk); px(6,0,C.ironDk); px(7,0,C.ironDk);
+    px(4,1,C.ironDk); px(5,1,C.iron); px(6,1,C.iron); px(7,1,C.ironDk);
+    px(4,2,C.ironDk); px(5,2,C.iron); px(6,2,C.iron); px(7,2,C.ironDk);
+    // Hat brim + brass band
+    px(2,3,C.ironDk); px(3,3,C.brass); px(4,3,C.brass); px(5,3,C.brassLt); px(6,3,C.brassLt); px(7,3,C.brass); px(8,3,C.brass); px(9,3,C.ironDk);
+    // Face
+    px(4,4,C.skin); px(5,4,C.skin); px(6,4,C.skin); px(7,4,C.skin);
+    px(3,4,C.hair); px(8,4,C.hair);
+    // Eyes
+    px(4,5,C.eye); px(5,5,C.skin); px(6,5,C.skin); px(7,5,C.eye);
+    px(3,5,C.hair); px(8,5,C.hair);
+    // Lower face
+    px(4,6,C.skin); px(5,6,C.mouth); px(6,6,C.mouth); px(7,6,C.skin);
+    // Neck
+    px(5,7,C.skin); px(6,7,C.skin);
+    // Coat
+    for(let x=2;x<=9;x++) px(x,8,C.ironDk);
+    for(let x=2;x<=9;x++) px(x,9,C.iron);
+    px(5,8,C.brass); px(6,8,C.brass); // brass buttons
+    px(5,9,C.brassLt); px(6,9,C.brassLt);
+    for(let x=2;x<=9;x++) px(x,10,C.ironDk);
+    for(let x=2;x<=9;x++) px(x,11,C.iron);
+    px(5,10,C.brass); px(6,10,C.brass);
+    for(let x=3;x<=8;x++) px(x,12,C.ironDk);
+    for(let x=3;x<=8;x++) px(x,13,C.ironDk);
+    // Coat tails
+    px(2,12,C.iron); px(9,12,C.iron);
+    px(1,13,C.ironDk); px(10,13,C.ironDk);
+  }
+  else if (type === 'gatherer') {
+    // Leather cap
+    px(4,0,C.leather); px(5,0,C.leather); px(6,0,C.leather); px(7,0,C.leather);
+    px(3,1,C.lthDk); px(4,1,C.leather); px(5,1,C.leather); px(6,1,C.leather); px(7,1,C.leather); px(8,1,C.lthDk);
+    px(3,2,C.lthDk); px(4,2,C.leather); px(5,2,C.brass); px(6,2,C.brass); px(7,2,C.leather); px(8,2,C.lthDk); // brass buckle
+    // Face
+    px(4,3,C.skin); px(5,3,C.skin); px(6,3,C.skin); px(7,3,C.skin);
+    px(3,3,C.skinDk); px(8,3,C.skinDk);
+    // Eyes
+    px(4,4,C.eye); px(5,4,C.skin); px(6,4,C.skin); px(7,4,C.eye);
+    // Lower face
+    px(4,5,C.skin); px(5,5,C.mouth); px(6,5,C.mouth); px(7,5,C.skin);
+    px(3,5,C.skinDk); px(8,5,C.skinDk);
+    // Neck
+    px(5,6,C.skin); px(6,6,C.skin);
+    // Work vest
+    for(let x=2;x<=9;x++) px(x,7,C.leather);
+    for(let x=2;x<=9;x++) px(x,8,C.lthDk);
+    px(5,7,C.brass); px(6,7,C.brass); // buckle
+    for(let x=2;x<=9;x++) px(x,9,C.green);
+    for(let x=2;x<=9;x++) px(x,10,C.greenDk);
+    for(let x=2;x<=9;x++) px(x,11,C.green);
+    for(let x=3;x<=8;x++) px(x,12,C.greenDk);
+    for(let x=3;x<=8;x++) px(x,13,C.lthDk);
+    // Sleeves
+    px(1,8,C.green); px(10,8,C.green);
+    px(1,9,C.greenDk); px(10,9,C.greenDk);
+    px(0,10,C.skin); px(11,10,C.skin);
+  }
+}
+
+/* ==============================================================
+   PIXEL ART: DRAW GEAR
+   ============================================================== */
+function drawGear(canvas, size, color1, color2) {
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const mid = Math.floor(size / 2);
+  const r = Math.floor(size / 2) - 1;
+  const ri = Math.floor(r * 0.55);
+  const toothH = Math.floor(r * 0.3);
+
+  // Draw gear body (filled circle approximation)
+  ctx.fillStyle = color1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - mid, dy = y - mid;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist <= ri + 1) {
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+
+  // Draw teeth (8 teeth)
+  const teeth = 8;
+  for (let i = 0; i < teeth; i++) {
+    const angle = (i / teeth) * Math.PI * 2;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    // Tooth as a small rectangle along the radius
+    for (let d = ri; d <= r; d++) {
+      const tw = Math.max(1, Math.floor(size / 10));
+      for (let w = -tw; w <= tw; w++) {
+        const px = Math.round(mid + cos * d - sin * w);
+        const py = Math.round(mid + sin * d + cos * w);
+        if (px >= 0 && px < size && py >= 0 && py < size) {
+          ctx.fillStyle = d > r - 1 ? color2 : color1;
+          ctx.fillRect(px, py, 1, 1);
+        }
+      }
+    }
+  }
+
+  // Center hole
+  ctx.fillStyle = '#0e0a06';
+  const holeR = Math.max(1, Math.floor(ri * 0.4));
+  for (let y = mid - holeR; y <= mid + holeR; y++) {
+    for (let x = mid - holeR; x <= mid + holeR; x++) {
+      const dx = x - mid, dy = y - mid;
+      if (Math.sqrt(dx*dx+dy*dy) <= holeR) {
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+  // Center axle
+  ctx.fillStyle = color2;
+  ctx.fillRect(mid, mid, 1, 1);
+}
+
+/* ==============================================================
+   COOLDOWN DIAL
+   ============================================================== */
+function drawDial(canvas, fraction, readyFlash) {
+  const S = 40; // actual pixel size
+  canvas.width = S; canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  const mid = S / 2;
+  const r = S / 2 - 2;
+
+  // Background — dark face
+  ctx.fillStyle = '#0a0806';
+  ctx.fillRect(0, 0, S, S);
+
+  // Dial markings (12 positions like a clock)
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const inner = r - 3, outer = r - 1;
+    for (let d = inner; d <= outer; d++) {
+      const px = Math.round(mid + cos * d);
+      const py = Math.round(mid + sin * d);
+      ctx.fillStyle = (i % 3 === 0) ? '#c8a030' : '#605020';
+      ctx.fillRect(px, py, 1, 1);
+    }
+  }
+
+  // Filled arc showing remaining time (drawn as filled wedge)
+  if (fraction > 0.001) {
+    const startAngle = -Math.PI / 2;
+    const endAngle = startAngle + fraction * Math.PI * 2;
+    // Fill sector
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = x - mid, dy = y - mid;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist <= r - 4 && dist >= 3) {
+          let angle = Math.atan2(dy, dx);
+          // Normalize to [startAngle, startAngle + 2PI)
+          while (angle < startAngle) angle += Math.PI * 2;
+          while (angle > startAngle + Math.PI * 2) angle -= Math.PI * 2;
+          if (angle <= endAngle) {
+            const t = dist / r;
+            ctx.fillStyle = readyFlash ? '#50c050' :
+              (t > 0.7 ? '#b87040' : '#c08038');
+            ctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    }
+  }
+
+  // Ready flash — green glow
+  if (readyFlash) {
+    ctx.fillStyle = 'rgba(80,192,80,0.3)';
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = x - mid, dy = y - mid;
+        if (Math.sqrt(dx*dx+dy*dy) <= r - 4) {
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
+    }
+  }
+
+  // Center dot
+  ctx.fillStyle = '#c8a030';
+  ctx.fillRect(mid-1, mid-1, 2, 2);
+
+  // Needle — points to current fraction
+  if (fraction > 0.001 && !readyFlash) {
+    const needleAngle = -Math.PI / 2 + fraction * Math.PI * 2;
+    const cos = Math.cos(needleAngle), sin = Math.sin(needleAngle);
+    for (let d = 2; d <= r - 4; d++) {
+      const px = Math.round(mid + cos * d);
+      const py = Math.round(mid + sin * d);
+      ctx.fillStyle = d > r - 7 ? '#e0c050' : '#f0e8d0';
+      ctx.fillRect(px, py, 1, 1);
+    }
+  }
+}
+
+/* ==============================================================
+   ANALOG METER (for XP display)
+   ============================================================== */
+function drawAnalogMeter(canvas, fraction, w, h) {
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  // Background
+  ctx.fillStyle = '#0c0806';
+  ctx.fillRect(0, 0, w, h);
+
+  const midX = Math.floor(w / 2);
+  const baseY = h - 2;
+  const R = Math.min(w, h) - 4;
+
+  // Arc markings
+  const totalAngle = Math.PI; // 180 degrees
+  const startA = Math.PI; // left
+  for (let i = 0; i <= 10; i++) {
+    const a = startA + (i / 10) * totalAngle;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const inner = R - 4, outer = R - 1;
+    for (let d = inner; d <= outer; d++) {
+      const px = Math.round(midX + cos * d);
+      const py = Math.round(baseY + sin * d);
+      if (px >= 0 && px < w && py >= 0 && py < h) {
+        ctx.fillStyle = (i % 5 === 0) ? '#c8a030' : '#605020';
+        ctx.fillRect(px, py, 1, 1);
+      }
+    }
+  }
+
+  // Colored arc (filled region showing progress)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = x - midX, dy = y - baseY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist <= R - 5 && dist >= R - 12 && dy <= 0) {
+        let angle = Math.atan2(dy, dx);
+        const normalizedAngle = (angle - startA) / totalAngle;
+        if (normalizedAngle >= 0 && normalizedAngle <= fraction) {
+          const t = normalizedAngle / Math.max(fraction, 0.01);
+          ctx.fillStyle = t > 0.8 ? '#509858' : '#408048';
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
+    }
+  }
+
+  // Needle
+  const needleAngle = startA + fraction * totalAngle;
+  const nCos = Math.cos(needleAngle), nSin = Math.sin(needleAngle);
+  for (let d = 3; d <= R - 5; d++) {
+    const px = Math.round(midX + nCos * d);
+    const py = Math.round(baseY + nSin * d);
+    if (px >= 0 && px < w && py >= 0 && py < h) {
+      ctx.fillStyle = d > R - 10 ? '#e04040' : '#f0e8d0';
+      ctx.fillRect(px, py, 1, 1);
+    }
+  }
+
+  // Pivot
+  ctx.fillStyle = '#c8a030';
+  ctx.fillRect(midX - 1, baseY - 1, 3, 2);
+}
+
+/* ==============================================================
+   BUILD CARD HTML
+   ============================================================== */
+function buildCard(char, idx) {
+  const hpPct = (char.hp / char.maxHp * 100).toFixed(0);
+  const xpPct = (char.xp / char.maxXp * 100).toFixed(0);
+
+  return `
+  <div class="card" data-idx="${idx}">
+    <div class="nameplate">
+      <div class="rivet rivet-tl"></div>
+      <div class="rivet rivet-tr"></div>
+      <span class="name">${char.name.toUpperCase()}</span>
+      <span class="level-badge">LV.${char.level}</span>
+    </div>
+    <div class="card-body">
+      <!-- LEFT: Portrait + Cooldown -->
+      <div class="portrait-area">
+        <div class="porthole">
+          <canvas class="portrait-canvas" data-type="${char.portraitType}"></canvas>
+          <div class="rivet rivet-tl"></div>
+          <div class="rivet rivet-tr"></div>
+          <div class="rivet rivet-bl"></div>
+          <div class="rivet rivet-br"></div>
+        </div>
+        <div class="cooldown-area">
+          <div class="dial-frame">
+            <canvas class="dial-canvas"></canvas>
+            <div class="rivet rivet-tl" style="width:4px;height:4px"></div>
+            <div class="rivet rivet-tr" style="width:4px;height:4px"></div>
+            <div class="rivet rivet-bl" style="width:4px;height:4px"></div>
+            <div class="rivet rivet-br" style="width:4px;height:4px"></div>
+          </div>
+          <div class="cooldown-label">
+            COOLDOWN: <span class="cd-value">${char.cooldown.toFixed(1)}s</span>
+          </div>
+        </div>
+      </div>
+      <!-- RIGHT TOP: Gauges -->
+      <div class="gauges-area">
+        <div class="gauge">
+          <div class="gauge-label">
+            <span>HP</span>
+            <span class="gauge-val">${char.hp}/${char.maxHp}</span>
+          </div>
+          <div class="gauge-bar-outer">
+            <div class="gauge-bar-inner hp" style="width:${hpPct}%"></div>
+          </div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-label">
+            <span>XP</span>
+            <span class="gauge-val">${char.xp.toLocaleString()}/${char.maxXp.toLocaleString()}</span>
+          </div>
+          <div class="analog-meter">
+            <canvas class="meter-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+      <!-- RIGHT BOTTOM: Log + Task -->
+      <div class="info-area">
+        <div class="ticker-frame">
+          <div class="ticker-label">TICKER TAPE</div>
+          <div class="ticker-text log" data-idx="${idx}">${char.log[0]}</div>
+        </div>
+        <div class="ticker-frame">
+          <div class="ticker-label">CURRENT TASK</div>
+          <div class="ticker-text task">${char.task}</div>
+        </div>
+      </div>
+    </div>
+    <div class="buttons-row">
+      <button class="btn">EQUIP</button>
+      <button class="btn">INVEN</button>
+      <button class="btn">SKILLS</button>
+      <button class="btn">STATS</button>
+      <button class="btn">ACHIEV</button>
+    </div>
+  </div>`;
+}
+
+/* ==============================================================
+   DECORATIVE GEARS
+   ============================================================== */
+function createGears() {
+  const dashboard = document.getElementById('dashboard');
+
+  const gearDefs = [
+    { size: 24, x: -8, y: 40, color1: '#c8a030', color2: '#e0c050', cls: '' },
+    { size: 18, x: -2, y: 68, color1: '#907020', color2: '#c8a030', cls: 'reverse' },
+    { size: 30, x: -14, y: 90, color1: '#b87040', color2: '#c8a030', cls: 'slow' },
+    // Right side
+    { size: 26, x: null, y: 30, color1: '#c8a030', color2: '#e0c050', cls: 'reverse', right: 0 },
+    { size: 20, x: null, y: 58, color1: '#907020', color2: '#c8a030', cls: '', right: 6 },
+    { size: 22, x: null, y: 80, color1: '#b87040', color2: '#e0c050', cls: 'slow', right: -4 },
+  ];
+
+  gearDefs.forEach(def => {
+    const el = document.createElement('div');
+    el.className = `gear ${def.cls}`;
+    if (def.right !== undefined) {
+      el.style.right = def.right + 'px';
+    } else {
+      el.style.left = def.x + 'px';
+    }
+    el.style.top = def.y + 'px';
+    const c = document.createElement('canvas');
+    drawGear(c, def.size, def.color1, def.color2);
+    c.style.width = (def.size * 3) + 'px';
+    c.style.height = (def.size * 3) + 'px';
+    el.appendChild(c);
+    dashboard.appendChild(el);
+  });
+}
+
+/* ==============================================================
+   INIT
+   ============================================================== */
+function init() {
+  const dashboard = document.getElementById('dashboard');
+
+  // Build cards
+  characters.forEach((char, idx) => {
+    dashboard.insertAdjacentHTML('beforeend', buildCard(char, idx));
+  });
+
+  // Draw portraits
+  document.querySelectorAll('.portrait-canvas').forEach(c => {
+    drawPortrait(c, c.dataset.type);
+  });
+
+  // Draw analog meters (XP)
+  document.querySelectorAll('.meter-canvas').forEach((c, idx) => {
+    const char = characters[idx];
+    drawAnalogMeter(c, char.xp / char.maxXp, 120, 50);
+  });
+
+  // Draw initial dials
+  document.querySelectorAll('.dial-canvas').forEach((c, idx) => {
+    const s = cdState[idx];
+    drawDial(c, s.current / s.max, false);
+  });
+
+  // Create decorative gears
+  createGears();
+
+  // Start timer
+  let lastTime = performance.now();
+  function tick(now) {
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+
+    // Update cooldowns
+    cdState.forEach((s, idx) => {
+      if (s.ready) {
+        s.readyTimer -= dt;
+        if (s.readyTimer <= 0) {
+          s.ready = false;
+          s.current = s.max;
+        }
+      } else {
+        s.current -= dt;
+        if (s.current <= 0) {
+          s.current = 0;
+          s.ready = true;
+          s.readyTimer = 1.5;
+        }
+      }
+
+      // Update dial canvas
+      const dialCanvas = document.querySelectorAll('.dial-canvas')[idx];
+      const fraction = s.current / s.max;
+      const flash = s.ready && (Math.floor(now / 250) % 2 === 0);
+      drawDial(dialCanvas, fraction, s.ready);
+
+      // Update label
+      const label = document.querySelectorAll('.cd-value')[idx];
+      if (s.ready) {
+        label.textContent = 'READY';
+        label.style.color = '#50c050';
+      } else {
+        label.textContent = s.current.toFixed(1) + 's';
+        label.style.color = '';
+      }
+    });
+
+    // Update log ticker (every 3s)
+    logState.forEach((ls, idx) => {
+      ls.timer += dt;
+      if (ls.timer >= 3) {
+        ls.timer = 0;
+        ls.index = (ls.index + 1) % characters[idx].log.length;
+        const el = document.querySelector(`.ticker-text.log[data-idx="${idx}"]`);
+        if (el) el.textContent = characters[idx].log[ls.index];
+      }
+    });
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

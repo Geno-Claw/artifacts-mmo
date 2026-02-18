@@ -8,6 +8,8 @@
     "dev": "BOT_CONFIG=./config/characters-local.json node src/bot.mjs",
     "status": "node src/status.mjs",
     "test:skill-rotation": "node scripts/test-skill-rotation.mjs",
+    "test:ui-state": "node scripts/test-ui-state.mjs",
+    "test:dashboard-server": "node scripts/test-dashboard-server.mjs",
     "test:inventory-manager": "node scripts/test-inventory-manager.mjs",
     "test:bank-ops": "node scripts/test-bank-ops.mjs",
     "test:no-direct-bank-api": "node scripts/test-no-direct-bank-api.mjs",

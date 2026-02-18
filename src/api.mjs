@@ -6,8 +6,19 @@ import 'dotenv/config';
 const API = process.env.ARTIFACTS_API || 'https://api.artifactsmmo.com';
 const TOKEN = process.env.ARTIFACTS_TOKEN;
 const CHARACTER = process.env.CHARACTER_NAME || 'GenoClaw';
+const actionObservers = new Set();
 
 if (!TOKEN) throw new Error('ARTIFACTS_TOKEN not set in .env');
+
+function emitActionEvent(evt) {
+  for (const observer of actionObservers) {
+    try {
+      observer(evt);
+    } catch {
+      // Action observers must not affect API request flow.
+    }
+  }
+}
 
 async function request(method, path, body = null) {
   const opts = {
@@ -24,7 +35,24 @@ async function request(method, path, body = null) {
     const res = await fetch(`${API}${path}`, opts);
     const json = await res.json();
 
-    if (res.ok) return json.data;
+    if (res.ok) {
+      if (method === 'POST') {
+        const actionMatch = path.match(/^\/my\/([^/]+)\/action\/(.+)$/);
+        if (actionMatch) {
+          const [, name, action] = actionMatch;
+          const cooldown = json.data?.cooldown || null;
+          emitActionEvent({
+            name,
+            action,
+            method,
+            path,
+            cooldown,
+            observedAt: Date.now(),
+          });
+        }
+      }
+      return json.data;
+    }
 
     const code = json.error?.code || res.status;
     const message = json.error?.message || `HTTP ${res.status}`;
@@ -213,6 +241,14 @@ export function waitForCooldown(actionResult) {
     return new Promise(resolve => setTimeout(resolve, cd * 1000 + 500));
   }
   return Promise.resolve();
+}
+
+export function subscribeActionEvents(listener) {
+  if (typeof listener !== 'function') {
+    throw new Error('subscribeActionEvents(listener) requires a function');
+  }
+  actionObservers.add(listener);
+  return () => actionObservers.delete(listener);
 }
 
 export { API, TOKEN, CHARACTER };

@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artifacts MMO Bot Manager — Sakura Garden (Temple Dashboard)</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   SAKURA GARDEN — Temple Dashboard (Sidebar + Detail)
+   ============================================================ */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+:root {
+  --pale-pink: #f0d0d8;
+  --lavender: #d0c0e8;
+  --cream: #f8f0e8;
+  --dark-plum: #3a1828;
+  --border-dark: #4a2838;
+  --rose-red: #d06878;
+  --rose-red-bg: #f0c8d0;
+  --wisteria: #9878b8;
+  --wisteria-bg: #e0d0f0;
+  --wood-light: #e8d0a8;
+  --wood-mid: #d0b888;
+  --wood-dark: #a08058;
+  --wood-shadow: #786040;
+  --petal-pink: #f0a0b8;
+  --petal-light: #f8c8d8;
+  --branch-dark: #684848;
+  --branch-mid: #886060;
+  --branch-light: #a08070;
+  --leaf-green: #88b878;
+  --card-bg: #faf4ee;
+  --card-inset: #f0e8e0;
+  --inset-border: #d8c8b8;
+  --text-muted: #785868;
+  --ready-glow: #c8f0a0;
+  --sidebar-bg: #ece0d8;
+  --sidebar-hover: #f0e4dc;
+  --sidebar-selected: #f8ece4;
+  --selected-border: #e8a0b0;
+}
+
+html {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  color: var(--dark-plum);
+  background: var(--cream);
+}
+
+body {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  position: relative;
+}
+
+/* Subtle pixel dot pattern overlay */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image:
+    radial-gradient(circle, var(--border-dark) 0.5px, transparent 0.5px);
+  background-size: 16px 16px;
+  opacity: 0.025;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   PETAL ANIMATION — floating cherry blossom squares
+   ============================================================ */
+.petals-container {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.petal {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  opacity: 0;
+  animation: petalFall linear infinite;
+}
+
+@keyframes petalFall {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) translateX(0px) rotate(0deg);
+  }
+  5% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  95% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(100vh) translateX(80px) rotate(720deg);
+  }
+}
+
+/* ============================================================
+   SIDEBAR — Left character list
+   ============================================================ */
+.sidebar {
+  width: 200px;
+  min-width: 200px;
+  height: 100vh;
+  background: var(--sidebar-bg);
+  border-right: 2px solid var(--border-dark);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 10;
+  box-shadow:
+    inset -1px 0 0 rgba(255, 255, 255, 0.3),
+    2px 0 8px rgba(74, 40, 56, 0.08);
+}
+
+/* Shoji screen inner glow on sidebar right edge */
+.sidebar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0.1) 100%);
+  pointer-events: none;
+}
+
+.sidebar-branch {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sidebar-branch canvas {
+  display: block;
+  width: 100%;
+  height: 40px;
+  image-rendering: pixelated;
+}
+
+.sidebar-header {
+  padding: 8px 12px 6px;
+  flex-shrink: 0;
+}
+
+.sidebar-header h2 {
+  font-size: 7px;
+  letter-spacing: 4px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.sidebar-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+}
+
+/* ============================================================
+   SIDEBAR CHARACTER ENTRY
+   ============================================================ */
+.sidebar-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  position: relative;
+}
+
+.sidebar-entry:hover {
+  background: var(--sidebar-hover);
+  border-color: var(--inset-border);
+}
+
+.sidebar-entry.selected {
+  background: var(--sidebar-selected);
+  border: 1px solid var(--selected-border);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+    0 1px 3px rgba(232, 160, 176, 0.2);
+}
+
+.sidebar-portrait {
+  border: 1px solid var(--border-dark);
+  background: var(--card-inset);
+  padding: 2px;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.sidebar-portrait canvas {
+  display: block;
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+}
+
+.sidebar-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-name {
+  font-size: 7px;
+  letter-spacing: 1px;
+  color: var(--dark-plum);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-level {
+  font-size: 6px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.sidebar-hp-track {
+  height: 4px;
+  background: var(--rose-red-bg);
+  border: 1px solid var(--border-dark);
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+
+.sidebar-hp-fill {
+  height: 100%;
+  background: var(--rose-red);
+  position: relative;
+}
+
+.sidebar-hp-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Sidebar footer */
+.sidebar-footer {
+  padding: 8px 12px;
+  text-align: center;
+  border-top: 1px solid var(--inset-border);
+  flex-shrink: 0;
+}
+
+.sidebar-footer p {
+  font-size: 5px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+}
+
+/* ============================================================
+   MAIN PANEL
+   ============================================================ */
+.main-panel {
+  flex: 1;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background:
+    linear-gradient(180deg, var(--lavender) 0%, var(--cream) 40%, var(--pale-pink) 100%);
+  position: relative;
+  z-index: 5;
+}
+
+.main-content {
+  position: relative;
+  z-index: 2;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 32px 48px;
+}
+
+/* Cherry branch across main panel top */
+.main-branch {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+.main-branch canvas {
+  display: block;
+  width: 100%;
+  height: 48px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   MAIN PANEL HEADER
+   ============================================================ */
+.main-header {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+
+.main-header h1 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--dark-plum);
+  text-shadow: 2px 2px 0 var(--pale-pink);
+  margin-bottom: 4px;
+}
+
+.main-header .subtitle {
+  font-size: 7px;
+  color: var(--text-muted);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px auto;
+  max-width: 400px;
+}
+
+.divider-line {
+  flex: 1;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--border-dark), transparent);
+}
+
+.divider-diamond {
+  width: 6px;
+  height: 6px;
+  background: var(--petal-pink);
+  transform: rotate(45deg);
+  border: 1px solid var(--border-dark);
+}
+
+/* ============================================================
+   CHARACTER DETAIL VIEW
+   ============================================================ */
+.detail-view {
+  transition: opacity 0.25s ease;
+}
+
+.detail-view.fading {
+  opacity: 0;
+}
+
+/* Large portrait */
+.detail-portrait-frame {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0 16px;
+}
+
+.detail-portrait-border {
+  border: 3px solid var(--border-dark);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.4),
+    4px 4px 0 0 rgba(74, 40, 56, 0.12),
+    0 0 12px rgba(232, 160, 176, 0.15);
+  background: var(--card-inset);
+  padding: 4px;
+  line-height: 0;
+  position: relative;
+}
+
+/* Ornate corner accents */
+.detail-portrait-border::before,
+.detail-portrait-border::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--petal-pink);
+}
+
+.detail-portrait-border::before {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.detail-portrait-border::after {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+}
+
+.detail-portrait-border canvas {
+  display: block;
+  width: 128px;
+  height: 128px;
+  image-rendering: pixelated;
+}
+
+/* Character name large */
+.detail-name {
+  text-align: center;
+  font-size: 14px;
+  letter-spacing: 3px;
+  color: var(--dark-plum);
+  margin-bottom: 8px;
+  text-shadow: 1px 1px 0 rgba(240, 208, 216, 0.6);
+}
+
+/* Level badge */
+.detail-level-row {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.detail-level-badge {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--dark-plum);
+  background: var(--wood-light);
+  border: 2px solid var(--border-dark);
+  padding: 4px 16px;
+  letter-spacing: 2px;
+  box-shadow:
+    2px 2px 0 rgba(74, 40, 56, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* ============================================================
+   STAT BARS (HP / XP) — full-size
+   ============================================================ */
+.detail-stat-bars {
+  max-width: 480px;
+  margin: 0 auto 16px;
+}
+
+.detail-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.detail-stat-label {
+  font-size: 8px;
+  width: 24px;
+  text-align: right;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.detail-stat-bar-track {
+  flex: 1;
+  height: 12px;
+  background: var(--rose-red-bg);
+  border: 1px solid var(--border-dark);
+  position: relative;
+  overflow: hidden;
+}
+
+.detail-stat-bar-track.xp-track {
+  background: var(--wisteria-bg);
+}
+
+.detail-stat-bar-fill {
+  height: 100%;
+  background: var(--rose-red);
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.detail-stat-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.detail-stat-bar-fill.xp-fill {
+  background: var(--wisteria);
+}
+
+.detail-stat-value {
+  font-size: 7px;
+  width: 80px;
+  text-align: left;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   COOLDOWN TIMER — prominent centered
+   ============================================================ */
+.detail-cooldown {
+  max-width: 360px;
+  margin: 0 auto 20px;
+  text-align: center;
+}
+
+.detail-cooldown-label {
+  font-size: 7px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+}
+
+.detail-cooldown-bar-track {
+  height: 14px;
+  background: var(--card-inset);
+  border: 2px solid var(--border-dark);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 6px;
+  box-shadow: inset 0 1px 3px rgba(74, 40, 56, 0.08);
+}
+
+.detail-cooldown-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--wood-light), var(--wood-mid));
+  transition: width 0.1s linear;
+  position: relative;
+}
+
+.detail-cooldown-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.detail-cooldown-bar-fill.ready {
+  background: var(--ready-glow);
+}
+
+.detail-cooldown-text {
+  font-size: 12px;
+  color: var(--dark-plum);
+  letter-spacing: 2px;
+  min-height: 16px;
+}
+
+.detail-cooldown-text.ready-flash {
+  color: var(--leaf-green);
+  animation: readyPulse 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes readyPulse {
+  0% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+/* ============================================================
+   INFO PANELS — log & task side by side
+   ============================================================ */
+.detail-panels {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.detail-info-panel {
+  flex: 1;
+  background: var(--card-inset);
+  border: 1px solid var(--inset-border);
+  padding: 10px 12px;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  box-shadow: inset 0 1px 2px rgba(74, 40, 56, 0.04);
+}
+
+.detail-info-panel-label {
+  font-size: 6px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.detail-info-panel-text {
+  font-size: 7px;
+  line-height: 1.8;
+  color: var(--dark-plum);
+  word-break: break-word;
+}
+
+/* ============================================================
+   ACTION BUTTONS — horizontal row
+   ============================================================ */
+.detail-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.action-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  color: var(--dark-plum);
+  background: linear-gradient(180deg, var(--wood-light) 0%, var(--wood-mid) 100%);
+  border: 1px solid var(--border-dark);
+  padding: 7px 12px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  box-shadow:
+    2px 2px 0 rgba(74, 40, 56, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.action-btn:hover {
+  background: linear-gradient(180deg, #f0dbb8 0%, #d8c090 100%);
+}
+
+.action-btn:active {
+  background: var(--wood-dark);
+  color: var(--cream);
+  box-shadow:
+    inset 1px 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================================
+   DECORATIVE ELEMENTS
+   ============================================================ */
+/* Decorative corner ornaments for the detail card area */
+.detail-card {
+  background: var(--card-bg);
+  border: 2px solid var(--border-dark);
+  position: relative;
+  padding: 0;
+  margin: 0 0 20px;
+  box-shadow:
+    4px 4px 0 0 rgba(74, 40, 56, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+/* Inner shoji frame */
+.detail-card::before {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px; right: 3px; bottom: 3px;
+  border: 1px solid rgba(74, 40, 56, 0.1);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.detail-card::after {
+  content: '';
+  position: absolute;
+  top: 4px; left: 4px; right: 4px; bottom: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.detail-card-inner {
+  position: relative;
+  z-index: 2;
+  padding: 0 24px 24px;
+}
+
+/* ============================================================
+   FOOTER in main panel
+   ============================================================ */
+.main-footer {
+  text-align: center;
+  padding: 12px 0 24px;
+}
+
+.main-footer p {
+  font-size: 6px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+}
+
+/* ============================================================
+   SCROLLBAR STYLING
+   ============================================================ */
+.main-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.main-panel::-webkit-scrollbar-track {
+  background: var(--card-inset);
+}
+
+.main-panel::-webkit-scrollbar-thumb {
+  background: var(--inset-border);
+  border: 1px solid var(--border-dark);
+}
+
+.main-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--wood-mid);
+}
+
+.sidebar-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-list::-webkit-scrollbar-thumb {
+  background: var(--inset-border);
+}
+</style>
+</head>
+<body>
+
+<!-- Floating petals container -->
+<div class="petals-container" id="petalsContainer"></div>
+
+<!-- ============================================================
+     LEFT SIDEBAR
+     ============================================================ -->
+<aside class="sidebar">
+  <div class="sidebar-branch">
+    <canvas id="sidebarBranchCanvas"></canvas>
+  </div>
+  <div class="sidebar-header">
+    <h2>PARTY</h2>
+  </div>
+  <div class="sidebar-list" id="sidebarList"></div>
+  <div class="sidebar-footer">
+    <p>SAKURA GARDEN v2.0</p>
+  </div>
+</aside>
+
+<!-- ============================================================
+     MAIN PANEL
+     ============================================================ -->
+<div class="main-panel" id="mainPanel">
+  <div class="main-content">
+    <!-- Cherry branch across top -->
+    <div class="main-branch">
+      <canvas id="mainBranchCanvas"></canvas>
+    </div>
+
+    <!-- Header -->
+    <div class="main-header">
+      <h1>ARTIFACTS MMO</h1>
+      <p class="subtitle">Bot Manager</p>
+      <div class="divider">
+        <span class="divider-line"></span>
+        <span class="divider-diamond"></span>
+        <span class="divider-line"></span>
+      </div>
+    </div>
+
+    <!-- Detail view (swapped on sidebar click) -->
+    <div class="detail-view" id="detailView">
+      <div class="detail-card">
+        <div class="detail-card-inner">
+
+          <!-- Large portrait -->
+          <div class="detail-portrait-frame">
+            <div class="detail-portrait-border">
+              <canvas id="detailPortrait"></canvas>
+            </div>
+          </div>
+
+          <!-- Name -->
+          <div class="detail-name" id="detailName"></div>
+
+          <!-- Level -->
+          <div class="detail-level-row">
+            <span class="detail-level-badge" id="detailLevel"></span>
+          </div>
+
+          <!-- HP / XP bars -->
+          <div class="detail-stat-bars">
+            <div class="detail-stat-row">
+              <span class="detail-stat-label">HP</span>
+              <div class="detail-stat-bar-track">
+                <div class="detail-stat-bar-fill" id="detailHpFill"></div>
+              </div>
+              <span class="detail-stat-value" id="detailHpValue"></span>
+            </div>
+            <div class="detail-stat-row">
+              <span class="detail-stat-label">XP</span>
+              <div class="detail-stat-bar-track xp-track">
+                <div class="detail-stat-bar-fill xp-fill" id="detailXpFill"></div>
+              </div>
+              <span class="detail-stat-value" id="detailXpValue"></span>
+            </div>
+          </div>
+
+          <!-- Cooldown -->
+          <div class="detail-cooldown">
+            <div class="detail-cooldown-label">COOLDOWN</div>
+            <div class="detail-cooldown-bar-track">
+              <div class="detail-cooldown-bar-fill" id="detailCdBar"></div>
+            </div>
+            <div class="detail-cooldown-text" id="detailCdText"></div>
+          </div>
+
+          <!-- Log & Task panels side by side -->
+          <div class="detail-panels">
+            <div class="detail-info-panel">
+              <div class="detail-info-panel-label">LOG</div>
+              <div class="detail-info-panel-text" id="detailLog"></div>
+            </div>
+            <div class="detail-info-panel">
+              <div class="detail-info-panel-label">TASK</div>
+              <div class="detail-info-panel-text" id="detailTask"></div>
+            </div>
+          </div>
+
+          <!-- Action buttons in a horizontal row -->
+          <div class="detail-buttons">
+            <button class="action-btn">EQUIP</button>
+            <button class="action-btn">INVEN</button>
+            <button class="action-btn">SKILLS</button>
+            <button class="action-btn">STATS</button>
+            <button class="action-btn">ACHIEV</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+      <div class="divider" style="margin-bottom: 12px;">
+        <span class="divider-line"></span>
+        <span class="divider-diamond"></span>
+        <span class="divider-line"></span>
+      </div>
+      <p>SAKURA GARDEN v2.0 — TEMPLE DASHBOARD</p>
+    </footer>
+  </div>
+</div>
+
+<script>
+/* ==============================================================
+   MOCK DATA
+   ============================================================== */
+const characters = [
+  {
+    name: 'Artifax',
+    level: 25,
+    hp: 340,
+    maxHp: 450,
+    xp: 12500,
+    maxXp: 18000,
+    portraitType: 'warrior',
+    cooldown: 12.0,
+    maxCooldown: 15.0,
+    log: 'Fighting Chicken (Lv.3)...',
+    task: 'Kill 50 Chickens (32/50)',
+    logs: [
+      'Fighting Chicken (Lv.3)...',
+      'Defeated Chicken! +15 XP',
+      'Looted Feather x2',
+      'Moving to Hen House...'
+    ]
+  },
+  {
+    name: 'Luminos',
+    level: 18,
+    hp: 180,
+    maxHp: 220,
+    xp: 8200,
+    maxXp: 12000,
+    portraitType: 'mage',
+    cooldown: 8.0,
+    maxCooldown: 12.0,
+    log: 'Crafting Iron Sword...',
+    task: 'Craft 10 Iron Swords (7/10)',
+    logs: [
+      'Crafting Iron Sword...',
+      'Iron Sword crafted! +80 XP',
+      'Withdrawing Iron Ore x5...',
+      'Moving to Forge...'
+    ]
+  },
+  {
+    name: 'Verdant',
+    level: 22,
+    hp: 260,
+    maxHp: 300,
+    xp: 15600,
+    maxXp: 20000,
+    portraitType: 'gatherer',
+    cooldown: 3.0,
+    maxCooldown: 8.0,
+    log: 'Gathering Ash Wood...',
+    task: 'Gather 100 Ash Wood (89/100)',
+    logs: [
+      'Gathering Ash Wood...',
+      'Gathered Ash Wood x3!',
+      'Inventory: 89/100 Ash Wood',
+      'Moving to Ash Forest...'
+    ]
+  }
+];
+
+/* ==============================================================
+   PORTRAIT PIXEL ART DEFINITIONS
+   16x16 grid
+   ============================================================== */
+const PORTRAITS = {
+  warrior: {
+    pixels: [
+      { x: 5, y: 0, c: '#607890' }, { x: 6, y: 0, c: '#607890' }, { x: 7, y: 0, c: '#607890' }, { x: 8, y: 0, c: '#607890' }, { x: 9, y: 0, c: '#607890' },
+      { x: 4, y: 1, c: '#607890' }, { x: 5, y: 1, c: '#789cb8' }, { x: 6, y: 1, c: '#789cb8' }, { x: 7, y: 1, c: '#90b8d0' }, { x: 8, y: 1, c: '#789cb8' }, { x: 9, y: 1, c: '#789cb8' }, { x: 10, y: 1, c: '#607890' },
+      { x: 3, y: 2, c: '#607890' }, { x: 4, y: 2, c: '#789cb8' }, { x: 5, y: 2, c: '#90b8d0' }, { x: 6, y: 2, c: '#789cb8' }, { x: 7, y: 2, c: '#90b8d0' }, { x: 8, y: 2, c: '#789cb8' }, { x: 9, y: 2, c: '#90b8d0' }, { x: 10, y: 2, c: '#789cb8' }, { x: 11, y: 2, c: '#607890' },
+      { x: 2, y: 3, c: '#506878' }, { x: 3, y: 3, c: '#607890' }, { x: 4, y: 3, c: '#607890' }, { x: 5, y: 3, c: '#607890' }, { x: 6, y: 3, c: '#607890' }, { x: 7, y: 3, c: '#607890' }, { x: 8, y: 3, c: '#607890' }, { x: 9, y: 3, c: '#607890' }, { x: 10, y: 3, c: '#607890' }, { x: 11, y: 3, c: '#607890' }, { x: 12, y: 3, c: '#506878' },
+      { x: 4, y: 4, c: '#e8c8a0' }, { x: 5, y: 4, c: '#e8c8a0' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#e8c8a0' }, { x: 10, y: 4, c: '#e8c8a0' },
+      { x: 3, y: 5, c: '#e8c8a0' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#382828' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#382828' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#e8c8a0' },
+      { x: 3, y: 6, c: '#e8c8a0' }, { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' }, { x: 11, y: 6, c: '#e8c8a0' },
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#c09880' }, { x: 7, y: 7, c: '#c09880' }, { x: 8, y: 7, c: '#c09880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' },
+      { x: 2, y: 10, c: '#607890' }, { x: 3, y: 10, c: '#789cb8' }, { x: 4, y: 10, c: '#789cb8' }, { x: 5, y: 10, c: '#607890' }, { x: 6, y: 10, c: '#607890' }, { x: 7, y: 10, c: '#607890' }, { x: 8, y: 10, c: '#607890' }, { x: 9, y: 10, c: '#607890' }, { x: 10, y: 10, c: '#789cb8' }, { x: 11, y: 10, c: '#789cb8' }, { x: 12, y: 10, c: '#607890' },
+      { x: 1, y: 11, c: '#506878' }, { x: 2, y: 11, c: '#789cb8' }, { x: 3, y: 11, c: '#90b8d0' }, { x: 4, y: 11, c: '#789cb8' }, { x: 5, y: 11, c: '#607890' }, { x: 6, y: 11, c: '#789cb8' }, { x: 7, y: 11, c: '#90b8d0' }, { x: 8, y: 11, c: '#789cb8' }, { x: 9, y: 11, c: '#607890' }, { x: 10, y: 11, c: '#789cb8' }, { x: 11, y: 11, c: '#90b8d0' }, { x: 12, y: 11, c: '#789cb8' }, { x: 13, y: 11, c: '#506878' },
+      { x: 1, y: 12, c: '#506878' }, { x: 2, y: 12, c: '#607890' }, { x: 3, y: 12, c: '#789cb8' }, { x: 4, y: 12, c: '#607890' }, { x: 5, y: 12, c: '#607890' }, { x: 6, y: 12, c: '#789cb8' }, { x: 7, y: 12, c: '#c0c0c0' }, { x: 8, y: 12, c: '#789cb8' }, { x: 9, y: 12, c: '#607890' }, { x: 10, y: 12, c: '#607890' }, { x: 11, y: 12, c: '#789cb8' }, { x: 12, y: 12, c: '#607890' }, { x: 13, y: 12, c: '#506878' },
+      { x: 2, y: 13, c: '#607890' }, { x: 3, y: 13, c: '#607890' }, { x: 4, y: 13, c: '#607890' }, { x: 5, y: 13, c: '#607890' }, { x: 6, y: 13, c: '#607890' }, { x: 7, y: 13, c: '#607890' }, { x: 8, y: 13, c: '#607890' }, { x: 9, y: 13, c: '#607890' }, { x: 10, y: 13, c: '#607890' }, { x: 11, y: 13, c: '#607890' }, { x: 12, y: 13, c: '#607890' },
+    ]
+  },
+  mage: {
+    pixels: [
+      { x: 7, y: 0, c: '#584078' },
+      { x: 6, y: 1, c: '#584078' }, { x: 7, y: 1, c: '#7858a0' }, { x: 8, y: 1, c: '#584078' },
+      { x: 5, y: 2, c: '#584078' }, { x: 6, y: 2, c: '#7858a0' }, { x: 7, y: 2, c: '#9070b8' }, { x: 8, y: 2, c: '#7858a0' }, { x: 9, y: 2, c: '#584078' },
+      { x: 2, y: 3, c: '#483068' }, { x: 3, y: 3, c: '#584078' }, { x: 4, y: 3, c: '#584078' }, { x: 5, y: 3, c: '#7858a0' }, { x: 6, y: 3, c: '#7858a0' }, { x: 7, y: 3, c: '#f8e060' }, { x: 8, y: 3, c: '#7858a0' }, { x: 9, y: 3, c: '#7858a0' }, { x: 10, y: 3, c: '#584078' }, { x: 11, y: 3, c: '#584078' }, { x: 12, y: 3, c: '#483068' },
+      { x: 3, y: 4, c: '#c0c0d0' }, { x: 4, y: 4, c: '#e8c8a0' }, { x: 5, y: 4, c: '#f0d8b8' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#f0d8b8' }, { x: 10, y: 4, c: '#e8c8a0' }, { x: 11, y: 4, c: '#c0c0d0' },
+      { x: 3, y: 5, c: '#c0c0d0' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#382858' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#382858' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#c0c0d0' },
+      { x: 3, y: 6, c: '#c0c0d0' }, { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' }, { x: 11, y: 6, c: '#c0c0d0' },
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#b88880' }, { x: 7, y: 7, c: '#f0d8b8' }, { x: 8, y: 7, c: '#b88880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 5, y: 9, c: '#c0c0d0' }, { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' }, { x: 9, y: 9, c: '#c0c0d0' },
+      { x: 3, y: 10, c: '#584078' }, { x: 4, y: 10, c: '#7858a0' }, { x: 5, y: 10, c: '#584078' }, { x: 6, y: 10, c: '#584078' }, { x: 7, y: 10, c: '#584078' }, { x: 8, y: 10, c: '#584078' }, { x: 9, y: 10, c: '#584078' }, { x: 10, y: 10, c: '#7858a0' }, { x: 11, y: 10, c: '#584078' },
+      { x: 2, y: 11, c: '#483068' }, { x: 3, y: 11, c: '#7858a0' }, { x: 4, y: 11, c: '#9070b8' }, { x: 5, y: 11, c: '#7858a0' }, { x: 6, y: 11, c: '#584078' }, { x: 7, y: 11, c: '#f8e060' }, { x: 8, y: 11, c: '#584078' }, { x: 9, y: 11, c: '#7858a0' }, { x: 10, y: 11, c: '#9070b8' }, { x: 11, y: 11, c: '#7858a0' }, { x: 12, y: 11, c: '#483068' },
+      { x: 2, y: 12, c: '#483068' }, { x: 3, y: 12, c: '#584078' }, { x: 4, y: 12, c: '#7858a0' }, { x: 5, y: 12, c: '#584078' }, { x: 6, y: 12, c: '#7858a0' }, { x: 7, y: 12, c: '#9070b8' }, { x: 8, y: 12, c: '#7858a0' }, { x: 9, y: 12, c: '#584078' }, { x: 10, y: 12, c: '#7858a0' }, { x: 11, y: 12, c: '#584078' }, { x: 12, y: 12, c: '#483068' },
+      { x: 3, y: 13, c: '#584078' }, { x: 4, y: 13, c: '#584078' }, { x: 5, y: 13, c: '#584078' }, { x: 6, y: 13, c: '#584078' }, { x: 7, y: 13, c: '#584078' }, { x: 8, y: 13, c: '#584078' }, { x: 9, y: 13, c: '#584078' }, { x: 10, y: 13, c: '#584078' }, { x: 11, y: 13, c: '#584078' },
+    ]
+  },
+  gatherer: {
+    pixels: [
+      { x: 5, y: 0, c: '#3a6838' }, { x: 6, y: 0, c: '#3a6838' }, { x: 7, y: 0, c: '#3a6838' }, { x: 8, y: 0, c: '#3a6838' }, { x: 9, y: 0, c: '#3a6838' },
+      { x: 4, y: 1, c: '#3a6838' }, { x: 5, y: 1, c: '#508848' }, { x: 6, y: 1, c: '#508848' }, { x: 7, y: 1, c: '#60a058' }, { x: 8, y: 1, c: '#508848' }, { x: 9, y: 1, c: '#508848' }, { x: 10, y: 1, c: '#3a6838' },
+      { x: 3, y: 2, c: '#3a6838' }, { x: 4, y: 2, c: '#508848' }, { x: 5, y: 2, c: '#60a058' }, { x: 6, y: 2, c: '#508848' }, { x: 7, y: 2, c: '#60a058' }, { x: 8, y: 2, c: '#508848' }, { x: 9, y: 2, c: '#60a058' }, { x: 10, y: 2, c: '#508848' }, { x: 11, y: 2, c: '#3a6838' },
+      { x: 3, y: 3, c: '#2a5028' }, { x: 4, y: 3, c: '#3a6838' }, { x: 5, y: 3, c: '#3a6838' }, { x: 6, y: 3, c: '#3a6838' }, { x: 7, y: 3, c: '#3a6838' }, { x: 8, y: 3, c: '#3a6838' }, { x: 9, y: 3, c: '#3a6838' }, { x: 10, y: 3, c: '#3a6838' }, { x: 11, y: 3, c: '#2a5028' },
+      { x: 3, y: 4, c: '#3a6838' }, { x: 4, y: 4, c: '#e0c098' }, { x: 5, y: 4, c: '#f0d8b8' }, { x: 6, y: 4, c: '#f0d8b8' }, { x: 7, y: 4, c: '#f0d8b8' }, { x: 8, y: 4, c: '#f0d8b8' }, { x: 9, y: 4, c: '#f0d8b8' }, { x: 10, y: 4, c: '#e0c098' }, { x: 11, y: 4, c: '#3a6838' },
+      { x: 3, y: 5, c: '#3a6838' }, { x: 4, y: 5, c: '#f0d8b8' }, { x: 5, y: 5, c: '#283818' }, { x: 6, y: 5, c: '#f0d8b8' }, { x: 7, y: 5, c: '#f0d8b8' }, { x: 8, y: 5, c: '#f0d8b8' }, { x: 9, y: 5, c: '#283818' }, { x: 10, y: 5, c: '#f0d8b8' }, { x: 11, y: 5, c: '#3a6838' },
+      { x: 4, y: 6, c: '#f0d8b8' }, { x: 5, y: 6, c: '#f0d8b8' }, { x: 6, y: 6, c: '#f0d8b8' }, { x: 7, y: 6, c: '#d8b090' }, { x: 8, y: 6, c: '#f0d8b8' }, { x: 9, y: 6, c: '#f0d8b8' }, { x: 10, y: 6, c: '#f0d8b8' },
+      { x: 4, y: 7, c: '#e8c8a0' }, { x: 5, y: 7, c: '#f0d8b8' }, { x: 6, y: 7, c: '#c09880' }, { x: 7, y: 7, c: '#c09880' }, { x: 8, y: 7, c: '#c09880' }, { x: 9, y: 7, c: '#f0d8b8' }, { x: 10, y: 7, c: '#e8c8a0' },
+      { x: 5, y: 8, c: '#e8c8a0' }, { x: 6, y: 8, c: '#e8c8a0' }, { x: 7, y: 8, c: '#e8c8a0' }, { x: 8, y: 8, c: '#e8c8a0' }, { x: 9, y: 8, c: '#e8c8a0' },
+      { x: 5, y: 9, c: '#a07848' }, { x: 6, y: 9, c: '#d8b890' }, { x: 7, y: 9, c: '#d8b890' }, { x: 8, y: 9, c: '#d8b890' }, { x: 9, y: 9, c: '#a07848' },
+      { x: 3, y: 10, c: '#3a6838' }, { x: 4, y: 10, c: '#508848' }, { x: 5, y: 10, c: '#3a6838' }, { x: 6, y: 10, c: '#3a6838' }, { x: 7, y: 10, c: '#3a6838' }, { x: 8, y: 10, c: '#3a6838' }, { x: 9, y: 10, c: '#3a6838' }, { x: 10, y: 10, c: '#508848' }, { x: 11, y: 10, c: '#3a6838' },
+      { x: 2, y: 11, c: '#2a5028' }, { x: 3, y: 11, c: '#508848' }, { x: 4, y: 11, c: '#60a058' }, { x: 5, y: 11, c: '#508848' }, { x: 6, y: 11, c: '#3a6838' }, { x: 7, y: 11, c: '#a07848' }, { x: 8, y: 11, c: '#3a6838' }, { x: 9, y: 11, c: '#508848' }, { x: 10, y: 11, c: '#60a058' }, { x: 11, y: 11, c: '#508848' }, { x: 12, y: 11, c: '#2a5028' },
+      { x: 2, y: 12, c: '#2a5028' }, { x: 3, y: 12, c: '#3a6838' }, { x: 4, y: 12, c: '#508848' }, { x: 5, y: 12, c: '#3a6838' }, { x: 6, y: 12, c: '#508848' }, { x: 7, y: 12, c: '#60a058' }, { x: 8, y: 12, c: '#508848' }, { x: 9, y: 12, c: '#3a6838' }, { x: 10, y: 12, c: '#508848' }, { x: 11, y: 12, c: '#3a6838' }, { x: 12, y: 12, c: '#2a5028' },
+      { x: 3, y: 13, c: '#3a6838' }, { x: 4, y: 13, c: '#3a6838' }, { x: 5, y: 13, c: '#3a6838' }, { x: 6, y: 13, c: '#3a6838' }, { x: 7, y: 13, c: '#3a6838' }, { x: 8, y: 13, c: '#3a6838' }, { x: 9, y: 13, c: '#3a6838' }, { x: 10, y: 13, c: '#3a6838' }, { x: 11, y: 13, c: '#3a6838' },
+    ]
+  }
+};
+
+/* ==============================================================
+   DRAW PORTRAIT ON CANVAS — variable native size
+   nativeSize: pixel grid side (14 for small, 14 for large — same data)
+   ============================================================== */
+function drawPortrait(canvas, type, displaySize) {
+  const size = 14;
+  canvas.width = size;
+  canvas.height = size;
+  // Set display size via CSS
+  canvas.style.width = displaySize + 'px';
+  canvas.style.height = displaySize + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f0e8e0';
+  ctx.fillRect(0, 0, size, size);
+
+  const data = PORTRAITS[type];
+  if (!data) return;
+  data.pixels.forEach(p => {
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x, p.y, 1, 1);
+  });
+}
+
+/* ==============================================================
+   DRAW CHERRY BRANCH ON CANVAS — scalable width
+   ============================================================== */
+function drawCherryBranch(canvas, w, h) {
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+
+  // Scale factor relative to the original 280px design
+  const sx = w / 280;
+  const sy = h / 40;
+
+  // Branch path
+  const branchPoints = [
+    [0, 24], [20, 22], [40, 18], [60, 16], [80, 15], [100, 16],
+    [120, 18], [140, 17], [160, 14], [180, 12], [200, 13],
+    [220, 15], [240, 18], [260, 20], [280, 22]
+  ];
+
+  ctx.fillStyle = '#684848';
+  for (let i = 0; i < branchPoints.length - 1; i++) {
+    const [x1, y1] = branchPoints[i];
+    const [x2, y2] = branchPoints[i + 1];
+    const steps = Math.max(Math.abs((x2 - x1) * sx), Math.abs((y2 - y1) * sy));
+    for (let s = 0; s <= steps; s++) {
+      const t = steps === 0 ? 0 : s / steps;
+      const x = Math.round((x1 + (x2 - x1) * t) * sx);
+      const y = Math.round((y1 + (y2 - y1) * t) * sy);
+      ctx.fillRect(x, y, 2, 2);
+    }
+  }
+
+  // Sub-branches
+  const subBranches = [
+    [[60, 16], [50, 8], [45, 4]],
+    [[120, 18], [130, 10], [135, 6]],
+    [[180, 12], [170, 6], [165, 2]],
+    [[220, 15], [230, 8], [235, 5]],
+    [[100, 16], [95, 10]],
+    [[160, 14], [155, 8]],
+  ];
+
+  ctx.fillStyle = '#886060';
+  subBranches.forEach(branch => {
+    for (let i = 0; i < branch.length - 1; i++) {
+      const [x1, y1] = branch[i];
+      const [x2, y2] = branch[i + 1];
+      const steps = Math.max(Math.abs((x2 - x1) * sx), Math.abs((y2 - y1) * sy));
+      for (let s = 0; s <= steps; s++) {
+        const t = steps === 0 ? 0 : s / steps;
+        const x = Math.round((x1 + (x2 - x1) * t) * sx);
+        const y = Math.round((y1 + (y2 - y1) * t) * sy);
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  });
+
+  // Blossoms
+  const blossomPositions = [
+    [45, 3], [48, 5], [42, 6],
+    [130, 6], [133, 8], [127, 9], [135, 4],
+    [165, 1], [168, 3], [162, 4], [170, 5],
+    [230, 4], [233, 6], [227, 7], [235, 3],
+    [95, 8], [92, 10], [98, 9],
+    [155, 6], [152, 8], [158, 7],
+  ];
+
+  const petalColors = ['#f0a0b8', '#f8c8d8', '#e88898', '#f0b0c0', '#f8d0d8'];
+  blossomPositions.forEach(([bx, by]) => {
+    const offsets = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+    offsets.forEach(([dx, dy], i) => {
+      ctx.fillStyle = petalColors[i % petalColors.length];
+      ctx.fillRect(Math.round(bx * sx) + dx * 2, Math.round(by * sy) + dy * 2, 2, 2);
+    });
+    ctx.fillStyle = '#f8e060';
+    ctx.fillRect(Math.round(bx * sx), Math.round(by * sy), 1, 1);
+  });
+}
+
+/* ==============================================================
+   SELECTED CHARACTER INDEX
+   ============================================================== */
+let selectedIndex = 0;
+
+/* ==============================================================
+   BUILD SIDEBAR ENTRIES
+   ============================================================== */
+function buildSidebar() {
+  const list = document.getElementById('sidebarList');
+  characters.forEach((char, i) => {
+    const entry = document.createElement('div');
+    entry.className = 'sidebar-entry' + (i === 0 ? ' selected' : '');
+    entry.dataset.index = i;
+
+    const hpPct = (char.hp / char.maxHp * 100).toFixed(1);
+
+    entry.innerHTML = `
+      <div class="sidebar-portrait">
+        <canvas class="sidebar-portrait-canvas" data-type="${char.portraitType}" data-idx="${i}"></canvas>
+      </div>
+      <div class="sidebar-info">
+        <div class="sidebar-name">${char.name}</div>
+        <div class="sidebar-level">LV ${char.level}</div>
+        <div class="sidebar-hp-track">
+          <div class="sidebar-hp-fill" style="width: ${hpPct}%"></div>
+        </div>
+      </div>
+    `;
+
+    entry.addEventListener('click', () => selectCharacter(i));
+    list.appendChild(entry);
+  });
+}
+
+/* ==============================================================
+   SELECT CHARACTER — update main panel
+   ============================================================== */
+function selectCharacter(index) {
+  if (index === selectedIndex) return;
+
+  const detailView = document.getElementById('detailView');
+
+  // Fade out
+  detailView.classList.add('fading');
+
+  setTimeout(() => {
+    selectedIndex = index;
+
+    // Update sidebar selection
+    document.querySelectorAll('.sidebar-entry').forEach((entry, i) => {
+      entry.classList.toggle('selected', i === index);
+    });
+
+    // Update detail view
+    updateDetailView();
+
+    // Fade in
+    detailView.classList.remove('fading');
+  }, 200);
+}
+
+/* ==============================================================
+   UPDATE DETAIL VIEW with selected character data
+   ============================================================== */
+function updateDetailView() {
+  const char = characters[selectedIndex];
+  const hpPct = (char.hp / char.maxHp * 100).toFixed(1);
+  const xpPct = (char.xp / char.maxXp * 100).toFixed(1);
+
+  // Portrait
+  const portraitCanvas = document.getElementById('detailPortrait');
+  drawPortrait(portraitCanvas, char.portraitType, 128);
+
+  // Name
+  document.getElementById('detailName').textContent = char.name;
+
+  // Level
+  document.getElementById('detailLevel').textContent = 'LV ' + char.level;
+
+  // HP bar
+  document.getElementById('detailHpFill').style.width = hpPct + '%';
+  document.getElementById('detailHpValue').textContent = char.hp + ' / ' + char.maxHp;
+
+  // XP bar
+  document.getElementById('detailXpFill').style.width = xpPct + '%';
+  document.getElementById('detailXpValue').textContent = char.xp + ' / ' + char.maxXp;
+
+  // Log
+  document.getElementById('detailLog').textContent = char.logs[logIndices[selectedIndex]];
+
+  // Task
+  document.getElementById('detailTask').textContent = char.task;
+}
+
+/* ==============================================================
+   FLOATING PETALS
+   ============================================================== */
+function createPetals() {
+  const container = document.getElementById('petalsContainer');
+  const petalColors = ['#f0a0b8', '#f8c8d8', '#e88898', '#f0b0c0', '#f8d0d8', '#f8e0e8'];
+  const count = 25;
+
+  for (let i = 0; i < count; i++) {
+    const petal = document.createElement('div');
+    petal.className = 'petal';
+    const size = Math.random() > 0.5 ? 4 : 3;
+    petal.style.width = size + 'px';
+    petal.style.height = size + 'px';
+    petal.style.backgroundColor = petalColors[Math.floor(Math.random() * petalColors.length)];
+    petal.style.left = Math.random() * 100 + '%';
+    petal.style.top = -10 + 'px';
+    petal.style.animationDuration = (8 + Math.random() * 12) + 's';
+    petal.style.animationDelay = (Math.random() * 15) + 's';
+    container.appendChild(petal);
+  }
+}
+
+/* ==============================================================
+   COOLDOWN TIMERS
+   ============================================================== */
+const cooldowns = characters.map(c => ({
+  current: c.cooldown,
+  max: c.maxCooldown,
+  readyAt: 0,
+  isReady: false
+}));
+
+function tickCooldowns() {
+  const now = Date.now();
+  cooldowns.forEach((cd, i) => {
+    if (cd.isReady) {
+      if (now - cd.readyAt >= 1500) {
+        cd.current = cd.max;
+        cd.isReady = false;
+      }
+    } else {
+      cd.current -= 0.1;
+      if (cd.current <= 0) {
+        cd.current = 0;
+        cd.isReady = true;
+        cd.readyAt = now;
+      }
+    }
+
+    // Only update DOM for the selected character's cooldown
+    if (i === selectedIndex) {
+      const bar = document.getElementById('detailCdBar');
+      const text = document.getElementById('detailCdText');
+      if (!bar || !text) return;
+
+      if (cd.isReady) {
+        bar.style.width = '100%';
+        bar.classList.add('ready');
+        text.textContent = 'READY';
+        text.classList.add('ready-flash');
+      } else {
+        const pct = (cd.current / cd.max * 100).toFixed(1);
+        bar.style.width = pct + '%';
+        bar.classList.remove('ready');
+        text.textContent = cd.current.toFixed(1) + 's';
+        text.classList.remove('ready-flash');
+      }
+    }
+  });
+}
+
+/* ==============================================================
+   LOG ROTATION
+   ============================================================== */
+const logIndices = characters.map(() => 0);
+
+function rotateLogs() {
+  characters.forEach((char, i) => {
+    logIndices[i] = (logIndices[i] + 1) % char.logs.length;
+  });
+  // Update the displayed log for the selected character
+  const el = document.getElementById('detailLog');
+  if (el) {
+    el.textContent = characters[selectedIndex].logs[logIndices[selectedIndex]];
+  }
+}
+
+/* ==============================================================
+   INIT
+   ============================================================== */
+function init() {
+  // Build sidebar entries
+  buildSidebar();
+
+  // Draw sidebar portraits (48px display)
+  document.querySelectorAll('.sidebar-portrait-canvas').forEach(canvas => {
+    drawPortrait(canvas, canvas.dataset.type, 48);
+  });
+
+  // Draw sidebar branch
+  const sidebarBranch = document.getElementById('sidebarBranchCanvas');
+  drawCherryBranch(sidebarBranch, 200, 40);
+
+  // Draw main panel branch (wider)
+  const mainBranch = document.getElementById('mainBranchCanvas');
+  // Use the actual width of the main content area
+  const mainContentWidth = document.querySelector('.main-content').offsetWidth;
+  drawCherryBranch(mainBranch, mainContentWidth || 680, 48);
+
+  // Set initial detail view
+  updateDetailView();
+
+  // Create floating petals
+  createPetals();
+
+  // Start cooldown ticker (100ms)
+  setInterval(tickCooldowns, 100);
+
+  // Start log rotation (3s)
+  setInterval(rotateLogs, 3000);
+
+  // Handle window resize for the main branch canvas
+  window.addEventListener('resize', () => {
+    const w = document.querySelector('.main-content').offsetWidth;
+    drawCherryBranch(mainBranch, w || 680, 48);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
