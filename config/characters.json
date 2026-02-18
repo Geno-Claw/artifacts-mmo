@@ -3,7 +3,7 @@
   "characters": [
     {
       "name": "GenoClaw",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -54,7 +54,7 @@
     },
     {
       "name": "GenoClaw2",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -105,7 +105,7 @@
     },
     {
       "name": "GenoClaw3",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -155,7 +155,7 @@
     },
     {
       "name": "GenoClaw4",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -205,7 +205,7 @@
     },
     {
       "name": "GenoClaw5",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,

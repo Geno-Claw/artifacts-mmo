@@ -1,11 +1,11 @@
 /**
- * Skill Rotation Task — randomly cycles between gathering, crafting,
+ * Skill Rotation Routine — randomly cycles between gathering, crafting,
  * combat, and NPC tasks with goal-based durations.
  *
- * Runs as a low-priority loop task. Background tasks (rest, bank)
+ * Runs as a low-priority loop routine. Background routines (rest, bank)
  * interrupt via higher priority in the scheduler.
  */
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
@@ -16,7 +16,7 @@ import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
 
-export class SkillRotationTask extends BaseTask {
+export class SkillRotationRoutine extends BaseRoutine {
   constructor({ priority = 5, maxLosses = MAX_LOSSES_DEFAULT, ...rotationCfg } = {}) {
     super({ name: 'Skill Rotation', priority, loop: true });
     this.rotation = new SkillRotation(rotationCfg);
@@ -204,7 +204,7 @@ export class SkillRotationTask extends BaseTask {
       plan.push({ type: 'craft', itemCode: recipe.code, recipe: recipe.craft, quantity: 1 });
     }
 
-    // Re-withdraw if bank task deposited our materials
+    // Re-withdraw if bank routine deposited our materials
     if (this.rotation.bankChecked && ctx.inventoryCount() === 0) {
       this.rotation.bankChecked = false;
     }

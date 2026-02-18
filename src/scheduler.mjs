@@ -1,5 +1,5 @@
 /**
- * The brain — picks the highest-priority task that can run and executes it.
+ * The brain — picks the highest-priority routine that can run and executes it.
  * Operates on a single CharacterContext.
  */
 import * as log from './log.mjs';
@@ -9,15 +9,15 @@ function sleep(ms) {
 }
 
 export class Scheduler {
-  constructor(ctx, tasks = []) {
+  constructor(ctx, routines = []) {
     this.ctx = ctx;
-    this.tasks = [...tasks].sort((a, b) => b.priority - a.priority);
+    this.routines = [...routines].sort((a, b) => b.priority - a.priority);
   }
 
-  /** Return the highest-priority task whose canRun() passes. */
-  pickTask() {
-    for (const task of this.tasks) {
-      if (task.canRun(this.ctx)) return task;
+  /** Return the highest-priority routine whose canRun() passes. */
+  pickRoutine() {
+    for (const routine of this.routines) {
+      if (routine.canRun(this.ctx)) return routine;
     }
     return null;
   }
@@ -28,39 +28,39 @@ export class Scheduler {
 
     while (true) {
       await this.ctx.refresh();
-      const task = this.pickTask();
+      const routine = this.pickRoutine();
 
-      if (!task) {
-        log.warn(`[${this.ctx.name}] No runnable tasks — idling 30s`);
+      if (!routine) {
+        log.warn(`[${this.ctx.name}] No runnable routines — idling 30s`);
         await sleep(30_000);
         continue;
       }
 
-      log.info(`[${this.ctx.name}] → ${task.name}`);
+      log.info(`[${this.ctx.name}] → ${routine.name}`);
 
       try {
-        if (task.loop) {
+        if (routine.loop) {
           let keepGoing = true;
           while (keepGoing) {
             await this.ctx.refresh();
-            if (!task.canRun(this.ctx)) {
-              log.info(`[${this.ctx.name}] ${task.name}: conditions changed, yielding`);
+            if (!routine.canRun(this.ctx)) {
+              log.info(`[${this.ctx.name}] ${routine.name}: conditions changed, yielding`);
               break;
             }
-            // Preemption: yield if a higher-priority task needs to run
-            const preempt = this.tasks.find(t => t.priority > task.priority && t.canRun(this.ctx));
-            if (preempt && task.canBePreempted(this.ctx)) {
-              log.info(`[${this.ctx.name}] ${task.name}: preempted by ${preempt.name}`);
+            // Preemption: yield if a higher-priority routine needs to run
+            const preempt = this.routines.find(r => r.priority > routine.priority && r.canRun(this.ctx));
+            if (preempt && routine.canBePreempted(this.ctx)) {
+              log.info(`[${this.ctx.name}] ${routine.name}: preempted by ${preempt.name}`);
               break;
             }
-            keepGoing = await task.execute(this.ctx);
+            keepGoing = await routine.execute(this.ctx);
           }
         } else {
-          await task.execute(this.ctx);
+          await routine.execute(this.ctx);
         }
-        log.info(`[${this.ctx.name}] ${task.name}: done`);
+        log.info(`[${this.ctx.name}] ${routine.name}: done`);
       } catch (err) {
-        log.error(`[${this.ctx.name}] ${task.name} failed`, err.message);
+        log.error(`[${this.ctx.name}] ${routine.name} failed`, err.message);
         await sleep(10_000);
       }
 

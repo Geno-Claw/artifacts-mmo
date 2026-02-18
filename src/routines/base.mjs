@@ -1,11 +1,11 @@
 /**
- * Base class for all bot tasks.
+ * Base class for all bot routines.
  *
  * Subclasses implement:
  *   canRun(char)  → boolean — prerequisites check
- *   execute(char) → boolean — for loop tasks: true=continue, false=stop
+ *   execute(char) → boolean — for loop routines: true=continue, false=stop
  */
-export class BaseTask {
+export class BaseRoutine {
   constructor({ name, priority = 0, loop = false }) {
     this.name = name;
     this.priority = priority;

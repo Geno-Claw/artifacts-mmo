@@ -1,4 +1,4 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import { depositAll, moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 import * as api from '../api.mjs';
@@ -6,7 +6,7 @@ import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
 import * as recycler from '../services/recycler.mjs';
 
-export class DepositBankTask extends BaseTask {
+export class DepositBankRoutine extends BaseRoutine {
   constructor({
     threshold = 0.8,
     priority = 50,

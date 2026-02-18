@@ -1,7 +1,7 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import { restUntil } from '../helpers.mjs';
 
-export class RestTask extends BaseTask {
+export class RestRoutine extends BaseRoutine {
   constructor({ triggerPct = 40, targetPct = 80, priority = 100 } = {}) {
     super({ name: 'Rest', priority, loop: false });
     this.triggerPct = triggerPct;

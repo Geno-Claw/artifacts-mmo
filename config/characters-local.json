@@ -3,7 +3,7 @@
   "characters": [
     {
       "name": "GenoDev",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -55,7 +55,7 @@
     },
     {
       "name": "GenoDev2",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -107,7 +107,7 @@
     },
     {
       "name": "GenoDev3",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -158,7 +158,7 @@
     },
     {
       "name": "GenoDev4",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,
@@ -209,7 +209,7 @@
     },
     {
       "name": "GenoDev5",
-      "tasks": [
+      "routines": [
         {
           "type": "rest",
           "triggerPct": 40,

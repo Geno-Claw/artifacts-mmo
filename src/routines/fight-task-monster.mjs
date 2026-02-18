@@ -1,4 +1,4 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import * as log from '../log.mjs';
 import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat } from '../helpers.mjs';
 import { MONSTERS, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
@@ -8,7 +8,7 @@ import { canBeatMonster } from '../services/combat-simulator.mjs';
  * Fights whatever monster the active NPC task requires.
  * Reads the target dynamically from character state each iteration.
  */
-export class FightTaskMonsterTask extends BaseTask {
+export class FightTaskMonsterRoutine extends BaseRoutine {
   constructor({ priority = 20, maxLosses = MAX_LOSSES_DEFAULT } = {}) {
     super({ name: 'NPC Task', priority, loop: true });
     this.maxLosses = maxLosses;

@@ -1,14 +1,14 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import * as log from '../log.mjs';
 import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
 import { canBeatMonster } from '../services/combat-simulator.mjs';
 
-export class FightMonstersTask extends BaseTask {
+export class FightMonstersRoutine extends BaseRoutine {
   /**
    * @param {string} monster — key from MONSTERS table
    * @param {object} [opts]
-   * @param {number} [opts.restThreshold=30] — HP% below which to bail (let RestTask take over)
+   * @param {number} [opts.restThreshold=30] — HP% below which to bail (let RestRoutine take over)
    * @param {number} [opts.priority=10]
    */
   constructor(monster, { priority = 10 } = {}) {

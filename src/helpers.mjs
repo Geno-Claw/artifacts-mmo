@@ -139,7 +139,7 @@ export async function restBeforeFight(ctx, monsterCode) {
  * withdraws the minimum food to cover it. If the bank doesn't have enough,
  * takes what's available — restBeforeFight() handles the remainder via rest API.
  *
- * Called once at the start of a combat task, not every fight.
+ * Called once at the start of a combat routine, not every fight.
  *
  * @param {import('./context.mjs').CharacterContext} ctx
  * @param {string} monsterCode

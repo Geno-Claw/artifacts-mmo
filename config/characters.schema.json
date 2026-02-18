@@ -8,7 +8,8 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "tasks"],
+        "required": ["name", "routines"],
+        "additionalProperties": false,
         "properties": {
           "name": {
             "type": "string",
@@ -19,22 +20,22 @@
             "description": "Character skin for creation (default: men1)",
             "default": "men1"
           },
-          "tasks": {
+          "routines": {
             "type": "array",
-            "description": "Tasks in priority order (highest priority = checked first)",
+            "description": "Routines in priority order (highest priority = checked first)",
             "items": {
               "oneOf": [
-                { "$ref": "#/$defs/restTask" },
-                { "$ref": "#/$defs/depositBankTask" },
-                { "$ref": "#/$defs/skillRotationTask" },
-                { "$ref": "#/$defs/fightMonstersTask" },
-                { "$ref": "#/$defs/gatherResourceTask" },
-                { "$ref": "#/$defs/gatherMaterialsTask" },
-                { "$ref": "#/$defs/craftGearTask" },
-                { "$ref": "#/$defs/acceptNpcTaskTask" },
-                { "$ref": "#/$defs/completeNpcTaskTask" },
-                { "$ref": "#/$defs/fightTaskMonsterTask" },
-                { "$ref": "#/$defs/cancelNpcTaskTask" }
+                { "$ref": "#/$defs/restRoutine" },
+                { "$ref": "#/$defs/depositBankRoutine" },
+                { "$ref": "#/$defs/skillRotationRoutine" },
+                { "$ref": "#/$defs/fightMonstersRoutine" },
+                { "$ref": "#/$defs/gatherResourceRoutine" },
+                { "$ref": "#/$defs/gatherMaterialsRoutine" },
+                { "$ref": "#/$defs/craftGearRoutine" },
+                { "$ref": "#/$defs/acceptNpcTaskRoutine" },
+                { "$ref": "#/$defs/completeNpcTaskRoutine" },
+                { "$ref": "#/$defs/fightTaskMonsterRoutine" },
+                { "$ref": "#/$defs/cancelNpcTaskRoutine" }
               ]
             }
           }
@@ -52,7 +53,7 @@
       ]
     },
 
-    "restTask": {
+    "restRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -64,7 +65,7 @@
       }
     },
 
-    "depositBankTask": {
+    "depositBankRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -78,7 +79,7 @@
       }
     },
 
-    "skillRotationTask": {
+    "skillRotationRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -135,7 +136,7 @@
       }
     },
 
-    "fightMonstersTask": {
+    "fightMonstersRoutine": {
       "type": "object",
       "required": ["type", "monster"],
       "additionalProperties": false,
@@ -146,7 +147,7 @@
       }
     },
 
-    "gatherResourceTask": {
+    "gatherResourceRoutine": {
       "type": "object",
       "required": ["type", "resource"],
       "additionalProperties": false,
@@ -157,7 +158,7 @@
       }
     },
 
-    "gatherMaterialsTask": {
+    "gatherMaterialsRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -167,7 +168,7 @@
       }
     },
 
-    "craftGearTask": {
+    "craftGearRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -178,7 +179,7 @@
       }
     },
 
-    "acceptNpcTaskTask": {
+    "acceptNpcTaskRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -188,7 +189,7 @@
       }
     },
 
-    "completeNpcTaskTask": {
+    "completeNpcTaskRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -198,7 +199,7 @@
       }
     },
 
-    "fightTaskMonsterTask": {
+    "fightTaskMonsterRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
@@ -209,7 +210,7 @@
       }
     },
 
-    "cancelNpcTaskTask": {
+    "cancelNpcTaskRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,

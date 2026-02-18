@@ -1,9 +1,9 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import * as log from '../log.mjs';
 import { moveTo, gatherOnce, equipForGathering } from '../helpers.mjs';
 import * as gameData from '../services/game-data.mjs';
 
-export class GatherResourceTask extends BaseTask {
+export class GatherResourceRoutine extends BaseRoutine {
   /**
    * @param {string} resource — resource code from the API (e.g. "copper_rocks", "ash_tree")
    * @param {object} [opts]

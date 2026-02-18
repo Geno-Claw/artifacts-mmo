@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { readFileSync } from 'fs';
 import { Scheduler } from './scheduler.mjs';
 import { CharacterContext } from './context.mjs';
-import { buildTasks } from './tasks/factory.mjs';
+import { buildRoutines } from './routines/factory.mjs';
 import * as log from './log.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
@@ -12,6 +12,20 @@ import { createCharacter } from './api.mjs';
 const configPath = process.env.BOT_CONFIG || './config/characters.json';
 const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
+if (!Array.isArray(config.characters)) {
+  throw new Error(`Config "${configPath}" must include a top-level "characters" array`);
+}
+
+for (const [index, charCfg] of config.characters.entries()) {
+  const label = charCfg?.name ? `character "${charCfg.name}"` : `character at index ${index}`;
+  if (!Array.isArray(charCfg?.routines)) {
+    if (Object.prototype.hasOwnProperty.call(charCfg ?? {}, 'tasks')) {
+      throw new Error(`Config error for ${label}: "tasks" was removed, use "routines"`);
+    }
+    throw new Error(`Config error for ${label}: missing required "routines" array`);
+  }
+}
+
 log.info(`Bot starting — ${config.characters.length} character(s)`);
 
 await initGameData();
@@ -19,7 +33,7 @@ loadSellRules();
 
 const loops = config.characters.map(async (charCfg) => {
   const ctx = new CharacterContext(charCfg.name);
-  const tasks = buildTasks(charCfg.tasks);
+  const routines = buildRoutines(charCfg.routines);
 
   try {
     await ctx.refresh();
@@ -37,7 +51,7 @@ const loops = config.characters.map(async (charCfg) => {
   const char = ctx.get();
   log.info(`[${char.name}] Lv${char.level} | ${char.hp}/${char.max_hp} HP | ${char.gold}g | (${char.x},${char.y})`);
 
-  const scheduler = new Scheduler(ctx, tasks);
+  const scheduler = new Scheduler(ctx, routines);
   return scheduler.run();
 });
 

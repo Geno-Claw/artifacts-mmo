@@ -4,8 +4,8 @@ Geno-Claw's automated multi-character player for [Artifacts MMO](https://artifac
 
 ## Features
 
-- **Multi-character** — runs 5 characters concurrently, each with independent task configs
-- **Priority-based task scheduler** — survival > maintenance > gameplay tasks
+- **Multi-character** — runs 5 characters concurrently, each with independent routine configs
+- **Priority-based routine scheduler** — survival > maintenance > gameplay routines
 - **Skill rotation** — weighted random cycling across gathering, crafting, and combat
 - **Combat simulation** — predicts fight outcomes to pick optimal monsters and gear
 - **Gear optimizer** — simulation-driven 3-phase equipment selection (weapon → defense → accessories)

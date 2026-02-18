@@ -1,10 +1,10 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { moveTo } from '../helpers.mjs';
 import { TASKS_MASTER } from '../data/locations.mjs';
 
-export class CompleteNpcTask extends BaseTask {
+export class CompleteNpcTaskRoutine extends BaseRoutine {
   constructor({ priority = 60 } = {}) {
     super({ name: 'Complete NPC Task', priority, loop: false });
   }
@@ -25,7 +25,7 @@ export class CompleteNpcTask extends BaseTask {
   }
 }
 
-export class AcceptNpcTask extends BaseTask {
+export class AcceptNpcTaskRoutine extends BaseRoutine {
   constructor({ priority = 15 } = {}) {
     super({ name: 'Accept NPC Task', priority, loop: false });
   }

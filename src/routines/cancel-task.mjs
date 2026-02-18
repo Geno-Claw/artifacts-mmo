@@ -1,4 +1,4 @@
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { moveTo } from '../helpers.mjs';
@@ -7,10 +7,10 @@ import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 /**
  * Cancels an NPC task that's too hard (too many consecutive losses).
  * Costs 1 task coin. Optional — only add to config if cancel behavior is desired.
- * Without this task, the bot simply falls back to grinding until a level-up
+ * Without this routine, the bot simply falls back to grinding until a level-up
  * resets the loss counter and it retries.
  */
-export class CancelNpcTask extends BaseTask {
+export class CancelNpcTaskRoutine extends BaseRoutine {
   constructor({ maxLosses = MAX_LOSSES_DEFAULT, priority = 55 } = {}) {
     super({ name: 'Cancel NPC Task', priority, loop: false });
     this.maxLosses = maxLosses;

@@ -11,7 +11,7 @@ export class CharacterContext {
     this._char = null;
     this._losses = {};       // { monsterCode: count }
     this._lastLevel = null;  // for detecting level-ups
-    this.craftTarget = null;  // shared craft target for gather/craft tasks
+    this.craftTarget = null;  // shared craft target for gather/craft routines
   }
 
   async refresh() {

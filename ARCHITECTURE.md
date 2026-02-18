@@ -5,7 +5,7 @@
 The bot loads `config/characters.json`, creates a `CharacterContext` + `Scheduler` for each character, and runs them all concurrently via `Promise.all`. Each character runs an independent forever loop:
 
 ```
-refresh character state → pick highest-priority runnable task → execute it → repeat
+refresh character state → pick highest-priority runnable routine → execute it → repeat
 ```
 
 When HP drops low, Rest (priority 100) takes over. When inventory fills up, Bank (priority 50) takes over. Otherwise it runs skill rotation, NPC tasks, or direct grinding. This creates emergent behavior from simple rules.
@@ -15,7 +15,7 @@ When HP drops low, Rest (priority 100) takes over. When inventory fills up, Bank
 ```
 src/
   bot.mjs               Entry point — loads config, inits game data, starts all characters
-  scheduler.mjs          The "brain" — picks and runs tasks per character
+  scheduler.mjs          The "brain" — picks and runs routines per character
   context.mjs            CharacterContext — per-character state wrapper
   helpers.mjs            Reusable action patterns (moveTo, equipForCombat, depositAll, etc.)
   api.mjs                HTTP client for all API calls, auto-retry on cooldown
@@ -30,10 +30,10 @@ src/
     ge-seller.mjs        Grand Exchange selling flow (whitelist-only, pricing, order mgmt)
     recycler.mjs         Equipment recycling at workshops (surplus → crafting materials)
     skill-rotation.mjs   State machine for multi-skill cycling
-  tasks/
-    base.mjs             BaseTask abstract class
-    factory.mjs           buildTasks() — parses config into task instances
-    index.mjs             Re-exports all task classes
+  routines/
+    base.mjs             BaseRoutine abstract class
+    factory.mjs           buildRoutines() — parses config into routine instances
+    index.mjs             Re-exports all routine classes
     rest.mjs              Priority 100 — rest when HP low, eats food first
     deposit-bank.mjs      Priority 50  — bank when inventory full, recycle equipment, optional GE selling
     do-task.mjs           Priority 60/15 — complete/accept NPC tasks
@@ -43,7 +43,7 @@ src/
     gather-resource.mjs   Priority 10  — resource gathering (configurable target)
     skill-rotation.mjs    Priority 5   — weighted multi-skill rotation
 config/
-  characters.json         Per-character task configuration
+  characters.json         Per-character routine configuration
   sell-rules.json         Grand Exchange sell rules
   *.schema.json           JSON Schema validators
 scripts/
@@ -52,36 +52,36 @@ scripts/
 
 ## Core Concepts
 
-### Tasks
+### Routines
 
-Every task extends `BaseTask` and implements two methods:
+Every routine extends `BaseRoutine` and implements two methods:
 
 ```js
-class MyTask extends BaseTask {
+class MyRoutine extends BaseRoutine {
   canRun(ctx)           // → boolean: "can I run right now?"
-  async execute(ctx)    // → boolean (loop tasks): true = keep going, false = stop
+  async execute(ctx)    // → boolean (loop routines): true = keep going, false = stop
 }
 ```
 
-Tasks declare three properties in their constructor:
+Routines declare three properties in their constructor:
 - **name** — for logging
 - **priority** — higher number wins (Rest=100, Bank=50, Grind=10)
 - **loop** — if true, execute() is called repeatedly until it returns false or canRun() fails
 
 Optional override:
-- **`canBePreempted(ctx)`** — returns boolean (default `true`). When `false`, the scheduler skips preemption even if a higher-priority task is runnable. Used by `SkillRotationTask` to complete full goal cycles before yielding to bank/rest.
+- **`canBePreempted(ctx)`** — returns boolean (default `true`). When `false`, the scheduler skips preemption even if a higher-priority routine is runnable. Used by `SkillRotationRoutine` to complete full goal cycles before yielding to bank/rest.
 
-All tasks receive a `CharacterContext` (not a raw character object).
+All routines receive a `CharacterContext` (not a raw character object).
 
 ### Scheduler
 
-The scheduler holds a priority-sorted list of tasks. Each iteration:
+The scheduler holds a priority-sorted list of routines. Each iteration:
 
 1. Refreshes character state from the API
-2. Walks the task list top-down, calls `canRun()` on each
-3. Runs the first task that returns true
-4. For loop tasks: re-checks `canRun()` before each iteration, and checks for higher-priority preemption
-5. Preemption is gated by `task.canBePreempted(ctx)` — tasks can defer preemption until a safe break point (e.g., skill rotation only yields between goal cycles, not mid-action)
+2. Walks the routine list top-down, calls `canRun()` on each
+3. Runs the first routine that returns true
+4. For loop routines: re-checks `canRun()` before each iteration, and checks for higher-priority preemption
+5. Preemption is gated by `routine.canBePreempted(ctx)` — routines can defer preemption until a safe break point (e.g., skill rotation only yields between goal cycles, not mid-action)
 
 ### CharacterContext
 
@@ -171,7 +171,7 @@ Bank contents are fetched via paginated API (100 items/page) and cached with a 6
 - **Local-then-assign**: The map is built in a local variable and assigned to the cache only when complete, so concurrent readers never see a partially-built map.
 
 ### Skill Rotation (`services/skill-rotation.mjs`)
-State machine for `SkillRotationTask`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
+State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
 
 ## Configuration
 
@@ -182,7 +182,7 @@ State machine for `SkillRotationTask`. Tracks current skill, goal progress, and 
   "characters": [
     {
       "name": "GenoClaw",
-      "tasks": [
+      "routines": [
         { "type": "rest", "triggerPct": 40, "targetPct": 80 },
         { "type": "depositBank", "threshold": 0.8, "recycleEquipment": true, "sellOnGE": true },
         { "type": "completeNpcTask" },
@@ -195,7 +195,7 @@ State machine for `SkillRotationTask`. Tracks current skill, goal progress, and 
 }
 ```
 
-Task types: `rest`, `depositBank`, `completeNpcTask`, `acceptNpcTask`, `cancelNpcTask`, `fightMonsters`, `fightTaskMonster`, `gatherResource`, `skillRotation`.
+Routine types: `rest`, `depositBank`, `completeNpcTask`, `acceptNpcTask`, `cancelNpcTask`, `fightMonsters`, `fightTaskMonster`, `gatherResource`, `skillRotation`.
 
 ### `config/sell-rules.json`
 
@@ -232,16 +232,16 @@ Static scoring via weighted sum of item effects (`data/scoring-weights.mjs`):
 
 The gear optimizer uses combat simulation instead of static scores for actual equipment decisions.
 
-## Adding a New Task
+## Adding a New Routine
 
-1. Create `src/tasks/my-task.mjs`:
+1. Create `src/routines/my-routine.mjs`:
 
 ```js
-import { BaseTask } from './base.mjs';
+import { BaseRoutine } from './base.mjs';
 
-export class MyTask extends BaseTask {
+export class MyRoutine extends BaseRoutine {
   constructor() {
-    super({ name: 'My Task', priority: 20, loop: false });
+    super({ name: 'My Routine', priority: 20, loop: false });
   }
 
   canRun(ctx) {
@@ -254,9 +254,9 @@ export class MyTask extends BaseTask {
 }
 ```
 
-2. Add it to `buildTasks()` in `src/tasks/factory.mjs` with a config type mapping.
+2. Add it to `buildRoutines()` in `src/routines/factory.mjs` with a config type mapping.
 
-3. Add the task config to `config/characters.json` for the desired characters.
+3. Add the routine config to `config/characters.json` for the desired characters.
 
 ## Running
 
