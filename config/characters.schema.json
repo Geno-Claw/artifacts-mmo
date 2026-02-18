@@ -69,9 +69,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": true, "description": "Enable combat utility potion prep" },
-        "refillBelow": { "type": "number", "minimum": 0, "default": 5, "description": "Refill a utility slot when quantity drops below this value" },
-        "targetQuantity": { "type": "number", "minimum": 1, "maximum": 100, "default": 20, "description": "Target utility quantity per equipped potion slot" },
+        "enabled": { "type": "boolean", "default": false, "description": "Enable combat utility potion prep" },
+        "refillBelow": { "type": "number", "minimum": 0, "default": 2, "description": "Refill a utility slot when quantity drops below this value" },
+        "targetQuantity": { "type": "number", "minimum": 1, "maximum": 100, "default": 5, "description": "Target utility quantity per equipped potion slot" },
         "poisonBias": { "type": "boolean", "default": true, "description": "Prefer antidotes against poison monsters when scores are close" },
         "respectNonPotionUtility": { "type": "boolean", "default": true, "description": "Avoid replacing non-potion utility items automatically" }
       }
@@ -81,11 +81,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": true, "description": "Enable smart travel potion usage for bank trips" },
+        "enabled": { "type": "boolean", "default": false, "description": "Enable smart travel potion usage for bank trips" },
         "mode": { "type": "string", "enum": ["smart"], "default": "smart", "description": "Travel potion strategy mode" },
         "allowRecall": { "type": "boolean", "default": true, "description": "Allow recall_potion as a travel option" },
         "allowForestBank": { "type": "boolean", "default": true, "description": "Allow forest_bank_potion as a travel option" },
-        "minSavingsSeconds": { "type": "number", "minimum": 0, "default": 10, "description": "Minimum modeled seconds saved before using a potion" },
+        "minSavingsSeconds": { "type": "number", "minimum": 0, "default": 60, "description": "Minimum modeled seconds saved before using a potion" },
         "includeReturnToOrigin": { "type": "boolean", "default": true, "description": "Include return-to-origin movement in travel optimization model" },
         "moveSecondsPerTile": { "type": "number", "minimum": 0, "default": 5, "description": "Estimated move cooldown seconds per tile" },
         "itemUseSeconds": { "type": "number", "minimum": 0, "default": 3, "description": "Estimated cooldown seconds for using a travel potion" }

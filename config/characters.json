@@ -52,7 +52,29 @@
           "craftBlacklist": {},
           "taskCollection": {}
         }
-      ]
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
     },
     {
       "name": "GenoClaw2",
@@ -105,7 +127,29 @@
           "craftBlacklist": {},
           "taskCollection": {}
         }
-      ]
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
     },
     {
       "name": "GenoClaw3",
@@ -156,7 +200,29 @@
           },
           "craftBlacklist": {}
         }
-      ]
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
     },
     {
       "name": "GenoClaw4",
@@ -207,7 +273,29 @@
           },
           "craftBlacklist": {}
         }
-      ]
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
     },
     {
       "name": "GenoClaw5",
@@ -258,7 +346,29 @@
           },
           "craftBlacklist": {}
         }
-      ]
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
     }
   ]
 }

@@ -10,18 +10,18 @@ const DEFAULT_SETTINGS = Object.freeze({
   potions: {
     enabled: true,
     combat: {
-      enabled: true,
-      refillBelow: 5,
-      targetQuantity: 20,
+      enabled: false,
+      refillBelow: 2,
+      targetQuantity: 5,
       poisonBias: true,
       respectNonPotionUtility: true,
     },
     bankTravel: {
-      enabled: true,
+      enabled: false,
       mode: 'smart',
       allowRecall: true,
       allowForestBank: true,
-      minSavingsSeconds: 10,
+      minSavingsSeconds: 60,
       includeReturnToOrigin: true,
       moveSecondsPerTile: 5,
       itemUseSeconds: 3,
