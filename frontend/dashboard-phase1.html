@@ -1163,7 +1163,8 @@ function applySnapshot(snapshot) {
 }
 
 async function loadInitialSnapshot() {
-  const res = await fetch('/api/ui/snapshot', { cache: 'no-store' });
+  const base = window.__BASE_PATH__ || '';
+  const res = await fetch(`${base}/api/ui/snapshot`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`snapshot HTTP ${res.status}`);
   const snapshot = await res.json();
   applySnapshot(snapshot);
@@ -1171,7 +1172,8 @@ async function loadInitialSnapshot() {
 
 function connectLiveEvents() {
   if (eventSource) eventSource.close();
-  eventSource = new EventSource('/api/ui/events');
+  const evtBase = window.__BASE_PATH__ || '';
+  eventSource = new EventSource(`${evtBase}/api/ui/events`);
 
   eventSource.addEventListener('snapshot', (event) => {
     try {

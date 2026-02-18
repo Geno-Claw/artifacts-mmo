@@ -32,6 +32,7 @@ function sendEvent(res, event, payload) {
 export async function startDashboardServer({
   host = process.env.DASHBOARD_HOST || '0.0.0.0',
   port = process.env.DASHBOARD_PORT || 8091,
+  basePath = process.env.DASHBOARD_BASE_PATH || '',
   rootDir = process.cwd(),
   htmlFile = 'frontend/dashboard-phase1.html',
   heartbeatMs = 15_000,
@@ -86,15 +87,23 @@ export async function startDashboardServer({
   const server = createServer((req, res) => {
     const method = req.method || 'GET';
     const url = new URL(req.url || '/', 'http://localhost');
+    // Strip basePath prefix so routes work behind a reverse proxy (e.g. /artifacts)
+    const prefix = basePath.replace(/\/+$/, '');
+    let pathname = url.pathname;
+    if (prefix && pathname.startsWith(prefix)) {
+      pathname = pathname.slice(prefix.length) || '/';
+    }
 
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'method_not_allowed' });
       return;
     }
 
-    if (url.pathname === '/') {
+    if (pathname === '/') {
       try {
-        const html = readFileSync(htmlPath, 'utf-8');
+        let html = readFileSync(htmlPath, 'utf-8');
+        // Inject basePath so frontend API calls use the correct prefix
+        html = html.replace('</head>', `<script>window.__BASE_PATH__ = ${JSON.stringify(prefix)};</script>\n</head>`);
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -106,12 +115,12 @@ export async function startDashboardServer({
       return;
     }
 
-    if (url.pathname === '/api/ui/snapshot') {
+    if (pathname === '/api/ui/snapshot') {
       sendJson(res, 200, getUiSnapshot());
       return;
     }
 
-    if (url.pathname === '/api/ui/events') {
+    if (pathname === '/api/ui/events') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -131,7 +140,7 @@ export async function startDashboardServer({
       return;
     }
 
-    if (url.pathname === '/healthz') {
+    if (pathname === '/healthz') {
       sendJson(res, 200, { ok: true, serverTimeMs: Date.now() });
       return;
     }
