@@ -18,7 +18,7 @@
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 1,
+            "mining": 0,
             "woodcutting": 0,
             "fishing": 0,
             "cooking": 0,
