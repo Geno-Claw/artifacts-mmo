@@ -373,6 +373,22 @@ export function resolveRecipeChain(recipe) {
   return resolve(recipe.items) ? steps : null;
 }
 
+/**
+ * Check if a character can fulfill all gather steps of a resolved recipe chain.
+ * @param {Array} planSteps - from resolveRecipeChain()
+ * @param {CharacterContext} ctx
+ * @returns {boolean}
+ */
+export function canFulfillPlan(planSteps, ctx) {
+  for (const step of planSteps) {
+    if (step.type === 'gather' && step.resource) {
+      const charLevel = ctx.skillLevel(step.resource.skill);
+      if (charLevel < step.resource.level) return false;
+    }
+  }
+  return true;
+}
+
 // --- Resource / Monster queries ---
 
 /** Find all resources matching a gathering skill, up to a max level. Sorted highest-level first. */

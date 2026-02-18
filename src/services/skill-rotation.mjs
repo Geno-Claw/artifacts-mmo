@@ -215,6 +215,7 @@ export class SkillRotation {
     for (const item of missing) {
       const plan = gameData.resolveRecipeChain(item.craft);
       if (!plan || plan.length === 0) continue;
+      if (!gameData.canFulfillPlan(plan, ctx)) continue;
 
       // Skip if any bank-only dependency can't be met
       const bankSteps = plan.filter(s => s.type === 'bank');
@@ -258,6 +259,7 @@ export class SkillRotation {
 
       const plan = gameData.resolveRecipeChain(recipe.craft);
       if (!plan || plan.length === 0) continue;
+      if (!gameData.canFulfillPlan(plan, ctx)) continue;
 
       // Skip recipes with unmet bank-only dependencies
       const bankSteps = plan.filter(s => s.type === 'bank');

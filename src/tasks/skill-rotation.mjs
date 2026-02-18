@@ -75,6 +75,16 @@ export class SkillRotationTask extends BaseTask {
       return true;
     }
 
+    // Safety: verify we can actually gather this resource
+    {
+      const res = this.rotation.resource;
+      if (res && res.level > ctx.skillLevel(res.skill)) {
+        log.warn(`[${ctx.name}] ${res.code}: skill too low (need ${res.skill} lv${res.level}, have lv${ctx.skillLevel(res.skill)}), rotating`);
+        await this.rotation.forceRotate(ctx);
+        return true;
+      }
+    }
+
     // Smelt/process raw materials before gathering more
     const smelted = await this._trySmelting(ctx);
     if (smelted) return !ctx.inventoryFull();
