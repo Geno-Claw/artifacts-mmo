@@ -70,7 +70,7 @@
           "type": "skillRotation",
           "weights": {
             "mining": 0,
-            "woodcutting": 1,
+            "woodcutting": 0,
             "fishing": 0,
             "cooking": 0,
             "alchemy": 0,
@@ -78,7 +78,8 @@
             "gearcrafting": 0,
             "jewelrycrafting": 1,
             "combat": 1,
-            "npc_task": 1
+            "npc_task": 1,
+            "item_task": 1
           },
           "goals": {
             "mining": 20,
@@ -90,7 +91,8 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 25,
-            "npc_task": 1
+            "npc_task": 1,
+            "item_task": 1
           },
           "craftCollection": {
             "gearcrafting": true,
@@ -129,7 +131,8 @@
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 1,
-            "npc_task": 1
+            "npc_task": 1,
+            "item_task":
           },
           "goals": {
             "mining": 20,
@@ -179,7 +182,8 @@
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 0,
-            "npc_task": 0
+            "npc_task": 0,
+            "item_task": 0
           },
           "goals": {
             "mining": 20,
@@ -229,7 +233,8 @@
             "gearcrafting": 1,
             "jewelrycrafting": 0,
             "combat": 0,
-            "npc_task": 0
+            "npc_task": 0,
+            "item_task": 0
           },
           "goals": {
             "mining": 50,
