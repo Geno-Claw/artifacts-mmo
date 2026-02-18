@@ -48,7 +48,7 @@
       "enum": [
         "mining", "woodcutting", "fishing",
         "cooking", "alchemy", "weaponcrafting", "gearcrafting", "jewelrycrafting",
-        "combat", "npc_task"
+        "combat", "npc_task", "item_task"
       ]
     },
 

@@ -357,6 +357,54 @@ export class SkillRotationTask extends BaseTask {
   // --- NPC Tasks ---
 
   async _executeNpcTask(ctx) {
+    return this._executeTaskByType(ctx, 'monsters');
+  }
+
+  async _executeItemTask(ctx) {
+    return this._executeTaskByType(ctx, 'items');
+  }
+
+  async _executeTaskByType(ctx, preferredType) {
+    if (!ctx.hasTask()) {
+      if (preferredType === 'monsters') return this._runNpcTaskFlow(ctx);
+      return this._runItemTaskFlow(ctx);
+    }
+
+    const c = ctx.get();
+    let activeType = c.task_type;
+
+    if (activeType !== 'monsters' && activeType !== 'items') {
+      activeType = this._inferTaskType(c.task);
+      if (activeType) {
+        log.warn(`[${ctx.name}] Rotation: task_type "${c.task_type || 'missing'}" for ${c.task}, inferred ${activeType}`);
+      }
+    }
+
+    if (!activeType) {
+      log.warn(`[${ctx.name}] Rotation: unknown task_type "${c.task_type || 'missing'}" for ${c.task}, force-rotating`);
+      this.rotation.goalProgress = this.rotation.goalTarget;
+      return true;
+    }
+
+    if (activeType !== preferredType) {
+      const selectedSkill = preferredType === 'monsters' ? 'npc_task' : 'item_task';
+      const existingType = activeType === 'monsters' ? 'monster' : 'item';
+      log.info(`[${ctx.name}] Rotation: ${selectedSkill} selected, continuing existing ${existingType} task (${c.task} ${c.task_progress}/${c.task_total})`);
+    }
+
+    if (activeType === 'monsters') return this._runNpcTaskFlow(ctx);
+    return this._runItemTaskFlow(ctx);
+  }
+
+  _inferTaskType(taskCode) {
+    const isMonsterTask = !!gameData.getMonster(taskCode);
+    const isItemTask = !!gameData.getItem(taskCode);
+    if (isMonsterTask && !isItemTask) return 'monsters';
+    if (isItemTask && !isMonsterTask) return 'items';
+    return null;
+  }
+
+  async _runNpcTaskFlow(ctx) {
     // Accept a task if we don't have one
     if (!ctx.hasTask()) {
       await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
@@ -442,7 +490,7 @@ export class SkillRotationTask extends BaseTask {
 
   // --- Item Tasks ---
 
-  async _executeItemTask(ctx) {
+  async _runItemTaskFlow(ctx) {
     const ITEMS_MASTER = TASKS_MASTER.items;
 
     // 1. Accept a task if we don't have one

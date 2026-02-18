@@ -9,7 +9,8 @@ import { initialize as initGameData } from './services/game-data.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
 import { createCharacter } from './api.mjs';
 
-const config = JSON.parse(readFileSync('./config/characters.json', 'utf-8'));
+const configPath = process.env.BOT_CONFIG || './config/characters.json';
+const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
 log.info(`Bot starting — ${config.characters.length} character(s)`);
 
