@@ -7,9 +7,11 @@ import { readFileSync } from 'fs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { withdrawBankItems } from './bank-ops.mjs';
+import {
+  withdrawBankItems,
+  withdrawGoldFromBank,
+} from './bank-ops.mjs';
 import { moveTo } from '../helpers.mjs';
-import { BANK } from '../data/locations.mjs';
 
 let sellRules = null;
 
@@ -201,7 +203,6 @@ export async function executeSellFlow(ctx) {
     log.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity} (${c.reason})`).join(', ')}`);
 
     // Step 1: Withdraw sell candidates from bank (must be at bank)
-    await moveTo(ctx, BANK.x, BANK.y);
     const withdrawResult = await withdrawBankItems(
       ctx,
       candidates.map(c => ({ code: c.code, quantity: c.quantity })),
@@ -236,9 +237,7 @@ export async function executeSellFlow(ctx) {
       const needed = totalFees - charGold;
       try {
         log.info(`[${ctx.name}] GE: withdrawing ${needed}g from bank for listing fees`);
-        const result = await api.withdrawGold(needed, ctx.name);
-        await api.waitForCooldown(result);
-        await ctx.refresh();
+        await withdrawGoldFromBank(ctx, needed, { reason: 'GE listing fees withdrawal' });
       } catch (err) {
         log.warn(`[${ctx.name}] GE: could not withdraw gold for fees: ${err.message}`);
       }

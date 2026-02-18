@@ -1,10 +1,11 @@
 /**
- * Bank item withdrawal operations.
- * Centralizes reservation-aware withdraw logic so all flows share
- * the same contention handling and cache invalidation behavior.
+ * Bank operations.
+ * Centralizes reservation-aware bank item flows and keeps all bank actions
+ * behind one location-guarded service.
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
+import { BANK } from '../data/locations.mjs';
 import {
   applyBankDelta,
   availableBankCount,
@@ -21,6 +22,21 @@ let _forcedBatchReserveFailures = 0;
 function toPositiveInt(value) {
   const n = Number(value) || 0;
   return Number.isFinite(n) ? Math.floor(n) : 0;
+}
+
+function normalizeItemRows(items = []) {
+  const totals = new Map();
+  const order = [];
+
+  for (const row of items) {
+    const code = row?.code;
+    const qty = toPositiveInt(row?.qty ?? row?.quantity);
+    if (!code || qty <= 0) continue;
+    if (!totals.has(code)) order.push(code);
+    totals.set(code, (totals.get(code) || 0) + qty);
+  }
+
+  return order.map(code => ({ code, quantity: totals.get(code) }));
 }
 
 function normalizeRequests(requests = []) {
@@ -97,6 +113,7 @@ function buildPlan(ctx, normalized, mode) {
 export function isBankAvailabilityError(err) {
   if (!err) return false;
   const msg = String(err.message || '').toLowerCase();
+  if (isBankLocationError(err)) return false;
   return (
     msg.includes('not enough') ||
     msg.includes('insufficient') ||
@@ -106,12 +123,51 @@ export function isBankAvailabilityError(err) {
   );
 }
 
+export function isBankLocationError(err) {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return msg.includes('bank not found on this map');
+}
+
 function tryReserveMany(requests, charName) {
   if (_forcedBatchReserveFailures > 0) {
     _forcedBatchReserveFailures -= 1;
     return { ok: false, reservations: [], reason: 'forced reserveMany failure (test)' };
   }
   return reserveMany(requests, charName);
+}
+
+function isAtBank(ctx) {
+  if (!ctx) return false;
+  if (typeof ctx.isAt === 'function') {
+    return ctx.isAt(BANK.x, BANK.y);
+  }
+  if (typeof ctx.get === 'function') {
+    try {
+      const c = ctx.get();
+      return c?.x === BANK.x && c?.y === BANK.y;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function ensureAtBank(ctx) {
+  if (isAtBank(ctx)) return;
+  if (typeof ctx.get === 'function') {
+    try {
+      const c = ctx.get();
+      log.info(`[${ctx.name}] Moving (${c.x},${c.y}) → (${BANK.x},${BANK.y})`);
+    } catch {
+      log.info(`[${ctx.name}] Moving to bank (${BANK.x},${BANK.y})`);
+    }
+  } else {
+    log.info(`[${ctx.name}] Moving to bank (${BANK.x},${BANK.y})`);
+  }
+  const action = await _api.move(BANK.x, BANK.y, ctx.name);
+  await _api.waitForCooldown(action);
+  await ctx.refresh();
 }
 
 async function executeReservedWithdraw(ctx, req, reservationId, reason, result) {
@@ -210,6 +266,7 @@ export async function withdrawBankItems(ctx, requests, opts = {}) {
 
   const normalized = normalizeRequests(requests);
   if (normalized.length === 0) return result;
+  await ensureAtBank(ctx);
 
   let { plan, skipped } = buildPlan(ctx, normalized, mode);
   result.skipped.push(...skipped);
@@ -262,6 +319,73 @@ export async function withdrawBankItems(ctx, requests, opts = {}) {
   }
 
   return result;
+}
+
+/**
+ * Deposit specific items to bank.
+ * Returns normalized deposited rows.
+ */
+export async function depositBankItems(ctx, items, opts = {}) {
+  const reason = opts.reason || 'bank-ops deposit';
+  const normalized = normalizeItemRows(items);
+  if (normalized.length === 0) return [];
+
+  await ensureAtBank(ctx);
+  try {
+    const action = await _api.depositBank(normalized, ctx.name);
+    await _api.waitForCooldown(action);
+    applyBankDelta(normalized, 'deposit', {
+      charName: ctx.name,
+      reason,
+    });
+    await ctx.refresh();
+    return normalized;
+  } catch (err) {
+    invalidateBank(`[${ctx.name}] deposit failed: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * Deposit all carried inventory items to bank.
+ * Returns normalized deposited rows.
+ */
+export async function depositAllInventory(ctx, opts = {}) {
+  const items = ctx.get().inventory
+    .filter(slot => slot.code)
+    .map(slot => ({ code: slot.code, quantity: slot.quantity }));
+  if (items.length === 0) return [];
+
+  log.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`);
+  return depositBankItems(ctx, items, {
+    reason: opts.reason || 'bank-ops depositAllInventory',
+  });
+}
+
+/**
+ * Withdraw gold from bank.
+ */
+export async function withdrawGoldFromBank(ctx, quantity, _opts = {}) {
+  const qty = toPositiveInt(quantity);
+  if (qty <= 0) return null;
+  await ensureAtBank(ctx);
+  const action = await _api.withdrawGold(qty, ctx.name);
+  await _api.waitForCooldown(action);
+  await ctx.refresh();
+  return action;
+}
+
+/**
+ * Deposit gold to bank.
+ */
+export async function depositGoldToBank(ctx, quantity, _opts = {}) {
+  const qty = toPositiveInt(quantity);
+  if (qty <= 0) return null;
+  await ensureAtBank(ctx);
+  const action = await _api.depositGold(qty, ctx.name);
+  await _api.waitForCooldown(action);
+  await ctx.refresh();
+  return action;
 }
 
 // Test helpers.

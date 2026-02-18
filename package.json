@@ -8,7 +8,8 @@
     "dev": "BOT_CONFIG=./config/characters-local.json node src/bot.mjs",
     "status": "node src/status.mjs",
     "test:inventory-manager": "node scripts/test-inventory-manager.mjs",
-    "test:bank-ops": "node scripts/test-bank-ops.mjs"
+    "test:bank-ops": "node scripts/test-bank-ops.mjs",
+    "test:no-direct-bank-api": "node scripts/test-no-direct-bank-api.mjs"
   },
   "engines": {
     "node": ">=20"

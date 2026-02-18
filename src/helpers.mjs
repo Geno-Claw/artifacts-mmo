@@ -11,10 +11,8 @@ import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
 import { hpNeededForFight, simulateCombat } from './services/combat-simulator.mjs';
 import { optimizeForMonster, optimizeForGathering } from './services/gear-optimizer.mjs';
 import {
-  applyBankDelta,
-  invalidateBank,
-} from './services/inventory-manager.mjs';
-import {
+  depositAllInventory,
+  depositBankItems,
   withdrawBankItem,
   withdrawBankItems,
 } from './services/bank-ops.mjs';
@@ -448,7 +446,6 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
 
 /** Move to bank and withdraw a specific item. */
 export async function withdrawItem(ctx, code, quantity = 1, opts = {}) {
-  await moveTo(ctx, BANK.x, BANK.y);
   return withdrawBankItem(ctx, code, quantity, {
     reason: opts.reason || 'helper withdrawItem',
     mode: 'partial',
@@ -459,21 +456,7 @@ export async function withdrawItem(ctx, code, quantity = 1, opts = {}) {
 
 /** Move to bank and deposit all inventory items. */
 export async function depositAll(ctx) {
-  await moveTo(ctx, BANK.x, BANK.y);
-  const items = ctx.get().inventory
-    .filter(slot => slot.code)
-    .map(slot => ({ code: slot.code, quantity: slot.quantity }));
-  if (items.length === 0) return;
-  log.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`);
-  try {
-    const result = await api.depositBank(items, ctx.name);
-    await api.waitForCooldown(result);
-    applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'helper depositAll' });
-    await ctx.refresh();
-  } catch (err) {
-    invalidateBank(`[${ctx.name}] depositAll failed: ${err.message}`);
-    throw err;
-  }
+  await depositAllInventory(ctx, { reason: 'helper depositAll' });
 }
 
 // --- Combat gear optimization ---
@@ -605,15 +588,10 @@ export async function equipForCombat(ctx, monsterCode) {
       .filter(code => ctx.hasItem(code));
 
     if (unequippedCodes.length > 0) {
-      await moveTo(ctx, BANK.x, BANK.y);
       const items = unequippedCodes.map(code => ({ code, quantity: ctx.itemCount(code) }));
       try {
-        const dr = await api.depositBank(items, ctx.name);
-        await api.waitForCooldown(dr);
-        applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'combat gear cleanup deposit' });
-        await ctx.refresh();
+        await depositBankItems(ctx, items, { reason: 'combat gear cleanup deposit' });
       } catch (err) {
-        invalidateBank(`[${ctx.name}] combat cleanup deposit failed: ${err.message}`);
         log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
       }
     }
@@ -763,15 +741,10 @@ export async function equipForGathering(ctx, skill) {
       .filter(code => ctx.hasItem(code));
 
     if (unequippedCodes.length > 0) {
-      await moveTo(ctx, BANK.x, BANK.y);
       const items = unequippedCodes.map(code => ({ code, quantity: ctx.itemCount(code) }));
       try {
-        const dr = await api.depositBank(items, ctx.name);
-        await api.waitForCooldown(dr);
-        applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'gathering gear cleanup deposit' });
-        await ctx.refresh();
+        await depositBankItems(ctx, items, { reason: 'gathering gear cleanup deposit' });
       } catch (err) {
-        invalidateBank(`[${ctx.name}] gathering cleanup deposit failed: ${err.message}`);
         log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
       }
     }

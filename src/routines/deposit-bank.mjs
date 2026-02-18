@@ -1,11 +1,12 @@
 import { BaseRoutine } from './base.mjs';
-import { depositAll, moveTo } from '../helpers.mjs';
-import { BANK } from '../data/locations.mjs';
-import * as api from '../api.mjs';
+import { depositAll } from '../helpers.mjs';
 import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
 import * as recycler from '../services/recycler.mjs';
-import { applyBankDelta, invalidateBank } from '../services/inventory-manager.mjs';
+import {
+  depositBankItems,
+  depositGoldToBank,
+} from '../services/bank-ops.mjs';
 
 export class DepositBankRoutine extends BaseRoutine {
   constructor({
@@ -60,19 +61,11 @@ export class DepositBankRoutine extends BaseRoutine {
     // Re-deposit any leftover inventory (failed recycles, etc.)
     const leftover = ctx.get().inventory.filter(s => s.code);
     if (leftover.length > 0) {
-      await moveTo(ctx, BANK.x, BANK.y);
       log.info(`[${ctx.name}] Re-depositing ${leftover.length} unrecycled item(s)`);
       try {
         const items = leftover.map(s => ({ code: s.code, quantity: s.quantity }));
-        const result = await api.depositBank(
-          items,
-          ctx.name,
-        );
-        await api.waitForCooldown(result);
-        applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'deposit routine recycle cleanup' });
-        await ctx.refresh();
+        await depositBankItems(ctx, items, { reason: 'deposit routine recycle cleanup' });
       } catch (err) {
-        invalidateBank(`[${ctx.name}] recycle cleanup deposit failed: ${err.message}`);
         log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
       }
     }
@@ -82,12 +75,9 @@ export class DepositBankRoutine extends BaseRoutine {
     const gold = ctx.get().gold;
     if (gold <= 0) return;
 
-    await moveTo(ctx, BANK.x, BANK.y);
     log.info(`[${ctx.name}] Depositing ${gold}g to bank`);
     try {
-      const result = await api.depositGold(gold, ctx.name);
-      await api.waitForCooldown(result);
-      await ctx.refresh();
+      await depositGoldToBank(ctx, gold, { reason: 'deposit routine _depositGold' });
     } catch (err) {
       log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
     }
@@ -95,7 +85,6 @@ export class DepositBankRoutine extends BaseRoutine {
 
   async _sellOnGE(ctx) {
     try {
-      await moveTo(ctx, BANK.x, BANK.y);
       await geSeller.executeSellFlow(ctx);
     } catch (err) {
       log.error(`[${ctx.name}] GE sell flow error: ${err.message}`);
@@ -104,31 +93,20 @@ export class DepositBankRoutine extends BaseRoutine {
     // Always re-deposit any leftover inventory items + gold
     const leftover = ctx.get().inventory.filter(s => s.code);
     if (leftover.length > 0) {
-      await moveTo(ctx, BANK.x, BANK.y);
       log.info(`[${ctx.name}] Re-depositing ${leftover.length} unsold item(s)`);
       try {
         const items = leftover.map(s => ({ code: s.code, quantity: s.quantity }));
-        const result = await api.depositBank(
-          items,
-          ctx.name,
-        );
-        await api.waitForCooldown(result);
-        applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'deposit routine GE cleanup' });
-        await ctx.refresh();
+        await depositBankItems(ctx, items, { reason: 'deposit routine GE cleanup' });
       } catch (err) {
-        invalidateBank(`[${ctx.name}] GE cleanup deposit failed: ${err.message}`);
         log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
       }
     }
 
     const gold = ctx.get().gold;
     if (gold > 0) {
-      await moveTo(ctx, BANK.x, BANK.y);
       log.info(`[${ctx.name}] Depositing ${gold}g from GE collections`);
       try {
-        const result = await api.depositGold(gold, ctx.name);
-        await api.waitForCooldown(result);
-        await ctx.refresh();
+        await depositGoldToBank(ctx, gold, { reason: 'deposit routine GE cleanup gold' });
       } catch (err) {
         log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
       }

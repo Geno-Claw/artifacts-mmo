@@ -6,11 +6,13 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { applyBankDelta, bankCount, globalCount, invalidateBank } from './inventory-manager.mjs';
-import { withdrawBankItems } from './bank-ops.mjs';
+import { bankCount, globalCount } from './inventory-manager.mjs';
+import {
+  depositBankItems,
+  withdrawBankItems,
+} from './bank-ops.mjs';
 import { getSellRules } from './ge-seller.mjs';
 import { moveTo } from '../helpers.mjs';
-import { BANK } from '../data/locations.mjs';
 
 // --- Analysis ---
 
@@ -109,7 +111,6 @@ async function _recycleGroup(ctx, skill, workshop, items) {
   let recycled = 0;
 
   // Step 1: Withdraw items from bank
-  await moveTo(ctx, BANK.x, BANK.y);
   const withdrawResult = await withdrawBankItems(
     ctx,
     items.map(candidate => ({ code: candidate.code, quantity: candidate.quantity })),
@@ -176,15 +177,10 @@ async function _depositInventory(ctx) {
     .map(slot => ({ code: slot.code, quantity: slot.quantity }));
   if (items.length === 0) return;
 
-  await moveTo(ctx, BANK.x, BANK.y);
   log.info(`[${ctx.name}] Recycle: depositing ${items.length} item(s) to bank`);
   try {
-    const result = await api.depositBank(items, ctx.name);
-    await api.waitForCooldown(result);
-    applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'recycler deposit' });
-    await ctx.refresh();
+    await depositBankItems(ctx, items, { reason: 'recycler deposit' });
   } catch (err) {
-    invalidateBank(`[${ctx.name}] recycler deposit failed: ${err.message}`);
     log.warn(`[${ctx.name}] Recycle: could not deposit items: ${err.message}`);
   }
 }
