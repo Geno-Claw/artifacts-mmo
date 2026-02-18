@@ -7,14 +7,20 @@ const manager = await import('../src/services/inventory-manager.mjs');
 const {
   _resetForTests,
   _setApiClientForTests,
+  availableBankCount,
   applyBankDelta,
   bankCount,
+  cleanupExpiredReservations,
   equippedCount,
   getBankItems,
   globalCount,
   initialize,
   invalidateBank,
   inventoryCount,
+  release,
+  releaseAllForChar,
+  reserve,
+  reserveMany,
   updateCharacter,
 } = manager;
 
@@ -66,6 +72,46 @@ async function run() {
   assert.equal(inventoryCount('wooden_shield'), 3, 'inventory shield total from startup');
   assert.equal(equippedCount('wooden_shield'), 2, 'equipped shield total from startup');
   assert.equal(globalCount('wooden_shield'), 13, 'global shield total from startup');
+
+  // Reservation accounting: available should exclude reservations from other chars.
+  const r1 = reserve('wooden_shield', 2, 'A', 200);
+  assert.ok(r1, 'single reservation created');
+  assert.equal(availableBankCount('wooden_shield'), 6, 'global available excludes reservation');
+  assert.equal(availableBankCount('wooden_shield', { includeChar: 'A' }), 8, 'includeChar ignores own reservations');
+  const r2 = reserve('wooden_shield', 7, 'B', 200);
+  assert.equal(r2, null, 'reservation rejected when insufficient');
+  release(r1);
+  assert.equal(availableBankCount('wooden_shield'), 8, 'release restores availability');
+
+  // Atomic multi-reserve.
+  const batchOk = reserveMany(
+    [{ code: 'wooden_shield', qty: 3 }, { code: 'copper_ring', qty: 1 }],
+    'A',
+    200,
+  );
+  assert.equal(batchOk.ok, true, 'reserveMany succeeds when all items available');
+  assert.equal(batchOk.reservations.length, 2, 'reserveMany returns one reservation per code');
+
+  const batchFail = reserveMany(
+    [{ code: 'wooden_shield', qty: 100 }, { code: 'copper_ring', qty: 1 }],
+    'B',
+    200,
+  );
+  assert.equal(batchFail.ok, false, 'reserveMany fails atomically when one code is short');
+  assert.equal(batchFail.reservations.length, 0, 'failed reserveMany creates no reservations');
+
+  releaseAllForChar('A');
+  assert.equal(availableBankCount('wooden_shield'), 8, 'bulk release clears reservations');
+  assert.equal(availableBankCount('copper_ring'), 2, 'bulk release clears all reserved codes');
+
+  // Reservation expiry cleanup.
+  const expiring = reserve('copper_ring', 1, 'A', 10);
+  assert.ok(expiring, 'expiring reservation created');
+  assert.equal(availableBankCount('copper_ring'), 1, 'availability reduced before expiry');
+  await new Promise(r => setTimeout(r, 25));
+  const removed = cleanupExpiredReservations();
+  assert.ok(removed >= 1, 'expired reservation removed');
+  assert.equal(availableBankCount('copper_ring'), 2, 'availability restored after expiry');
 
   // Character map rebuild should replace old values, not merge.
   updateCharacter('A', makeChar('A', {

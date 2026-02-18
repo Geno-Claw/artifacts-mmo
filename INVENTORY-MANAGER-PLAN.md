@@ -1,160 +1,109 @@
-# Inventory Manager — Global State Tracking
+# Inventory Manager Plan (Phase 1 + Phase 2)
 
-## Problem
+## Objective
 
-Characters operate in isolation. Each only knows its own inventory + a cached snapshot of the bank. Nobody tracks what other characters have equipped or in their inventories.
+Use `InventoryManager` as the single source of truth for:
 
-**Consequences:**
-- Recycler thinks bank has surplus equipment, doesn't account for items equipped on other chars (the shield bug — recycled 3, left 5 in bank + 4 on chars = 9 total instead of 5)
-- Gear optimizer can't tell if another char is using an item
-- Race conditions on bank withdrawals — two chars can try to withdraw the same item
-- Craft planning blind to materials held by other chars
+- Bank quantities
+- Per-character inventory/equipment state
+- Concurrent bank access safety (reservations)
 
-## Solution
+This prevents stale-bank races, recycler over-recycle behavior, and gear swap conflicts.
 
-A singleton `InventoryManager` that tracks every item across bank + all character inventories + all character equipment. Updated in real-time as actions happen, zero extra API calls.
+## Phase 1 (Completed)
 
-## Architecture
+### Delivered
 
-```
-┌─────────────────────────────────────────────┐
-│            InventoryManager                 │
-│                                             │
-│  bank: Map<code, qty>                       │
-│  charInventory: Map<charName, Map<code,qty>>│
-│  charEquipment: Map<charName, Map<code,qty>>│
-│                                             │
-│  globalCount(code) → total everywhere       │
-│  bankCount(code) → just bank                │
-│  equippedCount(code) → sum across all chars │
-│  inventoryCount(code) → sum across all chars│
-│  charHasEquipped(name, code) → boolean      │
-│                                             │
-│  initialize() → full sync (startup)         │
-│  updateCharacter(name, data) → local update │
-│  updateBank(force?) → refresh bank cache    │
-└─────────────────────────────────────────────┘
-```
+1. Added `src/services/inventory-manager.mjs` with:
+   - bank cache (`getBankItems`, `invalidateBank`, `applyBankDelta`)
+   - character mirrors (`updateCharacter`, inventory/equipment rebuild)
+   - global counting (`bankCount`, `inventoryCount`, `equippedCount`, `globalCount`)
+2. Wired startup/refresh:
+   - `bot.mjs` calls `initialize()`
+   - `context.mjs` refresh path calls `updateCharacter()`
+3. Converted bank source of truth to inventory manager-backed reads.
+4. Added mutation hooks on successful bank withdraw/deposit flows.
+5. Fixed recycler surplus calc to use `globalCount(code)` then cap by bank.
+6. Added deterministic script harness `scripts/test-inventory-manager.mjs`.
 
-## Implementation
+### Acceptance checks
 
-### Phase 1: Core — `src/services/inventory-manager.mjs`
+- No negative bank counts after deltas
+- Bank count updates immediately after withdraw/deposit
+- Recycler considers equipped + carried items (not bank-only)
 
-Singleton module. Internal state:
+## Phase 2 (Current): Reservations and Contention Hardening
 
-```js
-let bank = new Map();           // code → qty
-let charInventory = new Map();  // charName → Map<code, qty>
-let charEquipment = new Map();  // charName → Map<code, qty>
-```
+### Scope
 
-#### `initialize()`
-- Called once at startup (after `initGameData()`)
-- Fetches all characters via existing `api.getAllCharacters()`
-- Fetches bank items via existing `api.getBankItems()`
-- Populates all three maps
-- Cost: 1x `GET /my/characters` + bank fetch (already happens)
+Add a lightweight reservation layer so planned withdrawals are visible to other characters before API withdraw execution.
 
-#### `updateCharacter(name, charData)`
-- Called from `ctx.refresh()` — piggybacks on the existing `getCharacter` API call
-- Rebuilds that char's inventory map from `charData.inventory`
-- Rebuilds that char's equipment map from `charData.*_slot` fields
-- **Zero extra API calls**
+### API surface (Inventory Manager)
 
-#### `updateBank(forceRefresh?)`
-- Same TTL/cache logic as current `game-data.mjs` bank cache
-- Updates the internal `bank` map
-- Replaces (or wraps) `gameData.getBankItems()`
+1. `availableBankCount(code, { includeChar })`
+2. `reserve(code, qty, charName, ttlMs?)`
+3. `reserveMany(requests, charName, ttlMs?)` (atomic by aggregated code)
+4. `release(reservationId)`
+5. `releaseAllForChar(charName)`
+6. `cleanupExpiredReservations()`
+7. `snapshot()` includes reservation state
 
-#### Query Methods
+### Core behavior
 
-| Method | Returns | Use Case |
-|--------|---------|----------|
-| `globalCount(code)` | bank + all inventories + all equipment | Recycler surplus calc |
-| `bankCount(code)` | bank only | Withdrawal decisions |
-| `equippedCount(code)` | sum across all chars' equipment | Know how many are "in use" |
-| `inventoryCount(code)` | sum across all chars' inventories | Know what's in transit |
-| `charHasEquipped(name, code)` | boolean | Gear optimizer conflict check |
-| `snapshot()` | full state object | Debugging / logging |
+1. Reservations are TTL-bound (default 30s).
+2. Expired reservations are cleaned before availability checks.
+3. `availableBankCount` excludes other chars’ reservations but can include caller reservations.
+4. `reserveMany` fails atomically if any code is short.
+5. `withdrawItem` always releases reservation in `finally`.
 
-### Phase 2: Wire In
+### Integration points
 
-#### `bot.mjs`
-```js
-import { initialize as initInventory } from './services/inventory-manager.mjs';
-// After initGameData():
-await initInventory();
+1. `src/helpers.mjs`
+   - `withdrawItem`: reservation-aware single withdraw
+   - `withdrawPlanFromBank`: batch reserve with per-item fallback
+   - `withdrawFoodForFights`: uses reservation-aware withdraw path
+   - `equipForCombat`/`equipForGathering`: reserve needed bank pulls before swaps
+2. `src/services/ge-seller.mjs`
+   - uses `availableBankCount` for sell-availability checks
+3. `src/services/recycler.mjs`
+   - uses `availableBankCount` for recycle withdrawals
+
+### Validation
+
+Run:
+
+```bash
+npm run -s test:inventory-manager
 ```
 
-#### `context.mjs` → `refresh()`
-```js
-import { updateCharacter } from './services/inventory-manager.mjs';
-// After this._char = await getCharacter(this.name):
-updateCharacter(this.name, this._char);
-```
+Current harness covers:
 
-#### `game-data.mjs` → `getBankItems()`
-Either:
-- Delegate to `inventoryManager.updateBank()` (preferred — single source of truth)
-- Or keep both, but have inventory manager subscribe to bank refreshes
+1. reservation availability math (`includeChar` behavior)
+2. atomic `reserveMany` success/failure
+3. release + expiry cleanup paths
+4. bank delta clamping and refetch invalidation
+5. in-flight fetch dedupe
 
-### Phase 3: Fix Recycler
+## Remaining follow-up (Phase 2.5 / Phase 3)
 
-`recycler.mjs` → `analyzeRecycleCandidates()`:
+1. GE + recycler still do direct withdraw calls with availability checks only.
+   - Upgrade to explicit `reserveMany` + reservation-bound withdraws for full parity.
+2. Crash-safety:
+   - call `releaseAllForChar(charName)` on character loop shutdown/restart.
+3. Observability:
+   - add periodic reservation metrics (`active`, `expired cleaned`, `reserveMany fail reason`).
+4. Tuning:
+   - evaluate reservation TTL by observing slow-path actions.
 
-```js
-// OLD:
-const surplus = bankQty - keep;
+## Risks / gotchas to watch
 
-// NEW:
-import { globalCount } from './inventory-manager.mjs';
-const totalOwned = globalCount(code);
-const surplus = totalOwned - keep;
-const toRecycle = Math.min(surplus, bankQty); // can only recycle what's in bank
-```
+1. Long action chains can outlive TTL and release effective protection.
+2. Any raw `api.withdrawBank` path not routed through reservation logic can still race.
+3. `applyBankDelta` correctness depends on only applying after confirmed API success.
 
-### Phase 4: Fix Gear Optimizer
+## Success criteria
 
-When selecting gear from bank for a character, check if the item is the last copy and another char has it equipped. Prevents "stealing" scenario.
-
-```js
-import { globalCount, equippedCount, bankCount } from './inventory-manager.mjs';
-// Before withdrawing item for equip:
-const inBank = bankCount(code);
-const equipped = equippedCount(code);
-// If inBank <= 0, skip — someone else already took it
-```
-
-### Phase 5 (Future): Reservations
-
-Optional addition — a `reserve(code, qty, charName)` / `release()` system:
-- When a char plans to withdraw something, it reserves it first
-- Other chars see reserved items as unavailable
-- Fully eliminates race conditions on concurrent bank access
-- Not needed immediately if the recycler/optimizer fixes are sufficient
-
-## Files Changed
-
-| File | Action | Risk |
-|------|--------|------|
-| `src/services/inventory-manager.mjs` | **NEW** | None — new file |
-| `src/bot.mjs` | Add `initInventory()` call | Low — startup only |
-| `src/context.mjs` | Add `updateCharacter()` in `refresh()` | Low — append only |
-| `src/services/recycler.mjs` | Use `globalCount` in surplus calc | Medium — changes recycling behavior |
-| `src/services/game-data.mjs` | Delegate bank cache (optional) | Medium — refactor |
-| `src/services/gear-optimizer.mjs` | Check availability before equip | Medium — changes gear selection |
-
-## API Cost
-
-**Zero additional API calls at runtime.**
-
-- Startup: 1x `GET /my/characters` (new, trivial — one request)
-- Runtime: `ctx.refresh()` already calls `getCharacter` per tick — we just pipe the response into the manager
-- Bank: identical refresh logic, just centralized
-
-## Testing
-
-1. Start bot, check startup log shows all 5 chars' inventory/equipment loaded
-2. Have one char equip a shield, verify `equippedCount('wooden_shield')` reflects it
-3. Put 8 shields in bank with 4 on chars → recycler should recycle 7 (not 3)
-4. Two chars try to withdraw same item → second one sees updated count and skips
+1. No duplicate withdrawals caused by same-tick bank contention.
+2. No recycler over-recycle of items equipped/carried by other characters.
+3. Gear swaps fail safe (skip slot) when bank availability changes mid-flow.
+4. Polling profile stays near Phase 1 baseline (no meaningful API increase).

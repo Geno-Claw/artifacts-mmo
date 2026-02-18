@@ -6,7 +6,7 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { applyBankDelta, bankCount, globalCount, invalidateBank } from './inventory-manager.mjs';
+import { applyBankDelta, availableBankCount, bankCount, globalCount, invalidateBank } from './inventory-manager.mjs';
 import { getSellRules } from './ge-seller.mjs';
 import { moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
@@ -142,7 +142,7 @@ async function _recycleGroup(ctx, skill, workshop, items) {
       break;
     }
 
-    const available = bankCount(candidate.code);
+    const available = availableBankCount(candidate.code, { includeChar: ctx.name });
     const qty = Math.min(candidate.quantity, space, available);
     if (qty <= 0) continue;
 

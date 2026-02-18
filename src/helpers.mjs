@@ -9,7 +9,15 @@ import * as gameData from './services/game-data.mjs';
 import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
 import { hpNeededForFight, simulateCombat } from './services/combat-simulator.mjs';
 import { optimizeForMonster, optimizeForGathering } from './services/gear-optimizer.mjs';
-import { applyBankDelta, bankCount, invalidateBank } from './services/inventory-manager.mjs';
+import {
+  applyBankDelta,
+  availableBankCount,
+  bankCount,
+  invalidateBank,
+  release,
+  reserve,
+  reserveMany,
+} from './services/inventory-manager.mjs';
 import { BANK } from './data/locations.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
@@ -232,13 +240,7 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
     if (w.quantity <= 0) continue;
     try {
       log.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`);
-      const wr = await api.withdrawBank([{ code: w.code, quantity: w.quantity }], ctx.name);
-      await api.waitForCooldown(wr);
-      applyBankDelta([{ code: w.code, quantity: w.quantity }], 'withdraw', {
-        charName: ctx.name,
-        reason: `food withdrawal for ${monsterCode}`,
-      });
-      await ctx.refresh();
+      await withdrawItem(ctx, w.code, w.quantity, { reason: `food withdrawal for ${monsterCode}` });
     } catch (err) {
       if (isBankAvailabilityError(err)) {
         invalidateBank(`[${ctx.name}] food withdrawal failed for ${w.code}: ${err.message}`);
@@ -365,27 +367,57 @@ export function rawMaterialNeeded(ctx, plan, itemCode, batchSize = 1) {
 export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
   const bank = await gameData.getBankItems(true);
   const withdrawn = [];
-
   const stepsReversed = [...plan].reverse();
-  for (const step of stepsReversed) {
-    if (ctx.inventoryFull()) break;
 
-    const have = ctx.itemCount(step.itemCode);
+  const plannedByCode = new Map();
+  let remainingSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
+
+  for (const step of stepsReversed) {
+    if (remainingSpace <= 0) break;
+
+    const code = step.itemCode;
+    const plannedQty = plannedByCode.get(code) || 0;
+    const have = ctx.itemCount(code) + plannedQty;
     const needed = step.quantity * batchSize - have;
     if (needed <= 0) continue;
 
-    const inBank = bank.get(step.itemCode) || 0;
+    const inBank = Math.min(
+      bank.get(code) || 0,
+      availableBankCount(code, { includeChar: ctx.name }),
+    );
     if (inBank <= 0) continue;
 
-    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-    const toWithdraw = Math.min(needed, inBank, space);
+    const toWithdraw = Math.min(needed, inBank, remainingSpace);
     if (toWithdraw <= 0) continue;
 
+    plannedByCode.set(code, plannedQty + toWithdraw);
+    remainingSpace -= toWithdraw;
+  }
+
+  const requests = [...plannedByCode.entries()].map(([code, qty]) => ({ code, qty }));
+  if (requests.length === 0) return withdrawn;
+
+  const batch = reserveMany(requests, ctx.name);
+  if (!batch.ok) {
+    log.warn(`[${ctx.name}] Could not reserve full crafting plan (${batch.reason}), falling back to per-item withdrawals`);
+    for (const req of requests) {
+      try {
+        await withdrawItem(ctx, req.code, req.qty);
+        withdrawn.push(`${req.code} x${req.qty}`);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Could not withdraw ${req.code}: ${err.message}`);
+      }
+    }
+    return withdrawn;
+  }
+
+  const reservationByCode = new Map(batch.reservations.map(r => [r.code, r.id]));
+  for (const req of requests) {
     try {
-      await withdrawItem(ctx, step.itemCode, toWithdraw);
-      withdrawn.push(`${step.itemCode} x${toWithdraw}`);
+      await withdrawItem(ctx, req.code, req.qty, { reservationId: reservationByCode.get(req.code) });
+      withdrawn.push(`${req.code} x${req.qty}`);
     } catch (err) {
-      log.warn(`[${ctx.name}] Could not withdraw ${step.itemCode}: ${err.message}`);
+      log.warn(`[${ctx.name}] Could not withdraw ${req.code}: ${err.message}`);
     }
   }
 
@@ -393,20 +425,45 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
 }
 
 /** Move to bank and withdraw a specific item. */
-export async function withdrawItem(ctx, code, quantity = 1) {
+export async function withdrawItem(ctx, code, quantity = 1, opts = {}) {
   await moveTo(ctx, BANK.x, BANK.y);
-  let available = bankCount(code);
-  if (available <= 0) {
-    await gameData.getBankItems(true);
-    available = bankCount(code);
-  }
-  if (available <= 0) {
-    throw new Error(`Bank has no ${code} available`);
-  }
 
-  const qty = Math.min(quantity, available);
-  if (qty < quantity) {
-    log.info(`[${ctx.name}] Withdrawing ${code}: requested ${quantity}, only ${qty} available`);
+  const requested = Number(quantity) || 0;
+  if (requested <= 0) return null;
+
+  const reason = opts.reason || 'helper withdrawItem';
+  const passedReservationId = opts.reservationId || null;
+  let createdReservationId = null;
+  let qty = requested;
+
+  if (!passedReservationId) {
+    let available = availableBankCount(code, { includeChar: ctx.name });
+    if (available <= 0) {
+      await gameData.getBankItems(true);
+      available = availableBankCount(code, { includeChar: ctx.name });
+    }
+    if (available <= 0) {
+      throw new Error(`Bank has no ${code} available`);
+    }
+
+    qty = Math.min(requested, available);
+    if (qty < requested) {
+      log.info(`[${ctx.name}] Withdrawing ${code}: requested ${requested}, only ${qty} available`);
+    } else {
+      log.info(`[${ctx.name}] Withdrawing ${code} x${qty}`);
+    }
+
+    createdReservationId = reserve(code, qty, ctx.name);
+    if (!createdReservationId) {
+      await gameData.getBankItems(true);
+      const retryAvailable = availableBankCount(code, { includeChar: ctx.name });
+      qty = Math.min(requested, retryAvailable);
+      if (qty <= 0) throw new Error(`Bank has no ${code} available`);
+      createdReservationId = reserve(code, qty, ctx.name);
+      if (!createdReservationId) {
+        throw new Error(`Could not reserve ${code} x${qty}`);
+      }
+    }
   } else {
     log.info(`[${ctx.name}] Withdrawing ${code} x${qty}`);
   }
@@ -414,7 +471,7 @@ export async function withdrawItem(ctx, code, quantity = 1) {
   try {
     const result = await api.withdrawBank([{ code, quantity: qty }], ctx.name);
     await api.waitForCooldown(result);
-    applyBankDelta([{ code, quantity: qty }], 'withdraw', { charName: ctx.name, reason: 'helper withdrawItem' });
+    applyBankDelta([{ code, quantity: qty }], 'withdraw', { charName: ctx.name, reason });
     await ctx.refresh();
     return result;
   } catch (err) {
@@ -422,6 +479,8 @@ export async function withdrawItem(ctx, code, quantity = 1) {
       invalidateBank(`[${ctx.name}] withdraw failed for ${code}: ${err.message}`);
     }
     throw err;
+  } finally {
+    release(passedReservationId || createdReservationId);
   }
 }
 
@@ -498,23 +557,37 @@ export async function equipForCombat(ctx, monsterCode) {
   log.info(`[${ctx.name}] Gear optimizer: ${changes.length} slot(s) to change for ${monsterCode}`);
 
   // Determine if any items need to come from bank
-  const bankNeeded = changes.filter(c =>
-    c.targetCode
-    && !ctx.hasItem(c.targetCode)
-    && ctx.get()[`${c.slot}_slot`] !== c.targetCode
-  );
+  const desiredByCode = new Map();
+  for (const change of changes) {
+    if (!change.targetCode) continue;
+    desiredByCode.set(change.targetCode, (desiredByCode.get(change.targetCode) || 0) + 1);
+  }
 
-  if (bankNeeded.length > 0) {
+  const bankNeeded = new Map();
+  for (const [code, desired] of desiredByCode.entries()) {
+    const missing = Math.max(0, desired - ctx.itemCount(code));
+    if (missing > 0) bankNeeded.set(code, missing);
+  }
+
+  if (bankNeeded.size > 0) {
     // Ensure inventory space for swaps
     const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
     if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
       await depositAll(ctx);
     }
 
-    for (const { targetCode } of bankNeeded) {
-      if (ctx.hasItem(targetCode)) continue;
+    const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
+    const batch = reserveMany(requests, ctx.name);
+    if (!batch.ok) {
+      log.warn(`[${ctx.name}] Could not reserve all gear withdrawals (${batch.reason}), falling back to per-item reservations`);
+    }
+    const reservationByCode = new Map(batch.reservations?.map(r => [r.code, r.id]) || []);
+
+    for (const [targetCode, qtyNeeded] of bankNeeded.entries()) {
+      const missing = Math.max(0, qtyNeeded - ctx.itemCount(targetCode));
+      if (missing <= 0) continue;
       try {
-        await withdrawItem(ctx, targetCode, 1);
+        await withdrawItem(ctx, targetCode, missing, { reservationId: reservationByCode.get(targetCode) || null });
       } catch (err) {
         log.warn(`[${ctx.name}] Could not withdraw ${targetCode}: ${err.message}`);
       }
@@ -554,7 +627,7 @@ export async function equipForCombat(ctx, monsterCode) {
   }
 
   // Deposit old gear to bank if we made a bank trip
-  if (bankNeeded.length > 0) {
+  if (bankNeeded.size > 0) {
     const unequippedCodes = changes
       .filter(c => c.currentCode && c.currentCode !== c.targetCode)
       .map(c => c.currentCode)
@@ -647,22 +720,36 @@ export async function equipForGathering(ctx, skill) {
   log.info(`[${ctx.name}] Gathering gear: ${changes.length} slot(s) to change for ${skill}`);
 
   // Determine if any items need to come from bank
-  const bankNeeded = changes.filter(c =>
-    c.targetCode
-    && !ctx.hasItem(c.targetCode)
-    && ctx.get()[`${c.slot}_slot`] !== c.targetCode
-  );
+  const desiredByCode = new Map();
+  for (const change of changes) {
+    if (!change.targetCode) continue;
+    desiredByCode.set(change.targetCode, (desiredByCode.get(change.targetCode) || 0) + 1);
+  }
 
-  if (bankNeeded.length > 0) {
+  const bankNeeded = new Map();
+  for (const [code, desired] of desiredByCode.entries()) {
+    const missing = Math.max(0, desired - ctx.itemCount(code));
+    if (missing > 0) bankNeeded.set(code, missing);
+  }
+
+  if (bankNeeded.size > 0) {
     const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
     if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
       await depositAll(ctx);
     }
 
-    for (const { targetCode } of bankNeeded) {
-      if (ctx.hasItem(targetCode)) continue;
+    const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
+    const batch = reserveMany(requests, ctx.name);
+    if (!batch.ok) {
+      log.warn(`[${ctx.name}] Could not reserve all gathering gear withdrawals (${batch.reason}), falling back to per-item reservations`);
+    }
+    const reservationByCode = new Map(batch.reservations?.map(r => [r.code, r.id]) || []);
+
+    for (const [targetCode, qtyNeeded] of bankNeeded.entries()) {
+      const missing = Math.max(0, qtyNeeded - ctx.itemCount(targetCode));
+      if (missing <= 0) continue;
       try {
-        await withdrawItem(ctx, targetCode, 1);
+        await withdrawItem(ctx, targetCode, missing, { reservationId: reservationByCode.get(targetCode) || null });
       } catch (err) {
         log.warn(`[${ctx.name}] Could not withdraw ${targetCode}: ${err.message}`);
       }
@@ -700,7 +787,7 @@ export async function equipForGathering(ctx, skill) {
   }
 
   // Deposit old gear to bank if we made a bank trip
-  if (bankNeeded.length > 0) {
+  if (bankNeeded.size > 0) {
     const unequippedCodes = changes
       .filter(c => c.currentCode && c.currentCode !== c.targetCode)
       .map(c => c.currentCode)

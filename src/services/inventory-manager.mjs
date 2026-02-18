@@ -6,12 +6,15 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 
 const BANK_CACHE_TTL = 60_000; // 1 minute
+const DEFAULT_RESERVATION_TTL = 30_000;
 
 let _api = api;
 
 let bank = new Map();             // code -> quantity
 let charInventory = new Map();    // charName -> Map<code, quantity>
 let charEquipment = new Map();    // charName -> Map<code, quantity>
+let reservations = new Map();     // reservationId -> { code, qty, charName, expiresAt }
+let reservationSeq = 0;
 
 let lastBankFetch = 0;
 let bankInvalidated = true;
@@ -48,6 +51,27 @@ function nestedMapToObject(nested) {
   return out;
 }
 
+function nextReservationId() {
+  reservationSeq += 1;
+  return `res_${Date.now()}_${reservationSeq}`;
+}
+
+function reservationExpiry(ttlMs) {
+  const ttl = Number(ttlMs);
+  if (!Number.isFinite(ttl) || ttl <= 0) return Date.now() + DEFAULT_RESERVATION_TTL;
+  return Date.now() + ttl;
+}
+
+function sumReserved(code, { includeChar = null } = {}) {
+  let total = 0;
+  for (const res of reservations.values()) {
+    if (res.code !== code) continue;
+    if (includeChar && res.charName === includeChar) continue;
+    total += res.qty;
+  }
+  return total;
+}
+
 export async function initialize() {
   const chars = await _api.getMyCharacters();
   const list = Array.isArray(chars) ? chars : [];
@@ -70,6 +94,17 @@ export function updateCharacter(name, charData) {
 export function invalidateBank(reason = '') {
   bankInvalidated = true;
   if (reason) log.info(`[InventoryManager] Bank invalidated: ${reason}`);
+}
+
+export function cleanupExpiredReservations() {
+  const now = Date.now();
+  let removed = 0;
+  for (const [id, res] of reservations.entries()) {
+    if (res.expiresAt > now) continue;
+    reservations.delete(id);
+    removed++;
+  }
+  return removed;
 }
 
 export async function getBankItems(forceRefresh = false) {
@@ -158,6 +193,13 @@ export function bankCount(code) {
   return bank.get(code) || 0;
 }
 
+export function availableBankCount(code, opts = {}) {
+  cleanupExpiredReservations();
+  const includeChar = opts.includeChar || null;
+  const available = bankCount(code) - sumReserved(code, { includeChar });
+  return Math.max(available, 0);
+}
+
 export function inventoryCount(code, opts = {}) {
   const excludeChar = opts.excludeChar || null;
   let total = 0;
@@ -186,11 +228,92 @@ export function charHasEquipped(name, code) {
   return (charEquipment.get(name)?.get(code) || 0) > 0;
 }
 
+export function reserve(code, qty, charName, ttlMs = DEFAULT_RESERVATION_TTL) {
+  cleanupExpiredReservations();
+  const requested = Number(qty) || 0;
+  if (!code || requested <= 0 || !charName) return null;
+
+  const available = availableBankCount(code, { includeChar: charName });
+  if (available < requested) return null;
+
+  const id = nextReservationId();
+  reservations.set(id, {
+    code,
+    qty: requested,
+    charName,
+    expiresAt: reservationExpiry(ttlMs),
+  });
+  return id;
+}
+
+export function reserveMany(requests, charName, ttlMs = DEFAULT_RESERVATION_TTL) {
+  cleanupExpiredReservations();
+  if (!Array.isArray(requests) || requests.length === 0) {
+    return { ok: true, reservations: [], reason: '' };
+  }
+  if (!charName) {
+    return { ok: false, reservations: [], reason: 'missing charName' };
+  }
+
+  // Aggregate duplicate codes so the check is atomic per code.
+  const aggregated = new Map();
+  for (const req of requests) {
+    const code = req?.code;
+    const qty = Number(req?.qty ?? req?.quantity) || 0;
+    if (!code || qty <= 0) continue;
+    aggregated.set(code, (aggregated.get(code) || 0) + qty);
+  }
+
+  for (const [code, qty] of aggregated.entries()) {
+    const available = availableBankCount(code, { includeChar: charName });
+    if (available < qty) {
+      return {
+        ok: false,
+        reservations: [],
+        reason: `insufficient ${code}: need ${qty}, available ${available}`,
+      };
+    }
+  }
+
+  const created = [];
+  for (const [code, qty] of aggregated.entries()) {
+    const id = nextReservationId();
+    reservations.set(id, {
+      code,
+      qty,
+      charName,
+      expiresAt: reservationExpiry(ttlMs),
+    });
+    created.push({ id, code, qty, charName });
+  }
+
+  return { ok: true, reservations: created, reason: '' };
+}
+
+export function release(reservationId) {
+  if (!reservationId) return;
+  reservations.delete(reservationId);
+}
+
+export function releaseAllForChar(charName) {
+  if (!charName) return;
+  for (const [id, res] of reservations.entries()) {
+    if (res.charName === charName) reservations.delete(id);
+  }
+}
+
 export function snapshot() {
+  cleanupExpiredReservations();
+  const reservationRows = {};
+  for (const [id, res] of reservations.entries()) {
+    reservationRows[id] = { ...res };
+  }
+
   return {
     bank: mapToObject(bank),
     charInventory: nestedMapToObject(charInventory),
     charEquipment: nestedMapToObject(charEquipment),
+    reservations: reservationRows,
   };
 }
 
@@ -203,6 +326,8 @@ export function _resetForTests() {
   bank = new Map();
   charInventory = new Map();
   charEquipment = new Map();
+  reservations = new Map();
+  reservationSeq = 0;
   lastBankFetch = 0;
   bankInvalidated = true;
   bankFetchPromise = null;
