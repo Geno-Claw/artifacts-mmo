@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artifacts MMO — Geno-Claw Dashboard</title>
+<meta http-equiv="refresh" content="300">
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3; --dim: #8b949e; --green: #3fb950; --red: #f85149; --gold: #d29922; --blue: #58a6ff; --purple: #bc8cff; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; padding: 20px; max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 1.5em; margin-bottom: 4px; }
+  .subtitle { color: var(--dim); margin-bottom: 20px; font-size: 0.85em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+  .card h2 { font-size: 1.1em; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .card h2 .lvl { color: var(--blue); font-size: 0.85em; }
+  .location-badge { font-size: 0.8em; padding: 3px 10px; border-radius: 12px; font-weight: 500; white-space: nowrap; }
+  .summary { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 20px; }
+  .stat { text-align: center; }
+  .stat .val { font-size: 1.8em; font-weight: 600; }
+  .stat .label { font-size: 0.75em; color: var(--dim); text-transform: uppercase; }
+  .xp-section { margin-bottom: 8px; }
+  .xp-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .xp-fill { height: 100%; background: var(--green); border-radius: 3px; }
+  .char-stats { display: flex; gap: 12px; font-size: 0.85em; margin-bottom: 10px; flex-wrap: wrap; }
+  .task-section { background: var(--bg); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+  .task-header { font-size: 0.85em; margin-bottom: 6px; }
+  .dim { color: var(--dim); }
+  .delta { font-size: 0.8em; font-weight: 600; margin-left: 4px; }
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--red); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  th { text-align: left; color: var(--dim); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .bank-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px; font-size: 0.85em; }
+  .bank-item { display: flex; justify-content: space-between; padding: 4px 8px; background: var(--bg); border-radius: 4px; }
+  .bank-item .qty { color: var(--gold); font-weight: 600; }
+  footer { color: var(--dim); font-size: 0.75em; margin-top: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>🦖 Artifacts MMO — Geno-Claw</h1>
+<div class="subtitle">Season Sandwhisper · v6.1.0 · 150 online · Updated Wed, 18 Feb 2026 14:40:02 GMT · Bot <a href="https://github.com/Geno-Claw/artifacts-mmo/commit/9c2fd42" style="color:var(--blue);text-decoration:none" title="feat: adjust skill rotation weights for improved task prioritization">9c2fd42</a></div>
+
+<div class="summary">
+  <div class="stat"><div class="val" style="color:var(--gold)">9,307 <span class="delta up">+5374</span></div><div class="label">Total Gold</div></div>
+  <div class="stat"><div class="val">36 <span class="delta up">+13</span></div><div class="label">Combined Levels</div></div>
+  <div class="stat"><div class="val">167 <span class="delta up">+33</span></div><div class="label">Total Skill Levels</div></div>
+  <div class="stat"><div class="val">32</div><div class="label">Bank Items</div></div>
+</div>
+
+<div class="grid">
+<div class="card">
+  <div class="card-header">
+    <h2>GenoClaw <span class="lvl">Lv14 <span class="delta up">+4</span></span></h2>
+    <div class="location-badge" style="background:#f8514920;color:#f85149;border:1px solid #f8514940">
+      ⚔️ Forest — red slime
+    </div>
+  </div>
+  <div class="xp-section">
+    <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+      <span>XP 3,071 / 3,700</span><span>83.0%</span>
+    </div>
+    <div class="xp-bar"><div class="xp-fill" style="width:83.0%"></div></div>
+  </div>
+  <div class="char-stats">
+    <span>❤️ 157/265</span>
+    <span>💰 17</span>
+    <span>🎒 1/126</span>
+    <span>⚔️ sticky sword</span>
+  </div>
+  
+    <div class="task-section">
+      <div class="task-header">⚔️ Task: <strong>cow</strong> <span class="dim">(monsters)</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+        <span>0 / 363</span><span>0%</span>
+      </div>
+      <div class="xp-bar"><div class="xp-fill" style="width:0%;background:var(--purple)"></div></div>
+    </div>
+  <table><tr><th>Skill</th><th>Level</th><th>XP</th><th></th></tr>
+  <tr><td>mining</td><td>8 </td><td>103/1450</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:7%"></div></div></td></tr><tr><td>cooking</td><td>6 </td><td>528/950</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:56%"></div></div></td></tr><tr><td>woodcutting</td><td>3 </td><td>236/350</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:67%"></div></div></td></tr><tr><td>fishing</td><td>2 </td><td>96/250</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:38%"></div></div></td></tr><tr><td>weaponcrafting</td><td>2 </td><td>63/250</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:25%"></div></div></td></tr><tr><td>gearcrafting</td><td>2 </td><td>126/250</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:50%"></div></div></td></tr><tr><td>jewelrycrafting</td><td>2 </td><td>126/250</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:50%"></div></div></td></tr><tr><td>alchemy</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr>
+  </table>
+</div>
+<div class="card">
+  <div class="card-header">
+    <h2>GenoClaw2 <span class="lvl">Lv10 <span class="delta up">+5</span></span></h2>
+    <div class="location-badge" style="background:#3fb95020;color:#3fb950;border:1px solid #3fb95040">
+      ⛏️ Forest — copper rocks
+    </div>
+  </div>
+  <div class="xp-section">
+    <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+      <span>XP 1,654 / 2,100</span><span>78.8%</span>
+    </div>
+    <div class="xp-bar"><div class="xp-fill" style="width:78.8%"></div></div>
+  </div>
+  <div class="char-stats">
+    <span>❤️ 155/245</span>
+    <span>💰 0</span>
+    <span>🎒 6/118</span>
+    <span>⚔️ copper pickaxe</span>
+  </div>
+  
+    <div class="task-section">
+      <div class="task-header">⚔️ Task: <strong>cow</strong> <span class="dim">(monsters)</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+        <span>0 / 291</span><span>0%</span>
+      </div>
+      <div class="xp-bar"><div class="xp-fill" style="width:0%;background:var(--purple)"></div></div>
+    </div>
+  <table><tr><th>Skill</th><th>Level</th><th>XP</th><th></th></tr>
+  <tr><td>cooking</td><td>10 <span class="delta up">+1</span></td><td>30/2100</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:1%"></div></div></td></tr><tr><td>fishing</td><td>8 <span class="delta up">+1</span></td><td>244/1450</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:17%"></div></div></td></tr><tr><td>mining</td><td>7 <span class="delta up">+2</span></td><td>1027/1200</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:86%"></div></div></td></tr><tr><td>woodcutting</td><td>5 <span class="delta up">+2</span></td><td>207/700</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:30%"></div></div></td></tr><tr><td>jewelrycrafting</td><td>3 <span class="delta up">+2</span></td><td>121/350</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:35%"></div></div></td></tr><tr><td>alchemy</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>weaponcrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>gearcrafting</td><td>1 </td><td>75/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:50%"></div></div></td></tr>
+  </table>
+</div>
+<div class="card">
+  <div class="card-header">
+    <h2>GenoClaw3 <span class="lvl">Lv10 <span class="delta up">+4</span></span></h2>
+    <div class="location-badge" style="background:#3fb95020;color:#3fb950;border:1px solid #3fb95040">
+      ⛏️ Lake — shrimp spot
+    </div>
+  </div>
+  <div class="xp-section">
+    <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+      <span>XP 782 / 2,100</span><span>37.2%</span>
+    </div>
+    <div class="xp-bar"><div class="xp-fill" style="width:37.2%"></div></div>
+  </div>
+  <div class="char-stats">
+    <span>❤️ 245/245</span>
+    <span>💰 0</span>
+    <span>🎒 0/118</span>
+    <span>⚔️ fishing net</span>
+  </div>
+  
+  <table><tr><th>Skill</th><th>Level</th><th>XP</th><th></th></tr>
+  <tr><td>cooking</td><td>10 <span class="delta up">+2</span></td><td>130/2100</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:6%"></div></div></td></tr><tr><td>mining</td><td>6 </td><td>687/950</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:72%"></div></div></td></tr><tr><td>woodcutting</td><td>6 <span class="delta up">+1</span></td><td>178/950</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:19%"></div></div></td></tr><tr><td>fishing</td><td>5 <span class="delta up">+1</span></td><td>399/700</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:57%"></div></div></td></tr><tr><td>alchemy</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>weaponcrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>gearcrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>jewelrycrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr>
+  </table>
+</div>
+<div class="card">
+  <div class="card-header">
+    <h2>GenoClaw5 <span class="lvl">Lv1 </span></h2>
+    <div class="location-badge" style="background:#3fb95020;color:#3fb950;border:1px solid #3fb95040">
+      ⛏️ Forest — ash tree
+    </div>
+  </div>
+  <div class="xp-section">
+    <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+      <span>XP 0 / 150</span><span>0.0%</span>
+    </div>
+    <div class="xp-bar"><div class="xp-fill" style="width:0.0%"></div></div>
+  </div>
+  <div class="char-stats">
+    <span>❤️ 140/140</span>
+    <span>💰 0</span>
+    <span>🎒 4/100</span>
+    <span>⚔️ copper axe</span>
+  </div>
+  
+  <table><tr><th>Skill</th><th>Level</th><th>XP</th><th></th></tr>
+  <tr><td>mining</td><td>11 <span class="delta up">+3</span></td><td>255/2500</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:10%"></div></div></td></tr><tr><td>woodcutting</td><td>10 <span class="delta up">+4</span></td><td>598/2100</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:28%"></div></div></td></tr><tr><td>gearcrafting</td><td>7 <span class="delta up">+3</span></td><td>877/1200</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:73%"></div></div></td></tr><tr><td>jewelrycrafting</td><td>2 </td><td>126/250</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:50%"></div></div></td></tr><tr><td>fishing</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>cooking</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>alchemy</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>weaponcrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr>
+  </table>
+</div>
+<div class="card">
+  <div class="card-header">
+    <h2>GenoClaw4 <span class="lvl">Lv1 </span></h2>
+    <div class="location-badge" style="background:#3fb95020;color:#3fb950;border:1px solid #3fb95040">
+      ⛏️ Forest — spruce tree
+    </div>
+  </div>
+  <div class="xp-section">
+    <div style="display:flex;justify-content:space-between;font-size:0.8em;color:var(--dim);margin-bottom:2px">
+      <span>XP 0 / 150</span><span>0.0%</span>
+    </div>
+    <div class="xp-bar"><div class="xp-fill" style="width:0.0%"></div></div>
+  </div>
+  <div class="char-stats">
+    <span>❤️ 120/120</span>
+    <span>💰 0</span>
+    <span>🎒 4/100</span>
+    <span>⚔️ copper axe</span>
+  </div>
+  
+  <table><tr><th>Skill</th><th>Level</th><th>XP</th><th></th></tr>
+  <tr><td>woodcutting</td><td>12 <span class="delta up">+7</span></td><td>1760/2900</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:61%"></div></div></td></tr><tr><td>weaponcrafting</td><td>10 <span class="delta up">+4</span></td><td>665/2100</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:32%"></div></div></td></tr><tr><td>mining</td><td>8 </td><td>497/1450</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:34%"></div></div></td></tr><tr><td>cooking</td><td>5 </td><td>102/700</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:15%"></div></div></td></tr><tr><td>fishing</td><td>2 </td><td>186/250</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:74%"></div></div></td></tr><tr><td>alchemy</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>gearcrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr><tr><td>jewelrycrafting</td><td>1 </td><td>0/150</td><td><div class="xp-bar" style="width:60px"><div class="xp-fill" style="width:0%"></div></div></td></tr>
+  </table>
+</div>
+</div>
+
+<div class="card" style="max-width:800px">
+  <h2 style="margin-bottom:12px">🏦 Bank (Top 20)</h2>
+  <div class="bank-grid">
+    <div class="bank-item"><span>gudgeon</span><span class="qty">×343</span></div>
+    <div class="bank-item"><span>sap</span><span class="qty">×329</span></div>
+    <div class="bank-item"><span>raw chicken</span><span class="qty">×246</span></div>
+    <div class="bank-item"><span>algae</span><span class="qty">×92</span></div>
+    <div class="bank-item"><span>red slimeball</span><span class="qty">×75</span></div>
+    <div class="bank-item"><span>yellow slimeball</span><span class="qty">×52</span></div>
+    <div class="bank-item"><span>green slimeball</span><span class="qty">×38</span></div>
+    <div class="bank-item"><span>egg</span><span class="qty">×34</span></div>
+    <div class="bank-item"><span>tasks coin</span><span class="qty">×18</span></div>
+    <div class="bank-item"><span>topaz stone</span><span class="qty">×18</span></div>
+    <div class="bank-item"><span>sapphire stone</span><span class="qty">×16</span></div>
+    <div class="bank-item"><span>emerald stone</span><span class="qty">×16</span></div>
+    <div class="bank-item"><span>ruby stone</span><span class="qty">×14</span></div>
+    <div class="bank-item"><span>shell</span><span class="qty">×7</span></div>
+    <div class="bank-item"><span>fire staff</span><span class="qty">×5</span></div>
+    <div class="bank-item"><span>copper helmet</span><span class="qty">×5</span></div>
+    <div class="bank-item"><span>copper ring</span><span class="qty">×5</span></div>
+    <div class="bank-item"><span>wooden shield</span><span class="qty">×4</span></div>
+    <div class="bank-item"><span>sticky dagger</span><span class="qty">×3</span></div>
+    <div class="bank-item"><span>feather coat</span><span class="qty">×3</span></div>
+  </div>
+</div>
+
+<footer>Auto-refreshes every 5 minutes · Geno-Claw Dashboard</footer>
+</body>
+</html>
