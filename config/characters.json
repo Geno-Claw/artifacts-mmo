@@ -132,7 +132,7 @@
             "jewelrycrafting": 0,
             "combat": 1,
             "npc_task": 1,
-            "item_task":
+            "item_task": 1
           },
           "goals": {
             "mining": 20,
