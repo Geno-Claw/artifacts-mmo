@@ -396,10 +396,13 @@ export function rawMaterialNeeded(ctx, plan, itemCode, batchSize = 1) {
  * Checks steps in reverse order (highest-value intermediates first).
  * @param {object} ctx — CharacterContext
  * @param {Array} plan — array of { itemCode, quantity, ... } steps
+ * @param {object} opts
+ * @param {string[]} opts.excludeCodes - item codes to skip during withdrawal planning
  * @returns {string[]} — list of "itemCode xN" descriptions for logging
  */
-export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
+export async function withdrawPlanFromBank(ctx, plan, batchSize = 1, opts = {}) {
   const withdrawn = [];
+  const excluded = new Set(opts.excludeCodes || []);
   const stepsReversed = [...plan].reverse();
 
   const plannedByCode = new Map();
@@ -409,6 +412,8 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
     if (remainingSpace <= 0) break;
 
     const code = step.itemCode;
+    if (excluded.has(code)) continue;
+
     const plannedQty = plannedByCode.get(code) || 0;
     const have = ctx.itemCount(code) + plannedQty;
     const needed = step.quantity * batchSize - have;

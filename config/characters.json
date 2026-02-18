@@ -126,8 +126,8 @@
           "weights": {
             "mining": 0,
             "woodcutting": 0,
-            "fishing": 10,
-            "cooking": 5,
+            "fishing": 0,
+            "cooking": 10,
             "alchemy": 0,
             "weaponcrafting": 0,
             "gearcrafting": 0,

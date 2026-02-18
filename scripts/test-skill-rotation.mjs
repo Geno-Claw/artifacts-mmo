@@ -5,6 +5,19 @@ process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
+const bankOps = await import('../src/services/bank-ops.mjs');
+const inventoryManager = await import('../src/services/inventory-manager.mjs');
+
+const {
+  _setApiClientForTests: setBankOpsApiForTests,
+  _resetForTests: resetBankOpsForTests,
+} = bankOps;
+
+const {
+  getBankItems,
+  _setApiClientForTests: setInventoryApiForTests,
+  _resetForTests: resetInventoryForTests,
+} = inventoryManager;
 
 function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
   return {
@@ -313,6 +326,81 @@ async function testRoutineDispatchesAlchemyCraftingMode() {
   assert.equal(harness.rotateCalls(), 0);
 }
 
+async function testCraftingWithdrawSkipsFinalRecipeOutput() {
+  const state = {
+    bank: new Map([
+      ['fire_bow', 7],
+      ['fire_string', 4],
+      ['ash_wood', 12],
+    ]),
+    withdrawCalls: [],
+  };
+
+  const fakeApi = {
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move() {
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const entry of items) {
+        const code = entry?.code;
+        const qty = Number(entry?.quantity) || 0;
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const next = have - qty;
+        if (next > 0) state.bank.set(code, next);
+        else state.bank.delete(code);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    routine.rotation = {
+      productionPlan: [
+        { type: 'bank', itemCode: 'ash_wood', quantity: 2 },
+        { type: 'craft', itemCode: 'fire_string', quantity: 1, recipe: { items: [] } },
+        { type: 'craft', itemCode: 'fire_bow', quantity: 1, recipe: { items: [] } },
+      ],
+      recipe: { code: 'fire_bow' },
+    };
+
+    const ctx = {
+      name: 'Tester',
+      isAt: () => true,
+      inventoryCapacity: () => 20,
+      inventoryCount: () => 0,
+      itemCount: () => 0,
+      refresh: async () => {},
+    };
+
+    await routine._withdrawFromBank(ctx, 1);
+
+    assert.equal(state.withdrawCalls.some(row => row.code === 'fire_bow'), false);
+    assert.deepEqual(
+      state.withdrawCalls.map(row => row.code),
+      ['fire_string', 'ash_wood'],
+    );
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
 async function run() {
   await testAlchemyFallbackToGatherAtLevel1();
   await testAlchemyCraftingCollectionIsPreservedWhenViable();
@@ -322,6 +410,7 @@ async function run() {
   await testCraftingCollectionPrefersBankOnlyMissingItem();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
+  await testCraftingWithdrawSkipsFinalRecipeOutput();
   console.log('skill-rotation tests passed');
 }
 

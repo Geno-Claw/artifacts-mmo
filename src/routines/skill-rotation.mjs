@@ -363,7 +363,8 @@ export class SkillRotationRoutine extends BaseRoutine {
     const plan = this.rotation.productionPlan;
     if (!plan) return;
 
-    const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSize);
+    const excludeCodes = this.rotation.recipe?.code ? [this.rotation.recipe.code] : [];
+    const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSize, { excludeCodes });
     if (withdrawn.length > 0) {
       log.info(`[${ctx.name}] Rotation crafting: withdrew from bank: ${withdrawn.join(', ')}`);
     }
