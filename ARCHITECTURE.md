@@ -180,6 +180,7 @@ Bank contents are fetched via paginated API (100 items/page) and cached with a 6
 
 ### Skill Rotation (`services/skill-rotation.mjs`)
 State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
+- Alchemy is hybrid in rotation: try crafting first (collection/XP), and if no viable alchemy recipe exists, fall back to alchemy gathering to bootstrap progression.
 
 ## Configuration
 

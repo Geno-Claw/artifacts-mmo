@@ -25,7 +25,10 @@ const DEFAULT_GOALS = {
 };
 
 export class SkillRotation {
-  constructor({ skills, goals = {}, weights, craftCollection = {}, craftBlacklist = {}, taskCollection = {} } = {}) {
+  constructor(
+    { skills, goals = {}, weights, craftCollection = {}, craftBlacklist = {}, taskCollection = {} } = {},
+    { gameDataSvc = gameData, findBestCombatTargetFn = findBestCombatTarget } = {},
+  ) {
     if (weights && Object.keys(weights).length > 0) {
       this.weights = weights;
       this.skills = Object.keys(weights).filter(s => weights[s] > 0);
@@ -37,6 +40,8 @@ export class SkillRotation {
     this.craftCollection = craftCollection;       // { skill: bool }
     this.craftBlacklist = craftBlacklist;          // { skill: string[] }
     this.taskCollection = taskCollection;          // { itemCode: targetQty } manual targets
+    this.gameData = gameDataSvc;
+    this.findBestCombatTarget = findBestCombatTargetFn;
     this._exchangeNeeds = new Map();              // { itemCode → qty } dynamic targets from crafting
 
     // Current rotation state
@@ -151,6 +156,19 @@ export class SkillRotation {
   }
 
   async _setupSkill(skill, ctx) {
+    if (skill === 'alchemy') {
+      const canCraft = await this._setupCrafting(skill, ctx);
+      if (canCraft) return true;
+
+      const canGather = await this._setupGathering(skill, ctx);
+      if (canGather) {
+        log.info(`[${ctx.name}] Rotation: alchemy crafting unavailable, bootstrapping with gathering`);
+        return true;
+      }
+
+      return false;
+    }
+
     if (GATHERING_SKILLS.has(skill)) {
       return this._setupGathering(skill, ctx);
     }
@@ -171,12 +189,12 @@ export class SkillRotation {
 
   async _setupGathering(skill, ctx) {
     const level = ctx.skillLevel(skill);
-    const resources = gameData.findResourcesBySkill(skill, level);
+    const resources = this.gameData.findResourcesBySkill(skill, level);
     if (resources.length === 0) return false;
 
     // Pick the highest-level resource
     this._resource = resources[0];
-    this._resourceLoc = await gameData.getResourceLocation(this._resource.code);
+    this._resourceLoc = await this.gameData.getResourceLocation(this._resource.code);
     if (!this._resourceLoc) return false;
 
     log.info(`[${ctx.name}] Rotation: ${skill} → ${this._resource.code} (lv${this._resource.level})`);
@@ -202,10 +220,10 @@ export class SkillRotation {
    * Skips blacklisted items and items with unfulfillable bank-only dependencies.
    */
   async _setupCollectionCraft(skill, level, ctx) {
-    const recipes = gameData.findItems({ craftSkill: skill, maxLevel: level });
+    const recipes = this.gameData.findItems({ craftSkill: skill, maxLevel: level });
     if (recipes.length === 0) return false;
 
-    const bank = await gameData.getBankItems();
+    const bank = await this.gameData.getBankItems();
     const blacklist = new Set(this.craftBlacklist[skill] || []);
 
     // Items missing from bank, sorted by craft level DESC
@@ -217,9 +235,9 @@ export class SkillRotation {
       .sort((a, b) => b.craft.level - a.craft.level);
 
     for (const item of missing) {
-      const plan = gameData.resolveRecipeChain(item.craft);
+      const plan = this.gameData.resolveRecipeChain(item.craft);
       if (!plan || plan.length === 0) continue;
-      if (!gameData.canFulfillPlan(plan, ctx)) continue;
+      if (!this.gameData.canFulfillPlan(plan, ctx)) continue;
 
       // Skip if any bank-only dependency can't be met
       const bankSteps = plan.filter(s => s.type === 'bank');
@@ -251,19 +269,19 @@ export class SkillRotation {
    * Skips blacklisted items and recipes with unmet bank-only dependencies.
    */
   async _setupXpGrind(skill, level, ctx) {
-    const recipes = gameData.findItems({ craftSkill: skill, maxLevel: level });
+    const recipes = this.gameData.findItems({ craftSkill: skill, maxLevel: level });
     if (recipes.length === 0) return false;
 
-    const bank = await gameData.getBankItems();
+    const bank = await this.gameData.getBankItems();
     const blacklist = new Set(this.craftBlacklist[skill] || []);
 
     const scored = [];
     for (const recipe of recipes) {
       if (blacklist.has(recipe.code)) continue;
 
-      const plan = gameData.resolveRecipeChain(recipe.craft);
+      const plan = this.gameData.resolveRecipeChain(recipe.craft);
       if (!plan || plan.length === 0) continue;
-      if (!gameData.canFulfillPlan(plan, ctx)) continue;
+      if (!this.gameData.canFulfillPlan(plan, ctx)) continue;
 
       // Skip recipes with unmet bank-only dependencies
       const bankSteps = plan.filter(s => s.type === 'bank');
@@ -324,7 +342,7 @@ export class SkillRotation {
    */
   _trackExchangeNeeds(bankSteps, bank) {
     for (const step of bankSteps) {
-      if (!gameData.isTaskReward(step.itemCode)) continue;
+      if (!this.gameData.isTaskReward(step.itemCode)) continue;
       const inBank = bank.get(step.itemCode) || 0;
       const deficit = step.quantity - inBank;
       if (deficit > 0) {
@@ -356,7 +374,7 @@ export class SkillRotation {
   }
 
   async _setupCombat(ctx) {
-    const target = await findBestCombatTarget(ctx);
+    const target = await this.findBestCombatTarget(ctx);
     if (!target) return false;
 
     this._monster = target.monster;

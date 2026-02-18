@@ -94,13 +94,13 @@
         },
         "weights": {
           "type": "object",
-          "description": "Weighted skill selection. Keys are skill names, values are relative weights. Higher weight = picked more often. Skills not listed are disabled. Overrides 'skills' array.",
+          "description": "Weighted skill selection. Keys are skill names, values are relative weights. Higher weight = picked more often. Skills not listed are disabled. Overrides 'skills' array. Note: alchemy is hybrid (crafting first, gathering fallback when no viable recipe is available).",
           "propertyNames": { "$ref": "#/$defs/skillName" },
           "additionalProperties": { "type": "number", "minimum": 0 }
         },
         "goals": {
           "type": "object",
-          "description": "Target count per skill before rotating. Gathering/combat = action count, crafting = items crafted.",
+          "description": "Target count per skill before rotating. Gathering/combat = action count, crafting = items crafted. Alchemy may progress from both gathered resources and crafted outputs depending on mode.",
           "propertyNames": { "$ref": "#/$defs/skillName" },
           "additionalProperties": { "type": "number", "minimum": 1 },
           "default": {

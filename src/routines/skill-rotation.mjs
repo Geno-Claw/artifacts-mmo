@@ -48,6 +48,18 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     const skill = this.rotation.currentSkill;
 
+    if (skill === 'alchemy') {
+      const hasCraftPlan = !!(this.rotation.recipe && this.rotation.productionPlan);
+      const hasGatherTarget = !!(this.rotation.resource && this.rotation.resourceLoc);
+
+      if (hasCraftPlan) return this._executeCrafting(ctx);
+      if (hasGatherTarget) return this._executeGathering(ctx);
+
+      log.warn(`[${ctx.name}] Rotation: alchemy state invalid (missing craft plan and gather target), rotating`);
+      await this.rotation.forceRotate(ctx);
+      return true;
+    }
+
     if (GATHERING_SKILLS.has(skill)) {
       return this._executeGathering(ctx);
     }
