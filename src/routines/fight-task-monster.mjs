@@ -3,6 +3,7 @@ import * as log from '../log.mjs';
 import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, canUseRestAction, hasHealingFood } from '../helpers.mjs';
 import { MONSTERS, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 import { canBeatMonster, hpNeededForFight } from '../services/combat-simulator.mjs';
+import { prepareCombatPotions } from '../services/potion-manager.mjs';
 
 /**
  * Fights whatever monster the active NPC task requires.
@@ -42,6 +43,7 @@ export class FightTaskMonsterRoutine extends BaseRoutine {
       this._lastOptimizedMonster = monster;
     }
 
+    await prepareCombatPotions(ctx, monster);
     await moveTo(ctx, loc.x, loc.y);
     if (!(await restBeforeFight(ctx, monster))) return false;
 

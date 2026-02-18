@@ -3,6 +3,7 @@ import * as log from '../log.mjs';
 import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, canUseRestAction, hasHealingFood } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
 import { canBeatMonster, hpNeededForFight } from '../services/combat-simulator.mjs';
+import { prepareCombatPotions } from '../services/potion-manager.mjs';
 
 export class FightMonstersRoutine extends BaseRoutine {
   /**
@@ -38,6 +39,7 @@ export class FightMonstersRoutine extends BaseRoutine {
       this._gearOptimized = true;
     }
 
+    await prepareCombatPotions(ctx, this.monster);
     await moveTo(ctx, this.loc.x, this.loc.y);
     if (!(await restBeforeFight(ctx, this.monster))) return false;
 

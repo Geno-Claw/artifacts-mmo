@@ -96,12 +96,12 @@ export async function withdrawBank(items, name = CHARACTER) {
   return request('POST', `/my/${name}/action/bank/withdraw/item`, items);
 }
 
-export async function equipItem(slot, code, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/equip`, { slot, code });
+export async function equipItem(slot, code, name = CHARACTER, quantity = 1) {
+  return request('POST', `/my/${name}/action/equip`, { slot, code, quantity });
 }
 
-export async function unequipItem(slot, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/unequip`, { slot });
+export async function unequipItem(slot, name = CHARACTER, quantity = 1) {
+  return request('POST', `/my/${name}/action/unequip`, { slot, quantity });
 }
 
 export async function acceptTask(name = CHARACTER) {

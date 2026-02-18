@@ -27,6 +27,7 @@ src/
     game-data.mjs        Static game data cache (items, monsters, resources, recipes)
     combat-simulator.mjs Pure math fight predictor using game damage formulas
     gear-optimizer.mjs   Simulation-based equipment optimizer (3-phase greedy)
+    potion-manager.mjs   Combat utility potion selection + refill manager
     ge-seller.mjs        Grand Exchange selling flow (whitelist-only, pricing, order mgmt)
     recycler.mjs         Equipment recycling at workshops (surplus → crafting materials)
     skill-rotation.mjs   State machine for multi-skill cycling
@@ -105,6 +106,7 @@ Per-character state wrapper (replaces old singleton `state.mjs`). One instance p
 | `recordLoss(monster)` | Track consecutive loss |
 | `consecutiveLosses(m)` | Query loss count |
 | `taskCoins()` | NPC task coin balance |
+| `settings()` | Character-level settings (e.g. potion automation) |
 
 **Level-up behavior:** On level-up, all loss counters reset and the gear cache is cleared, so the bot retries previously-failed monsters and re-evaluates equipment.
 
@@ -153,6 +155,14 @@ Shared item-withdraw service used by helpers, recycler, and GE seller:
 - Uses reservation-aware availability (`availableBankCount` + `reserveMany`)
 - Supports partial-fill defaults, one forced refresh retry, and per-item fallback
 - Applies immediate bank deltas (`applyBankDelta`) after successful withdrawals
+- Handles smart travel to the nearest accessible bank and can optionally consume teleport potions when modeled travel time is lower than direct movement
+
+### Potion Manager (`services/potion-manager.mjs`)
+Combat utility automation service:
+- Utility policy: `utility1` prefers `restore`, then `splash_restore`, then simulation fallback
+- `utility2` picks the best remaining simulation candidate (never overlaps `utility1`)
+- Refills utility stacks at a configurable threshold/target
+- Can preserve non-potion utility items in occupied slots
 
 ### Recycler (`services/recycler.mjs`)
 Equipment recycling at workshops. Surplus equipment is broken down into crafting materials instead of being sold on the GE:
@@ -205,6 +215,7 @@ State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, a
 ```
 
 Routine types: `rest`, `depositBank`, `completeNpcTask`, `acceptNpcTask`, `cancelNpcTask`, `fightMonsters`, `fightTaskMonster`, `gatherResource`, `skillRotation`.
+Character `settings` can optionally include potion automation controls (`settings.potions.combat`, `settings.potions.bankTravel`).
 
 ### `config/sell-rules.json`
 

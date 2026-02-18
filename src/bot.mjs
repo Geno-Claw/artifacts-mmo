@@ -34,7 +34,7 @@ await initInventoryManager();
 loadSellRules();
 
 const loops = config.characters.map(async (charCfg) => {
-  const ctx = new CharacterContext(charCfg.name);
+  const ctx = new CharacterContext(charCfg.name, charCfg.settings || {});
   const routines = buildRoutines(charCfg.routines);
 
   try {

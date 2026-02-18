@@ -16,7 +16,6 @@ import {
   withdrawBankItem,
   withdrawBankItems,
 } from './services/bank-ops.mjs';
-import { BANK } from './data/locations.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
 export async function moveTo(ctx, x, y) {
@@ -265,8 +264,7 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
     return true;
   }
 
-  // Withdraw from bank
-  await moveTo(ctx, BANK.x, BANK.y);
+  // Withdraw from bank (bank-ops handles travel to the nearest accessible bank)
   for (const w of toWithdraw) {
     if (w.quantity <= 0) continue;
     log.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`);

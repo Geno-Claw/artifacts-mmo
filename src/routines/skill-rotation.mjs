@@ -12,6 +12,7 @@ import * as gameData from '../services/game-data.mjs';
 import { SkillRotation } from '../services/skill-rotation.mjs';
 import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights, equipForGathering } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
+import { prepareCombatPotions } from '../services/potion-manager.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -167,6 +168,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     // Optimize gear for target monster (cached — only runs once per target)
     await equipForCombat(ctx, this.rotation.monster.code);
+    await prepareCombatPotions(ctx, this.rotation.monster.code);
 
     // Withdraw food from bank for all remaining fights (once per combat goal)
     if (!this._foodWithdrawn) {
@@ -477,6 +479,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       this.rotation.goalProgress = this.rotation.goalTarget;
       return true;
     }
+    await prepareCombatPotions(ctx, monster);
 
     // Withdraw food from bank for all remaining task fights (once per NPC task)
     if (!this._foodWithdrawn) {

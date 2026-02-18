@@ -6,13 +6,60 @@ import { getCharacter } from './api.mjs';
 import { clearGearCache } from './helpers.mjs';
 import { updateCharacter } from './services/inventory-manager.mjs';
 
+const DEFAULT_SETTINGS = Object.freeze({
+  potions: {
+    enabled: true,
+    combat: {
+      enabled: true,
+      refillBelow: 5,
+      targetQuantity: 20,
+      poisonBias: true,
+      respectNonPotionUtility: true,
+    },
+    bankTravel: {
+      enabled: true,
+      mode: 'smart',
+      allowRecall: true,
+      allowForestBank: true,
+      minSavingsSeconds: 10,
+      includeReturnToOrigin: true,
+      moveSecondsPerTile: 5,
+      itemUseSeconds: 3,
+    },
+  },
+});
+
+function mergeSettings(settings = {}) {
+  const potions = settings?.potions || {};
+  const combat = potions?.combat || {};
+  const bankTravel = potions?.bankTravel || {};
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    potions: {
+      ...DEFAULT_SETTINGS.potions,
+      ...potions,
+      combat: {
+        ...DEFAULT_SETTINGS.potions.combat,
+        ...combat,
+      },
+      bankTravel: {
+        ...DEFAULT_SETTINGS.potions.bankTravel,
+        ...bankTravel,
+      },
+    },
+  };
+}
+
 export class CharacterContext {
-  constructor(name) {
+  constructor(name, settings = {}) {
     this.name = name;
     this._char = null;
     this._losses = {};       // { monsterCode: count }
     this._lastLevel = null;  // for detecting level-ups
     this.craftTarget = null;  // shared craft target for gather/craft routines
+    this._settings = mergeSettings(settings);
   }
 
   async refresh() {
@@ -113,5 +160,9 @@ export class CharacterContext {
 
   taskCoins() {
     return this.get().tasks_coins || 0;
+  }
+
+  settings() {
+    return this._settings;
   }
 }

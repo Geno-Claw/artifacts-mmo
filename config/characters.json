@@ -126,8 +126,8 @@
           "weights": {
             "mining": 0,
             "woodcutting": 0,
-            "fishing": 0,
-            "cooking": 10,
+            "fishing": 5,
+            "cooking": 2,
             "alchemy": 0,
             "weaponcrafting": 0,
             "gearcrafting": 0,
@@ -139,8 +139,8 @@
           "goals": {
             "mining": 20,
             "woodcutting": 20,
-            "fishing": 20,
-            "cooking": 10,
+            "fishing": 50,
+            "cooking": 50,
             "alchemy": 10,
             "weaponcrafting": 5,
             "gearcrafting": 5,

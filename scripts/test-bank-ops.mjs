@@ -138,6 +138,19 @@ const fakeApi = {
   async getMyCharacters() {
     return [];
   },
+  async getMaps(params = {}) {
+    if (params.content_type === 'bank') {
+      return [{
+        map_id: 334,
+        name: 'City',
+        x: BANK.x,
+        y: BANK.y,
+        access: { conditions: [] },
+        interactions: { content: { type: 'bank', code: 'bank' } },
+      }];
+    }
+    return [];
+  },
   async getBankItems({ page }) {
     state.bankCalls += 1;
     if (page !== 1) return [];
