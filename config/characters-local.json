@@ -70,17 +70,17 @@
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 1,
+            "mining": 0,
             "woodcutting": 0,
             "fishing": 0,
-            "cooking": 0,
+            "cooking": 2,
             "alchemy": 0,
             "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 0,
-            "npc_task": 1,
-            "item_task": 2
+            "npc_task": 0,
+            "item_task": 0
           },
           "goals": {
             "mining": 20,
@@ -122,22 +122,22 @@
         {
           "type": "skillRotation",
           "weights": {
-            "mining": 1,
-            "woodcutting": 2,
+            "mining": 0,
+            "woodcutting": 0,
             "fishing": 2,
             "cooking": 5,
-            "alchemy": 1,
-            "weaponcrafting": 1,
-            "gearcrafting": 1,
-            "jewelrycrafting": 1,
-            "combat": 1,
-            "npc_task": 1,
+            "alchemy": 0,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 0,
+            "npc_task": 0,
             "item_task": 1
           },
           "goals": {
-            "mining": 20,
-            "woodcutting": 20,
-            "fishing": 20,
+            "mining": 10,
+            "woodcutting": 10,
+            "fishing": 10,
             "cooking": 10,
             "alchemy": 10,
             "weaponcrafting": 5,

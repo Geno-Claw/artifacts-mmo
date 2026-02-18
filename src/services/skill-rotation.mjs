@@ -234,33 +234,29 @@ export class SkillRotation {
       })
       .sort((a, b) => b.craft.level - a.craft.level);
 
+    const candidates = [];
     for (const item of missing) {
-      const plan = this.gameData.resolveRecipeChain(item.craft);
-      if (!plan || plan.length === 0) continue;
-      if (!this.gameData.canFulfillPlan(plan, ctx)) continue;
-
-      // Skip if any bank-only dependency can't be met
-      const bankSteps = plan.filter(s => s.type === 'bank');
-      if (bankSteps.length > 0) {
-        const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
-        if (!allMet) {
-          // Track unmet deps that are task exchange rewards
-          this._trackExchangeNeeds(bankSteps, bank);
-          continue;
-        }
-      }
-
-      this._recipe = item;
-      this._isCollection = true;
-      this._productionPlan = plan;
-      this._planStepProgress = new Map();
-      this._bankChecked = false;
-
-      log.info(`[${ctx.name}] Rotation: ${skill} → COLLECT ${item.code} (lv${item.craft.level}, ${plan.length} steps)`);
-      return true;
+      const candidate = this._buildCraftCandidate(item, ctx, bank);
+      if (!candidate) continue;
+      candidates.push(candidate);
     }
+    if (candidates.length === 0) return false;
 
-    return false;
+    candidates.sort((a, b) => b.recipe.craft.level - a.recipe.craft.level);
+
+    const bankOnlyCandidates = candidates.filter(c => c.bankOnly);
+    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : candidates;
+    const best = pool[0];
+
+    this._recipe = best.recipe;
+    this._isCollection = true;
+    this._productionPlan = best.plan;
+    this._planStepProgress = new Map();
+    this._bankChecked = false;
+
+    const bankFirstTag = bankOnlyCandidates.length > 0 ? ', bank-first' : '';
+    log.info(`[${ctx.name}] Rotation: ${skill} → COLLECT ${best.recipe.code} (lv${best.recipe.craft.level}, ${best.plan.length} steps${bankFirstTag})`);
+    return true;
   }
 
   /**
@@ -279,39 +275,30 @@ export class SkillRotation {
     for (const recipe of recipes) {
       if (blacklist.has(recipe.code)) continue;
 
-      const plan = this.gameData.resolveRecipeChain(recipe.craft);
-      if (!plan || plan.length === 0) continue;
-      if (!this.gameData.canFulfillPlan(plan, ctx)) continue;
-
-      // Skip recipes with unmet bank-only dependencies
-      const bankSteps = plan.filter(s => s.type === 'bank');
-      if (bankSteps.length > 0) {
-        const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
-        if (!allMet) {
-          this._trackExchangeNeeds(bankSteps, bank);
-          continue;
-        }
-      }
-
-      const availability = this._scoreRecipeAvailability(plan, ctx, bank);
-      scored.push({ recipe, plan, availability });
+      const candidate = this._buildCraftCandidate(recipe, ctx, bank);
+      if (!candidate) continue;
+      scored.push(candidate);
     }
     if (scored.length === 0) return false;
 
+    const bankOnlyCandidates = scored.filter(c => c.bankOnly);
+    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : scored;
+
     // Primary: craft.level DESC (XP proxy), tiebreaker: availability DESC
-    scored.sort((a, b) =>
+    pool.sort((a, b) =>
       b.recipe.craft.level - a.recipe.craft.level ||
       b.availability - a.availability
     );
 
-    const best = scored[0];
+    const best = pool[0];
     this._recipe = best.recipe;
     this._isCollection = false;
     this._productionPlan = best.plan;
     this._planStepProgress = new Map();
     this._bankChecked = false;
 
-    log.info(`[${ctx.name}] Rotation: ${skill} → XP ${this._recipe.code} (lv${this._recipe.craft.level}, ${best.plan.length} steps, avail: ${(best.availability * 100).toFixed(0)}%)`);
+    const bankFirstTag = bankOnlyCandidates.length > 0 ? ', bank-first' : '';
+    log.info(`[${ctx.name}] Rotation: ${skill} → XP ${this._recipe.code} (lv${this._recipe.craft.level}, ${best.plan.length} steps, avail: ${(best.availability * 100).toFixed(0)}%${bankFirstTag})`);
     return true;
   }
 
@@ -334,6 +321,46 @@ export class SkillRotation {
     }
 
     return totalNeeded > 0 ? totalHave / totalNeeded : 0;
+  }
+
+  /**
+   * Build a craft candidate with viability checks and metadata for selection.
+   * Returns null if the recipe cannot be used right now.
+   */
+  _buildCraftCandidate(recipe, ctx, bank) {
+    const plan = this.gameData.resolveRecipeChain(recipe.craft);
+    if (!plan || plan.length === 0) return null;
+    if (!this.gameData.canFulfillPlan(plan, ctx)) return null;
+
+    // Skip recipes with unmet bank-only dependencies
+    const bankSteps = plan.filter(s => s.type === 'bank');
+    if (bankSteps.length > 0) {
+      const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
+      if (!allMet) {
+        this._trackExchangeNeeds(bankSteps, bank);
+        return null;
+      }
+    }
+
+    return {
+      recipe,
+      plan,
+      availability: this._scoreRecipeAvailability(plan, ctx, bank),
+      bankOnly: this._isPlanBankOnly(plan, ctx, bank),
+    };
+  }
+
+  /**
+   * A plan is bank-only when all gather/bank inputs are already present in
+   * current inventory + bank, so no gathering action is needed.
+   */
+  _isPlanBankOnly(plan, ctx, bank) {
+    for (const step of plan) {
+      if (step.type !== 'gather' && step.type !== 'bank') continue;
+      const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
+      if (have < step.quantity) return false;
+    }
+    return true;
   }
 
   /**

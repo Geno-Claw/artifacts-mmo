@@ -6,10 +6,11 @@ process.env.ARTIFACTS_TOKEN ||= 'test-token';
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
 
-function makeCtx({ alchemyLevel = 1, itemCounts = {} } = {}) {
+function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
   return {
     name: 'Tester',
     skillLevel(skill) {
+      if (Object.hasOwn(skillLevels, skill)) return skillLevels[skill];
       if (skill === 'alchemy') return alchemyLevel;
       return 1;
     },
@@ -39,6 +40,18 @@ function makeAlchemyRecipe() {
       skill: 'alchemy',
       level: 5,
       items: [{ code: 'sunflower', quantity: 3 }],
+    },
+  };
+}
+
+function makeRecipe(code, skill, level) {
+  return {
+    code,
+    craft: {
+      skill,
+      level,
+      items: [],
+      _testCode: code,
     },
   };
 }
@@ -129,6 +142,123 @@ async function testAlchemyCraftingNonViableFallsBackToGathering() {
   assert.deepEqual(rotation.resourceLoc, { x: 2, y: 2 });
 }
 
+async function testCraftingXpPrefersBankOnlyRecipe() {
+  const lowBankRecipe = makeRecipe('cooked_shrimp', 'cooking', 5);
+  const highGatherRecipe = makeRecipe('cooked_bass', 'cooking', 25);
+  const planByRecipe = new Map([
+    [lowBankRecipe.code, [
+      { type: 'bank', itemCode: 'raw_shrimp', quantity: 2 },
+    ]],
+    [highGatherRecipe.code, [
+      {
+        type: 'gather',
+        itemCode: 'raw_bass',
+        resource: { code: 'bass_fishing_spot', skill: 'fishing', level: 1 },
+        quantity: 2,
+      },
+    ]],
+  ]);
+
+  const stub = makeGameDataStub({
+    findItems: ({ craftSkill, maxLevel }) =>
+      craftSkill === 'cooking' && maxLevel >= 25 ? [highGatherRecipe, lowBankRecipe] : [],
+    getBankItems: async () => new Map([['raw_shrimp', 20]]),
+    resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
+    canFulfillPlan: () => true,
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { cooking: 1 } },
+    { gameDataSvc: stub, findBestCombatTargetFn: async () => null },
+  );
+
+  const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
+  assert.equal(chosen, 'cooking');
+  assert.equal(rotation.recipe?.code, 'cooked_shrimp');
+  assert.equal(rotation.isCollection, false);
+}
+
+async function testCraftingXpFallsBackToHighestLevelWhenNoBankOnly() {
+  const lowRecipe = makeRecipe('cooked_shrimp', 'cooking', 5);
+  const highRecipe = makeRecipe('cooked_bass', 'cooking', 25);
+  const planByRecipe = new Map([
+    [lowRecipe.code, [
+      {
+        type: 'gather',
+        itemCode: 'raw_shrimp',
+        resource: { code: 'shrimp_fishing_spot', skill: 'fishing', level: 1 },
+        quantity: 2,
+      },
+    ]],
+    [highRecipe.code, [
+      {
+        type: 'gather',
+        itemCode: 'raw_bass',
+        resource: { code: 'bass_fishing_spot', skill: 'fishing', level: 1 },
+        quantity: 2,
+      },
+    ]],
+  ]);
+
+  const stub = makeGameDataStub({
+    findItems: ({ craftSkill, maxLevel }) =>
+      craftSkill === 'cooking' && maxLevel >= 25 ? [lowRecipe, highRecipe] : [],
+    getBankItems: async () => new Map(),
+    resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
+    canFulfillPlan: () => true,
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { cooking: 1 } },
+    { gameDataSvc: stub, findBestCombatTargetFn: async () => null },
+  );
+
+  const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
+  assert.equal(chosen, 'cooking');
+  assert.equal(rotation.recipe?.code, 'cooked_bass');
+  assert.equal(rotation.isCollection, false);
+}
+
+async function testCraftingCollectionPrefersBankOnlyMissingItem() {
+  const lowBankRecipe = makeRecipe('seasoned_egg', 'cooking', 5);
+  const highGatherRecipe = makeRecipe('royal_stew', 'cooking', 25);
+  const planByRecipe = new Map([
+    [lowBankRecipe.code, [
+      { type: 'bank', itemCode: 'egg', quantity: 1 },
+    ]],
+    [highGatherRecipe.code, [
+      {
+        type: 'gather',
+        itemCode: 'raw_venison',
+        resource: { code: 'venison_hunt', skill: 'hunting', level: 1 },
+        quantity: 2,
+      },
+    ]],
+  ]);
+
+  const stub = makeGameDataStub({
+    findItems: ({ craftSkill, maxLevel }) =>
+      craftSkill === 'cooking' && maxLevel >= 25 ? [highGatherRecipe, lowBankRecipe] : [],
+    getBankItems: async () => new Map([['egg', 10]]),
+    resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
+    canFulfillPlan: () => true,
+  });
+
+  const rotation = new SkillRotation(
+    {
+      weights: { cooking: 1 },
+      craftCollection: { cooking: true },
+    },
+    { gameDataSvc: stub, findBestCombatTargetFn: async () => null },
+  );
+
+  const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
+  assert.equal(chosen, 'cooking');
+  assert.equal(rotation.recipe?.code, 'seasoned_egg');
+  assert.equal(rotation.isCollection, true);
+  assert.equal(rotation.goalTarget, 1);
+}
+
 function makeRoutineWithAlchemyState(state) {
   const routine = new SkillRotationRoutine();
   let gatherCalls = 0;
@@ -187,6 +317,9 @@ async function run() {
   await testAlchemyFallbackToGatherAtLevel1();
   await testAlchemyCraftingCollectionIsPreservedWhenViable();
   await testAlchemyCraftingNonViableFallsBackToGathering();
+  await testCraftingXpPrefersBankOnlyRecipe();
+  await testCraftingXpFallsBackToHighestLevelWhenNoBankOnly();
+  await testCraftingCollectionPrefersBankOnlyMissingItem();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
   console.log('skill-rotation tests passed');
