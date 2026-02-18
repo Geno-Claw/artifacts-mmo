@@ -6,26 +6,11 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { applyBankDelta, availableBankCount, bankCount, globalCount, invalidateBank } from './inventory-manager.mjs';
+import { applyBankDelta, bankCount, globalCount, invalidateBank } from './inventory-manager.mjs';
+import { withdrawBankItems } from './bank-ops.mjs';
 import { getSellRules } from './ge-seller.mjs';
 import { moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
-
-// --- Concurrency control (same pattern as ge-seller.mjs) ---
-
-let _recycleLock = null;
-
-async function withRecycleLock(fn) {
-  while (_recycleLock) await _recycleLock;
-  let release;
-  _recycleLock = new Promise(r => { release = r; });
-  try {
-    return await fn();
-  } finally {
-    _recycleLock = null;
-    release();
-  }
-}
 
 // --- Analysis ---
 
@@ -77,53 +62,45 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
 /**
  * Execute the full recycle flow for a character.
  * Assumes character has already deposited inventory to bank.
- * Uses an async mutex so only one character recycles at a time,
- * preventing concurrent reads of stale bank state.
  *
  * @param {import('../context.mjs').CharacterContext} ctx
  * @returns {Promise<number>} Number of item types successfully recycled
  */
 export async function executeRecycleFlow(ctx) {
-  if (_recycleLock) {
-    log.info(`[${ctx.name}] Recycle: waiting for another character's recycle flow to finish`);
+  const workshops = await gameData.getWorkshops();
+
+  // Force-refresh bank before evaluating recycler candidates.
+  const bankItems = await gameData.getBankItems(true);
+
+  const candidates = analyzeRecycleCandidates(ctx, bankItems);
+  if (candidates.length === 0) {
+    log.info(`[${ctx.name}] Recycle: no equipment to recycle`);
+    return 0;
   }
 
-  return withRecycleLock(async () => {
-    const workshops = await gameData.getWorkshops();
+  log.info(`[${ctx.name}] Recycle: ${candidates.length} item(s) to recycle: ${candidates.map(c => `${c.code} x${c.quantity}`).join(', ')}`);
 
-    // Force-refresh bank inside the lock to get current state
-    const bankItems = await gameData.getBankItems(true);
-
-    const candidates = analyzeRecycleCandidates(ctx, bankItems);
-    if (candidates.length === 0) {
-      log.info(`[${ctx.name}] Recycle: no equipment to recycle`);
-      return 0;
+  // Group by craft skill for efficient workshop travel
+  const groups = new Map();
+  for (const candidate of candidates) {
+    const skill = candidate.craftSkill;
+    if (!workshops[skill]) {
+      log.warn(`[${ctx.name}] Recycle: no workshop found for ${skill}, skipping ${candidate.code}`);
+      continue;
     }
+    if (!groups.has(skill)) groups.set(skill, []);
+    groups.get(skill).push(candidate);
+  }
 
-    log.info(`[${ctx.name}] Recycle: ${candidates.length} item(s) to recycle: ${candidates.map(c => `${c.code} x${c.quantity}`).join(', ')}`);
+  let totalRecycled = 0;
 
-    // Group by craft skill for efficient workshop travel
-    const groups = new Map();
-    for (const candidate of candidates) {
-      const skill = candidate.craftSkill;
-      if (!workshops[skill]) {
-        log.warn(`[${ctx.name}] Recycle: no workshop found for ${skill}, skipping ${candidate.code}`);
-        continue;
-      }
-      if (!groups.has(skill)) groups.set(skill, []);
-      groups.get(skill).push(candidate);
-    }
+  for (const [skill, items] of groups) {
+    const workshop = workshops[skill];
+    totalRecycled += await _recycleGroup(ctx, skill, workshop, items);
+  }
 
-    let totalRecycled = 0;
-
-    for (const [skill, items] of groups) {
-      const workshop = workshops[skill];
-      totalRecycled += await _recycleGroup(ctx, skill, workshop, items);
-    }
-
-    log.info(`[${ctx.name}] Recycle: completed, ${totalRecycled} item type(s) recycled`);
-    return totalRecycled;
-  });
+  log.info(`[${ctx.name}] Recycle: completed, ${totalRecycled} item type(s) recycled`);
+  return totalRecycled;
 }
 
 // --- Private helpers ---
@@ -133,31 +110,22 @@ async function _recycleGroup(ctx, skill, workshop, items) {
 
   // Step 1: Withdraw items from bank
   await moveTo(ctx, BANK.x, BANK.y);
-  const withdrawn = [];
-
-  for (const candidate of items) {
-    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-    if (space <= 0) {
-      log.warn(`[${ctx.name}] Recycle: inventory full, stopping withdrawals for ${skill}`);
-      break;
-    }
-
-    const available = availableBankCount(candidate.code, { includeChar: ctx.name });
-    const qty = Math.min(candidate.quantity, space, available);
-    if (qty <= 0) continue;
-
-    try {
-      const result = await api.withdrawBank([{ code: candidate.code, quantity: qty }], ctx.name);
-      await api.waitForCooldown(result);
-      applyBankDelta([{ code: candidate.code, quantity: qty }], 'withdraw', {
-        charName: ctx.name,
-        reason: `recycler withdrawal (${skill})`,
-      });
-      await ctx.refresh();
-      withdrawn.push({ code: candidate.code, quantity: qty });
-    } catch (err) {
-      invalidateBank(`[${ctx.name}] recycler withdraw failed for ${candidate.code}: ${err.message}`);
-      log.warn(`[${ctx.name}] Recycle: could not withdraw ${candidate.code}: ${err.message}`);
+  const withdrawResult = await withdrawBankItems(
+    ctx,
+    items.map(candidate => ({ code: candidate.code, quantity: candidate.quantity })),
+    {
+      reason: `recycler withdrawal (${skill})`,
+      mode: 'partial',
+      retryStaleOnce: true,
+    },
+  );
+  const withdrawn = withdrawResult.withdrawn;
+  for (const row of withdrawResult.failed) {
+    log.warn(`[${ctx.name}] Recycle: could not withdraw ${row.code}: ${row.error}`);
+  }
+  for (const row of withdrawResult.skipped) {
+    if (!row.reason.startsWith('partial fill')) {
+      log.warn(`[${ctx.name}] Recycle: skipped ${row.code} (${row.reason})`);
     }
   }
 

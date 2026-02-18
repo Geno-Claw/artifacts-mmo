@@ -6,18 +6,18 @@
 import * as api from './api.mjs';
 import * as log from './log.mjs';
 import * as gameData from './services/game-data.mjs';
+import { canUseItem } from './services/item-conditions.mjs';
 import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
 import { hpNeededForFight, simulateCombat } from './services/combat-simulator.mjs';
 import { optimizeForMonster, optimizeForGathering } from './services/gear-optimizer.mjs';
 import {
   applyBankDelta,
-  availableBankCount,
-  bankCount,
   invalidateBank,
-  release,
-  reserve,
-  reserveMany,
 } from './services/inventory-manager.mjs';
+import {
+  withdrawBankItem,
+  withdrawBankItems,
+} from './services/bank-ops.mjs';
 import { BANK } from './data/locations.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
@@ -34,7 +34,8 @@ export async function moveTo(ctx, x, y) {
 
 /** Find consumable food items in inventory that restore HP. */
 function findHealingFood(ctx) {
-  const inv = ctx.get().inventory;
+  const character = ctx.get();
+  const inv = character.inventory;
   if (!inv) return [];
 
   const foods = [];
@@ -43,6 +44,7 @@ function findHealingFood(ctx) {
 
     const item = gameData.getItem(slot.code);
     if (!item || item.type !== 'consumable') continue;
+    if (!canUseItem(item, character)) continue;
     if (!item.effects || item.effects.length === 0) continue;
 
     let hpRestore = 0;
@@ -62,14 +64,30 @@ function findHealingFood(ctx) {
   return foods;
 }
 
+/** True if character has at least one usable healing consumable in inventory. */
+export function hasHealingFood(ctx) {
+  return findHealingFood(ctx).length > 0;
+}
+
+/** Rest action availability (server-side requires level > 4). */
+export function canUseRestAction(ctx) {
+  return (ctx.get().level || 0) > 4;
+}
+
+function isConditionNotMet(err) {
+  const msg = `${err?.message || ''}`.toLowerCase();
+  return msg.includes('condition not met');
+}
+
 /** Find consumable food items in the bank that restore HP. */
-function findBankFood(bankItems) {
+function findBankFood(bankItems, character) {
   const foods = [];
   for (const [code, quantity] of bankItems) {
     if (quantity <= 0) continue;
 
     const item = gameData.getItem(code);
     if (!item || item.type !== 'consumable') continue;
+    if (!canUseItem(item, character)) continue;
     if (!item.effects || item.effects.length === 0) continue;
 
     let hpRestore = 0;
@@ -88,24 +106,12 @@ function findBankFood(bankItems) {
   return foods;
 }
 
-function isBankAvailabilityError(err) {
-  if (!err) return false;
-  const msg = String(err.message || '').toLowerCase();
-  return (
-    msg.includes('not enough') ||
-    msg.includes('insufficient') ||
-    msg.includes('quantity') ||
-    msg.includes('not found') ||
-    msg.includes('does not exist')
-  );
-}
-
-/** Rest until HP reaches the given percentage. Eats food first for faster recovery. */
+/** Rest until HP reaches the given percentage. Eats food first for faster recovery. Returns true when target HP is reached. */
 export async function restUntil(ctx, hpPct = 80) {
   // Phase 1: Eat food from inventory
   const foods = findHealingFood(ctx);
   for (const food of foods) {
-    if (ctx.hpPercent() >= hpPct) return;
+    if (ctx.hpPercent() >= hpPct) return true;
 
     const c = ctx.get();
     const hpNeeded = Math.ceil(c.max_hp * hpPct / 100) - c.hp;
@@ -123,18 +129,38 @@ export async function restUntil(ctx, hpPct = 80) {
         log.warn(`[${ctx.name}] ${food.code} is not consumable, skipping`);
         continue;
       }
+      if (isConditionNotMet(err)) {
+        log.warn(`[${ctx.name}] Cannot use ${food.code} right now (${err.message}), skipping`);
+        continue;
+      }
       throw err;
     }
+  }
+
+  if (ctx.hpPercent() >= hpPct) return true;
+  if (!canUseRestAction(ctx)) {
+    const c = ctx.get();
+    log.warn(`[${ctx.name}] Rest unavailable below level 5 (lv${c.level}); cannot heal to ${hpPct}%`);
+    return false;
   }
 
   // Phase 2: Fall back to rest API for remaining HP deficit
   while (ctx.hpPercent() < hpPct) {
     const c = ctx.get();
     log.info(`[${ctx.name}] Resting (${c.hp}/${c.max_hp} HP, want ${hpPct}%)`);
-    const result = await api.rest(ctx.name);
-    await api.waitForCooldown(result);
-    await ctx.refresh();
+    try {
+      const result = await api.rest(ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+    } catch (err) {
+      if (isConditionNotMet(err)) {
+        log.warn(`[${ctx.name}] Rest unavailable right now (${err.message}); stopping rest attempts`);
+        return false;
+      }
+      throw err;
+    }
   }
+  return true;
 }
 
 /**
@@ -150,8 +176,15 @@ export async function restBeforeFight(ctx, monsterCode) {
 
   const targetPct = Math.ceil((minHp / c.max_hp) * 100);
   log.info(`[${ctx.name}] Need ${minHp}hp (${targetPct}%) to fight ${monsterCode}, have ${c.hp}hp`);
-  await restUntil(ctx, targetPct);
-  return true;
+  const recovered = await restUntil(ctx, targetPct);
+  if (!recovered) {
+    const fresh = ctx.get();
+    if (fresh.hp < minHp) {
+      log.warn(`[${ctx.name}] Cannot reach ${minHp}hp for ${monsterCode} (have ${fresh.hp}hp)`);
+      return false;
+    }
+  }
+  return ctx.get().hp >= minHp;
 }
 
 /**
@@ -200,9 +233,9 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
 
   // Find food in bank
   const bank = await gameData.getBankItems(true);
-  const bankFoods = findBankFood(bank);
+  const bankFoods = findBankFood(bank, ctx.get());
   if (bankFoods.length === 0) {
-    log.info(`[${ctx.name}] Food: no food in bank, will rely on rest API`);
+    log.info(`[${ctx.name}] Food: no usable food in bank, will rely on rest API`);
     return true;
   }
 
@@ -238,15 +271,18 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
   await moveTo(ctx, BANK.x, BANK.y);
   for (const w of toWithdraw) {
     if (w.quantity <= 0) continue;
-    try {
-      log.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`);
-      await withdrawItem(ctx, w.code, w.quantity, { reason: `food withdrawal for ${monsterCode}` });
-    } catch (err) {
-      if (isBankAvailabilityError(err)) {
-        invalidateBank(`[${ctx.name}] food withdrawal failed for ${w.code}: ${err.message}`);
-      }
-      log.warn(`[${ctx.name}] Food: could not withdraw ${w.code}: ${err.message}`);
-    }
+    log.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`);
+  }
+  const withdrawalResult = await withdrawBankItems(ctx, toWithdraw, {
+    reason: `food withdrawal for ${monsterCode}`,
+    mode: 'partial',
+    retryStaleOnce: true,
+  });
+  for (const row of withdrawalResult.failed) {
+    log.warn(`[${ctx.name}] Food: could not withdraw ${row.code}: ${row.error}`);
+  }
+  for (const row of withdrawalResult.skipped) {
+    log.warn(`[${ctx.name}] Food: skipped ${row.code} (${row.reason})`);
   }
 
   return true;
@@ -365,7 +401,6 @@ export function rawMaterialNeeded(ctx, plan, itemCode, batchSize = 1) {
  * @returns {string[]} — list of "itemCode xN" descriptions for logging
  */
 export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
-  const bank = await gameData.getBankItems(true);
   const withdrawn = [];
   const stepsReversed = [...plan].reverse();
 
@@ -381,13 +416,7 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
     const needed = step.quantity * batchSize - have;
     if (needed <= 0) continue;
 
-    const inBank = Math.min(
-      bank.get(code) || 0,
-      availableBankCount(code, { includeChar: ctx.name }),
-    );
-    if (inBank <= 0) continue;
-
-    const toWithdraw = Math.min(needed, inBank, remainingSpace);
+    const toWithdraw = Math.min(needed, remainingSpace);
     if (toWithdraw <= 0) continue;
 
     plannedByCode.set(code, plannedQty + toWithdraw);
@@ -397,27 +426,20 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
   const requests = [...plannedByCode.entries()].map(([code, qty]) => ({ code, qty }));
   if (requests.length === 0) return withdrawn;
 
-  const batch = reserveMany(requests, ctx.name);
-  if (!batch.ok) {
-    log.warn(`[${ctx.name}] Could not reserve full crafting plan (${batch.reason}), falling back to per-item withdrawals`);
-    for (const req of requests) {
-      try {
-        await withdrawItem(ctx, req.code, req.qty);
-        withdrawn.push(`${req.code} x${req.qty}`);
-      } catch (err) {
-        log.warn(`[${ctx.name}] Could not withdraw ${req.code}: ${err.message}`);
-      }
-    }
-    return withdrawn;
+  const result = await withdrawBankItems(ctx, requests, {
+    reason: 'helper withdrawPlanFromBank',
+    mode: 'partial',
+    retryStaleOnce: true,
+  });
+  for (const row of result.withdrawn) {
+    withdrawn.push(`${row.code} x${row.quantity}`);
   }
-
-  const reservationByCode = new Map(batch.reservations.map(r => [r.code, r.id]));
-  for (const req of requests) {
-    try {
-      await withdrawItem(ctx, req.code, req.qty, { reservationId: reservationByCode.get(req.code) });
-      withdrawn.push(`${req.code} x${req.qty}`);
-    } catch (err) {
-      log.warn(`[${ctx.name}] Could not withdraw ${req.code}: ${err.message}`);
+  for (const row of result.failed) {
+    log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.error}`);
+  }
+  for (const row of result.skipped) {
+    if (!row.reason.startsWith('partial fill')) {
+      log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
     }
   }
 
@@ -427,61 +449,12 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1) {
 /** Move to bank and withdraw a specific item. */
 export async function withdrawItem(ctx, code, quantity = 1, opts = {}) {
   await moveTo(ctx, BANK.x, BANK.y);
-
-  const requested = Number(quantity) || 0;
-  if (requested <= 0) return null;
-
-  const reason = opts.reason || 'helper withdrawItem';
-  const passedReservationId = opts.reservationId || null;
-  let createdReservationId = null;
-  let qty = requested;
-
-  if (!passedReservationId) {
-    let available = availableBankCount(code, { includeChar: ctx.name });
-    if (available <= 0) {
-      await gameData.getBankItems(true);
-      available = availableBankCount(code, { includeChar: ctx.name });
-    }
-    if (available <= 0) {
-      throw new Error(`Bank has no ${code} available`);
-    }
-
-    qty = Math.min(requested, available);
-    if (qty < requested) {
-      log.info(`[${ctx.name}] Withdrawing ${code}: requested ${requested}, only ${qty} available`);
-    } else {
-      log.info(`[${ctx.name}] Withdrawing ${code} x${qty}`);
-    }
-
-    createdReservationId = reserve(code, qty, ctx.name);
-    if (!createdReservationId) {
-      await gameData.getBankItems(true);
-      const retryAvailable = availableBankCount(code, { includeChar: ctx.name });
-      qty = Math.min(requested, retryAvailable);
-      if (qty <= 0) throw new Error(`Bank has no ${code} available`);
-      createdReservationId = reserve(code, qty, ctx.name);
-      if (!createdReservationId) {
-        throw new Error(`Could not reserve ${code} x${qty}`);
-      }
-    }
-  } else {
-    log.info(`[${ctx.name}] Withdrawing ${code} x${qty}`);
-  }
-
-  try {
-    const result = await api.withdrawBank([{ code, quantity: qty }], ctx.name);
-    await api.waitForCooldown(result);
-    applyBankDelta([{ code, quantity: qty }], 'withdraw', { charName: ctx.name, reason });
-    await ctx.refresh();
-    return result;
-  } catch (err) {
-    if (isBankAvailabilityError(err)) {
-      invalidateBank(`[${ctx.name}] withdraw failed for ${code}: ${err.message}`);
-    }
-    throw err;
-  } finally {
-    release(passedReservationId || createdReservationId);
-  }
+  return withdrawBankItem(ctx, code, quantity, {
+    reason: opts.reason || 'helper withdrawItem',
+    mode: 'partial',
+    retryStaleOnce: true,
+    throwOnAllSkipped: true,
+  });
 }
 
 /** Move to bank and deposit all inventory items. */
@@ -577,19 +550,17 @@ export async function equipForCombat(ctx, monsterCode) {
     }
 
     const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
-    const batch = reserveMany(requests, ctx.name);
-    if (!batch.ok) {
-      log.warn(`[${ctx.name}] Could not reserve all gear withdrawals (${batch.reason}), falling back to per-item reservations`);
+    const result = await withdrawBankItems(ctx, requests, {
+      reason: `combat gear withdrawal for ${monsterCode}`,
+      mode: 'partial',
+      retryStaleOnce: true,
+    });
+    for (const row of result.failed) {
+      log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.error}`);
     }
-    const reservationByCode = new Map(batch.reservations?.map(r => [r.code, r.id]) || []);
-
-    for (const [targetCode, qtyNeeded] of bankNeeded.entries()) {
-      const missing = Math.max(0, qtyNeeded - ctx.itemCount(targetCode));
-      if (missing <= 0) continue;
-      try {
-        await withdrawItem(ctx, targetCode, missing, { reservationId: reservationByCode.get(targetCode) || null });
-      } catch (err) {
-        log.warn(`[${ctx.name}] Could not withdraw ${targetCode}: ${err.message}`);
+    for (const row of result.skipped) {
+      if (!row.reason.startsWith('partial fill')) {
+        log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
       }
     }
   }
@@ -739,19 +710,17 @@ export async function equipForGathering(ctx, skill) {
     }
 
     const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
-    const batch = reserveMany(requests, ctx.name);
-    if (!batch.ok) {
-      log.warn(`[${ctx.name}] Could not reserve all gathering gear withdrawals (${batch.reason}), falling back to per-item reservations`);
+    const result = await withdrawBankItems(ctx, requests, {
+      reason: `gathering gear withdrawal for ${skill}`,
+      mode: 'partial',
+      retryStaleOnce: true,
+    });
+    for (const row of result.failed) {
+      log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.error}`);
     }
-    const reservationByCode = new Map(batch.reservations?.map(r => [r.code, r.id]) || []);
-
-    for (const [targetCode, qtyNeeded] of bankNeeded.entries()) {
-      const missing = Math.max(0, qtyNeeded - ctx.itemCount(targetCode));
-      if (missing <= 0) continue;
-      try {
-        await withdrawItem(ctx, targetCode, missing, { reservationId: reservationByCode.get(targetCode) || null });
-      } catch (err) {
-        log.warn(`[${ctx.name}] Could not withdraw ${targetCode}: ${err.message}`);
+    for (const row of result.skipped) {
+      if (!row.reason.startsWith('partial fill')) {
+        log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
       }
     }
   }

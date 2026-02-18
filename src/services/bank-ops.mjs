@@ -1,0 +1,279 @@
+/**
+ * Bank item withdrawal operations.
+ * Centralizes reservation-aware withdraw logic so all flows share
+ * the same contention handling and cache invalidation behavior.
+ */
+import * as api from '../api.mjs';
+import * as log from '../log.mjs';
+import {
+  applyBankDelta,
+  availableBankCount,
+  getBankItems,
+  invalidateBank,
+  release,
+  reserve,
+  reserveMany,
+} from './inventory-manager.mjs';
+
+let _api = api;
+let _forcedBatchReserveFailures = 0;
+
+function toPositiveInt(value) {
+  const n = Number(value) || 0;
+  return Number.isFinite(n) ? Math.floor(n) : 0;
+}
+
+function normalizeRequests(requests = []) {
+  const totals = new Map();
+  const order = [];
+
+  for (const req of requests) {
+    const code = req?.code;
+    const qty = toPositiveInt(req?.qty ?? req?.quantity);
+    if (!code || qty <= 0) continue;
+    if (!totals.has(code)) order.push(code);
+    totals.set(code, (totals.get(code) || 0) + qty);
+  }
+
+  return order.map(code => ({ code, requested: totals.get(code) }));
+}
+
+function buildPlan(ctx, normalized, mode) {
+  const plan = [];
+  const skipped = [];
+
+  let remainingSpace = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
+  for (const req of normalized) {
+    if (remainingSpace <= 0) {
+      skipped.push({ code: req.code, requested: req.requested, reason: 'inventory full' });
+      continue;
+    }
+
+    const available = availableBankCount(req.code, { includeChar: ctx.name });
+    if (available <= 0) {
+      skipped.push({ code: req.code, requested: req.requested, reason: 'not available in bank' });
+      continue;
+    }
+
+    if (mode === 'strict') {
+      if (available < req.requested) {
+        skipped.push({
+          code: req.code,
+          requested: req.requested,
+          reason: `strict mode: need ${req.requested}, available ${available}`,
+        });
+        continue;
+      }
+      if (remainingSpace < req.requested) {
+        skipped.push({
+          code: req.code,
+          requested: req.requested,
+          reason: `strict mode: need ${req.requested} slots, have ${remainingSpace}`,
+        });
+        continue;
+      }
+      plan.push({ code: req.code, requested: req.requested, quantity: req.requested });
+      remainingSpace -= req.requested;
+      continue;
+    }
+
+    const qty = Math.min(req.requested, available, remainingSpace);
+    if (qty <= 0) {
+      skipped.push({ code: req.code, requested: req.requested, reason: 'not available in bank' });
+      continue;
+    }
+
+    if (qty < req.requested) {
+      skipped.push({ code: req.code, requested: req.requested, reason: `partial fill ${qty}/${req.requested}` });
+    }
+
+    plan.push({ code: req.code, requested: req.requested, quantity: qty });
+    remainingSpace -= qty;
+  }
+
+  return { plan, skipped };
+}
+
+export function isBankAvailabilityError(err) {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    msg.includes('not enough') ||
+    msg.includes('insufficient') ||
+    msg.includes('quantity') ||
+    msg.includes('not found') ||
+    msg.includes('does not exist')
+  );
+}
+
+function tryReserveMany(requests, charName) {
+  if (_forcedBatchReserveFailures > 0) {
+    _forcedBatchReserveFailures -= 1;
+    return { ok: false, reservations: [], reason: 'forced reserveMany failure (test)' };
+  }
+  return reserveMany(requests, charName);
+}
+
+async function executeReservedWithdraw(ctx, req, reservationId, reason, result) {
+  let localReservationId = reservationId || null;
+  const requested = toPositiveInt(req.requested || req.quantity);
+  let qty = toPositiveInt(req.quantity);
+  let createdReservationId = null;
+
+  if (qty <= 0 || !req.code) return;
+
+  if (!localReservationId) {
+    localReservationId = reserve(req.code, qty, ctx.name);
+    if (!localReservationId) {
+      result.skipped.push({
+        code: req.code,
+        requested,
+        reason: `could not reserve ${qty}`,
+      });
+      return;
+    }
+    createdReservationId = localReservationId;
+  }
+
+  if (qty < requested) {
+    log.info(`[${ctx.name}] Withdrawing ${req.code}: requested ${requested}, only ${qty} available`);
+  } else {
+    log.info(`[${ctx.name}] Withdrawing ${req.code} x${qty}`);
+  }
+
+  try {
+    const action = await _api.withdrawBank([{ code: req.code, quantity: qty }], ctx.name);
+    await _api.waitForCooldown(action);
+    applyBankDelta([{ code: req.code, quantity: qty }], 'withdraw', {
+      charName: ctx.name,
+      reason,
+    });
+    await ctx.refresh();
+    result.withdrawn.push({ code: req.code, quantity: qty });
+  } catch (err) {
+    if (isBankAvailabilityError(err)) {
+      invalidateBank(`[${ctx.name}] withdraw failed for ${req.code}: ${err.message}`);
+    }
+    result.failed.push({
+      code: req.code,
+      requested,
+      error: err.message,
+    });
+  } finally {
+    release(createdReservationId || reservationId);
+  }
+}
+
+function pickRetryReason(summary) {
+  const fromFailure = summary.failed.find(row => isBankAvailabilityError({ message: row.error }));
+  if (fromFailure) return fromFailure.error;
+  const fromSkipped = summary.skipped.find(row => row.reason.includes('not available') || row.reason.includes('could not reserve'));
+  return fromSkipped?.reason || '';
+}
+
+/**
+ * Withdraw one item from bank.
+ * Returns the same shape as withdrawBankItems for consistency.
+ */
+export async function withdrawBankItem(ctx, code, quantity = 1, opts = {}) {
+  return withdrawBankItems(ctx, [{ code, quantity }], opts);
+}
+
+/**
+ * Withdraw multiple items from bank with reservation coordination.
+ *
+ * @param {import('../context.mjs').CharacterContext} ctx
+ * @param {Array<{code:string, quantity?:number, qty?:number}>} requests
+ * @param {{
+ *   reason?: string,
+ *   mode?: 'partial' | 'strict',
+ *   retryStaleOnce?: boolean,
+ *   throwOnAllSkipped?: boolean
+ * }} opts
+ * @returns {Promise<{
+ *   withdrawn: Array<{ code: string, quantity: number }>,
+ *   skipped: Array<{ code: string, requested: number, reason: string }>,
+ *   failed: Array<{ code: string, requested: number, error: string }>
+ * }>}
+ */
+export async function withdrawBankItems(ctx, requests, opts = {}) {
+  const reason = opts.reason || 'bank-ops withdrawal';
+  const mode = opts.mode === 'strict' ? 'strict' : 'partial';
+  const retryStaleOnce = opts.retryStaleOnce !== false;
+  const throwOnAllSkipped = opts.throwOnAllSkipped === true;
+
+  const result = {
+    withdrawn: [],
+    skipped: [],
+    failed: [],
+  };
+
+  const normalized = normalizeRequests(requests);
+  if (normalized.length === 0) return result;
+
+  let { plan, skipped } = buildPlan(ctx, normalized, mode);
+  result.skipped.push(...skipped);
+
+  let batch = tryReserveMany(plan.map(p => ({ code: p.code, qty: p.quantity })), ctx.name);
+
+  if (!batch.ok && retryStaleOnce) {
+    await getBankItems(true);
+    ({ plan, skipped } = buildPlan(ctx, normalized, mode));
+    result.skipped = [...skipped];
+    batch = tryReserveMany(plan.map(p => ({ code: p.code, qty: p.quantity })), ctx.name);
+  }
+
+  if (batch.ok) {
+    const reservationByCode = new Map(batch.reservations.map(r => [r.code, r.id]));
+    for (const req of plan) {
+      await executeReservedWithdraw(ctx, req, reservationByCode.get(req.code), reason, result);
+    }
+  } else {
+    const reserveReason = batch.reason || 'reservation failed';
+    log.warn(`[${ctx.name}] Could not reserve full withdrawal batch (${reserveReason}), falling back to per-item reservations`);
+    for (const req of plan) {
+      await executeReservedWithdraw(ctx, req, null, reason, result);
+    }
+  }
+
+  if (
+    retryStaleOnce &&
+    result.withdrawn.length === 0 &&
+    (result.failed.length > 0 || result.skipped.length > 0)
+  ) {
+    const retryReason = pickRetryReason(result);
+    if (retryReason) {
+      await getBankItems(true);
+      const retry = await withdrawBankItems(ctx, requests, {
+        ...opts,
+        retryStaleOnce: false,
+      });
+      return retry;
+    }
+  }
+
+  if (throwOnAllSkipped && result.withdrawn.length === 0) {
+    const firstFailure = result.failed[0];
+    const firstSkipped = result.skipped[0];
+    const reasonText = firstFailure
+      ? firstFailure.error
+      : (firstSkipped?.reason || 'no items available');
+    throw new Error(reasonText);
+  }
+
+  return result;
+}
+
+// Test helpers.
+export function _setApiClientForTests(client) {
+  _api = client || api;
+}
+
+export function _resetForTests() {
+  _api = api;
+  _forcedBatchReserveFailures = 0;
+}
+
+export function _setForcedBatchReserveFailuresForTests(count) {
+  _forcedBatchReserveFailures = Math.max(0, Number(count) || 0);
+}

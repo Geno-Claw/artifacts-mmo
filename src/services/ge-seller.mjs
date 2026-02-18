@@ -7,7 +7,7 @@ import { readFileSync } from 'fs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { applyBankDelta, availableBankCount, invalidateBank } from './inventory-manager.mjs';
+import { withdrawBankItems } from './bank-ops.mjs';
 import { moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 
@@ -202,31 +202,22 @@ export async function executeSellFlow(ctx) {
 
     // Step 1: Withdraw sell candidates from bank (must be at bank)
     await moveTo(ctx, BANK.x, BANK.y);
-    const withdrawn = [];
-
-    for (const candidate of candidates) {
-      const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-      if (space <= 0) {
-        log.warn(`[${ctx.name}] GE: inventory full, stopping withdrawals`);
-        break;
-      }
-
-      const available = availableBankCount(candidate.code, { includeChar: ctx.name });
-      const qty = Math.min(candidate.quantity, space, available);
-      if (qty <= 0) continue;
-
-      try {
-        const result = await api.withdrawBank([{ code: candidate.code, quantity: qty }], ctx.name);
-        await api.waitForCooldown(result);
-        applyBankDelta([{ code: candidate.code, quantity: qty }], 'withdraw', {
-          charName: ctx.name,
-          reason: 'GE sell flow withdrawal',
-        });
-        await ctx.refresh();
-        withdrawn.push({ code: candidate.code, quantity: qty });
-      } catch (err) {
-        invalidateBank(`[${ctx.name}] GE withdraw failed for ${candidate.code}: ${err.message}`);
-        log.warn(`[${ctx.name}] GE: could not withdraw ${candidate.code}: ${err.message}`);
+    const withdrawResult = await withdrawBankItems(
+      ctx,
+      candidates.map(c => ({ code: c.code, quantity: c.quantity })),
+      {
+        reason: 'GE sell flow withdrawal',
+        mode: 'partial',
+        retryStaleOnce: true,
+      },
+    );
+    const withdrawn = withdrawResult.withdrawn;
+    for (const row of withdrawResult.failed) {
+      log.warn(`[${ctx.name}] GE: could not withdraw ${row.code}: ${row.error}`);
+    }
+    for (const row of withdrawResult.skipped) {
+      if (!row.reason.startsWith('partial fill')) {
+        log.warn(`[${ctx.name}] GE: skipped ${row.code} (${row.reason})`);
       }
     }
 

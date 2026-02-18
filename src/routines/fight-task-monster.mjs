@@ -1,8 +1,8 @@
 import { BaseRoutine } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat } from '../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, canUseRestAction, hasHealingFood } from '../helpers.mjs';
 import { MONSTERS, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
-import { canBeatMonster } from '../services/combat-simulator.mjs';
+import { canBeatMonster, hpNeededForFight } from '../services/combat-simulator.mjs';
 
 /**
  * Fights whatever monster the active NPC task requires.
@@ -24,6 +24,9 @@ export class FightTaskMonsterRoutine extends BaseRoutine {
     if (ctx.get().level < loc.level) return false;
     if (ctx.consecutiveLosses(monster) >= this.maxLosses) return false;
     if (!canBeatMonster(ctx, monster)) return false;
+    const minHp = hpNeededForFight(ctx, monster);
+    if (minHp === null) return false;
+    if (ctx.get().hp < minHp && !canUseRestAction(ctx) && !hasHealingFood(ctx)) return false;
     if (ctx.inventoryFull()) return false;
     return true;
   }
@@ -40,7 +43,7 @@ export class FightTaskMonsterRoutine extends BaseRoutine {
     }
 
     await moveTo(ctx, loc.x, loc.y);
-    await restBeforeFight(ctx, monster);
+    if (!(await restBeforeFight(ctx, monster))) return false;
 
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);

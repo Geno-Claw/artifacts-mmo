@@ -1,5 +1,5 @@
 import { BaseRoutine } from './base.mjs';
-import { restUntil } from '../helpers.mjs';
+import { canUseRestAction, hasHealingFood, restUntil } from '../helpers.mjs';
 
 export class RestRoutine extends BaseRoutine {
   constructor({ triggerPct = 40, targetPct = 80, priority = 100 } = {}) {
@@ -9,7 +9,8 @@ export class RestRoutine extends BaseRoutine {
   }
 
   canRun(ctx) {
-    return ctx.hpPercent() < this.triggerPct;
+    if (ctx.hpPercent() >= this.triggerPct) return false;
+    return canUseRestAction(ctx) || hasHealingFood(ctx);
   }
 
   async execute(ctx) {

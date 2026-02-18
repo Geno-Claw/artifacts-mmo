@@ -123,7 +123,7 @@ DRY wrappers that handle `waitForCooldown` + `ctx.refresh()` internally:
 | `equipForCombat(ctx, monster)` | Full gear optimization with caching |
 | `parseFightResult(result, ctx)` | Extract win/xp/gold/drops from fight |
 | `depositAll(ctx)` | Move to bank, deposit all inventory |
-| `withdrawItem(ctx, code, qty)` | Move to bank, withdraw specific item |
+| `withdrawItem(ctx, code, qty)` | Move to bank, withdraw via reservation-backed bank ops |
 | `withdrawPlanFromBank(ctx, plan)` | Withdraw items for a crafting plan |
 | `rawMaterialNeeded(ctx, plan, code)` | Remaining material needed for a plan |
 | `clearGearCache(charName)` | Reset gear cache (called on level-up) |
@@ -147,6 +147,13 @@ Simulation-based equipment selection. Three-phase greedy approach:
 
 Considers items from bank, inventory, and currently equipped. Handles ring deduplication.
 
+### Bank Ops (`services/bank-ops.mjs`)
+Shared item-withdraw service used by helpers, recycler, and GE seller:
+- Centralizes all `api.withdrawBank` calls in one place
+- Uses reservation-aware availability (`availableBankCount` + `reserveMany`)
+- Supports partial-fill defaults, one forced refresh retry, and per-item fallback
+- Applies immediate bank deltas (`applyBankDelta`) after successful withdrawals
+
 ### Recycler (`services/recycler.mjs`)
 Equipment recycling at workshops. Surplus equipment is broken down into crafting materials instead of being sold on the GE:
 - Identify recycle candidates (duplicate equipment above `keepPerEquipmentCode` threshold)
@@ -154,7 +161,7 @@ Equipment recycling at workshops. Surplus equipment is broken down into crafting
 - Withdraw → move to workshop → recycle → deposit materials flow
 - Mid-batch inventory management: deposits materials to bank when inventory hits 90% capacity
 - Items without `craft.skill` (uncraftable/event items) are skipped
-- Concurrency control: async mutex ensures only one character recycles at a time
+- Contention control: reservation-backed bank withdrawals (no recycler-level mutex)
 
 ### GE Seller (`services/ge-seller.mjs`)
 Grand Exchange selling automation — **whitelist-only** (only `alwaysSell` rules):
@@ -162,13 +169,14 @@ Grand Exchange selling automation — **whitelist-only** (only `alwaysSell` rule
 - Price via undercut strategy (configured % below lowest listing)
 - Withdraw → list → deposit flow with inventory verification before each sell order
 - Order collection and stale order cancellation
-- Concurrency control: async mutex ensures only one character sells at a time
+- Concurrency control: async mutex ensures only one character runs GE order flow at a time
 
 ### Bank Data (`getBankItems` in `services/game-data.mjs`)
 Bank contents are fetched via paginated API (100 items/page) and cached with a 60s TTL. Key safeguards:
 - **Last-write-wins**: Each item code exists once in the bank (items stack). If pagination shifts cause a duplicate across pages, the latest value is used rather than accumulating — prevents over-counting when concurrent deposits/withdrawals shift items between pages.
 - **In-flight fetch guard**: If a fetch is already in progress, concurrent callers reuse the same promise instead of starting parallel fetches.
 - **Local-then-assign**: The map is built in a local variable and assigned to the cache only when complete, so concurrent readers never see a partially-built map.
+- **Reservation-aware withdrawals**: All item withdrawals route through `services/bank-ops.mjs`, reducing race conditions across characters.
 
 ### Skill Rotation (`services/skill-rotation.mjs`)
 State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.

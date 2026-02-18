@@ -164,7 +164,10 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     await moveTo(ctx, loc.x, loc.y);
-    await restBeforeFight(ctx, this.rotation.monster.code);
+    if (!(await restBeforeFight(ctx, this.rotation.monster.code))) {
+      await this.rotation.forceRotate(ctx);
+      return true;
+    }
 
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);
@@ -470,7 +473,10 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     await moveTo(ctx, monsterLoc.x, monsterLoc.y);
-    await restBeforeFight(ctx, monster);
+    if (!(await restBeforeFight(ctx, monster))) {
+      await this.rotation.forceRotate(ctx);
+      return true;
+    }
 
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);

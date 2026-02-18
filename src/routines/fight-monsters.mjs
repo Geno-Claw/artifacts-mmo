@@ -1,8 +1,8 @@
 import { BaseRoutine } from './base.mjs';
 import * as log from '../log.mjs';
-import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat } from '../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, canUseRestAction, hasHealingFood } from '../helpers.mjs';
 import { MONSTERS } from '../data/locations.mjs';
-import { canBeatMonster } from '../services/combat-simulator.mjs';
+import { canBeatMonster, hpNeededForFight } from '../services/combat-simulator.mjs';
 
 export class FightMonstersRoutine extends BaseRoutine {
   /**
@@ -24,6 +24,9 @@ export class FightMonstersRoutine extends BaseRoutine {
   canRun(ctx) {
     if (ctx.get().level < this.loc.level) return false;
     if (!canBeatMonster(ctx, this.monster)) return false;
+    const minHp = hpNeededForFight(ctx, this.monster);
+    if (minHp === null) return false;
+    if (ctx.get().hp < minHp && !canUseRestAction(ctx) && !hasHealingFood(ctx)) return false;
     if (ctx.inventoryFull()) return false;
     return true;
   }
@@ -36,7 +39,7 @@ export class FightMonstersRoutine extends BaseRoutine {
     }
 
     await moveTo(ctx, this.loc.x, this.loc.y);
-    await restBeforeFight(ctx, this.monster);
+    if (!(await restBeforeFight(ctx, this.monster))) return false;
 
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);
