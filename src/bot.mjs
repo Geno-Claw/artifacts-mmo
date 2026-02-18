@@ -6,6 +6,7 @@ import { CharacterContext } from './context.mjs';
 import { buildRoutines } from './routines/factory.mjs';
 import * as log from './log.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
+import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
 import { createCharacter } from './api.mjs';
 
@@ -29,6 +30,7 @@ for (const [index, charCfg] of config.characters.entries()) {
 log.info(`Bot starting — ${config.characters.length} character(s)`);
 
 await initGameData();
+await initInventoryManager();
 loadSellRules();
 
 const loops = config.characters.map(async (charCfg) => {

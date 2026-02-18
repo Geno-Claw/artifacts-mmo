@@ -6,6 +6,7 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
+import { applyBankDelta, bankCount, globalCount, invalidateBank } from './inventory-manager.mjs';
 import { getSellRules } from './ge-seller.mjs';
 import { moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
@@ -55,13 +56,15 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
     if (!item.craft?.skill) continue;
 
     const keep = item.type === 'ring' ? baseKeep * 2 : baseKeep;
-    const surplus = bankQty - keep;
-    if (surplus <= 0) continue;
+    const totalOwned = globalCount(code);
+    const surplus = totalOwned - keep;
+    const qty = Math.min(Math.max(surplus, 0), bankCount(code));
+    if (qty <= 0) continue;
 
     candidates.push({
       code,
-      quantity: surplus,
-      reason: `duplicate equipment (bank: ${bankQty}, keeping ${keep}${item.type === 'ring' ? ' (ring x2)' : ''})`,
+      quantity: qty,
+      reason: `duplicate equipment (owned: ${totalOwned}, bank: ${bankQty}, keeping ${keep}${item.type === 'ring' ? ' (ring x2)' : ''})`,
       craftSkill: item.craft.skill,
     });
   }
@@ -139,15 +142,21 @@ async function _recycleGroup(ctx, skill, workshop, items) {
       break;
     }
 
-    const qty = Math.min(candidate.quantity, space);
+    const available = bankCount(candidate.code);
+    const qty = Math.min(candidate.quantity, space, available);
     if (qty <= 0) continue;
 
     try {
       const result = await api.withdrawBank([{ code: candidate.code, quantity: qty }], ctx.name);
       await api.waitForCooldown(result);
+      applyBankDelta([{ code: candidate.code, quantity: qty }], 'withdraw', {
+        charName: ctx.name,
+        reason: `recycler withdrawal (${skill})`,
+      });
       await ctx.refresh();
       withdrawn.push({ code: candidate.code, quantity: qty });
     } catch (err) {
+      invalidateBank(`[${ctx.name}] recycler withdraw failed for ${candidate.code}: ${err.message}`);
       log.warn(`[${ctx.name}] Recycle: could not withdraw ${candidate.code}: ${err.message}`);
     }
   }
@@ -204,8 +213,10 @@ async function _depositInventory(ctx) {
   try {
     const result = await api.depositBank(items, ctx.name);
     await api.waitForCooldown(result);
+    applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'recycler deposit' });
     await ctx.refresh();
   } catch (err) {
+    invalidateBank(`[${ctx.name}] recycler deposit failed: ${err.message}`);
     log.warn(`[${ctx.name}] Recycle: could not deposit items: ${err.message}`);
   }
 }

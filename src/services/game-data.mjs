@@ -3,11 +3,12 @@
  * and workshop locations from the API. Provides equipment scoring.
  *
  * Data is static per season, so items/monsters are loaded once at startup.
- * Bank items are cached with a short TTL (refreshed on demand).
+ * Bank items are delegated to inventory-manager.mjs.
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { getWeight } from '../data/scoring-weights.mjs';
+import { getBankItems as getInventoryManagerBankItems } from './inventory-manager.mjs';
 
 // --- In-memory caches ---
 let itemsCache = null;          // Map<code, item>
@@ -16,14 +17,9 @@ let resourcesCache = null;      // Map<code, resource>
 let dropToResourceCache = null; // Map<itemCode, resourceCode> (reverse lookup)
 let resourceLocationCache = {}; // { resourceCode: { x, y } }
 let workshopCache = null;       // { skill: { x, y } }
-let bankItemsCache = null;      // Map<code, quantity>
-let lastBankFetch = 0;
-let _bankFetchPromise = null;   // in-flight fetch guard
 let geLocationCache = null;     // { x, y } or null
 let taskRewardsCache = null;    // Array of reward objects
 let taskRewardCodes = null;     // Set<itemCode> for fast lookup
-
-const BANK_CACHE_TTL = 60_000; // 1 minute
 
 // --- Initialization ---
 
@@ -227,42 +223,7 @@ export const EQUIPMENT_SLOTS = [
 // --- Bank items ---
 
 export async function getBankItems(forceRefresh = false) {
-  const now = Date.now();
-  if (!forceRefresh && bankItemsCache && (now - lastBankFetch) < BANK_CACHE_TTL) {
-    return bankItemsCache;
-  }
-
-  // If a fetch is already in-flight, reuse it instead of starting a concurrent one
-  if (_bankFetchPromise) return _bankFetchPromise;
-
-  _bankFetchPromise = _fetchBankItems();
-  try {
-    return await _bankFetchPromise;
-  } finally {
-    _bankFetchPromise = null;
-  }
-}
-
-async function _fetchBankItems() {
-  const newMap = new Map();
-  let page = 1;
-  while (true) {
-    const result = await api.getBankItems({ page, size: 100 });
-    const items = Array.isArray(result) ? result : [];
-    if (items.length === 0) break;
-    for (const item of items) {
-      // Last-write-wins: bank items stack, so each code appears once.
-      // If pagination shifts cause a duplicate, don't accumulate.
-      newMap.set(item.code, item.quantity);
-    }
-    if (items.length < 100) break;
-    page++;
-  }
-
-  bankItemsCache = newMap;
-  lastBankFetch = Date.now();
-  log.info(`[GameData] Bank refreshed: ${newMap.size} unique items`);
-  return bankItemsCache;
+  return getInventoryManagerBankItems(forceRefresh);
 }
 
 export async function bankHasItem(code, quantity = 1) {

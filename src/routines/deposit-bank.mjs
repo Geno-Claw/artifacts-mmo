@@ -5,6 +5,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
 import * as recycler from '../services/recycler.mjs';
+import { applyBankDelta, invalidateBank } from '../services/inventory-manager.mjs';
 
 export class DepositBankRoutine extends BaseRoutine {
   constructor({
@@ -62,13 +63,16 @@ export class DepositBankRoutine extends BaseRoutine {
       await moveTo(ctx, BANK.x, BANK.y);
       log.info(`[${ctx.name}] Re-depositing ${leftover.length} unrecycled item(s)`);
       try {
+        const items = leftover.map(s => ({ code: s.code, quantity: s.quantity }));
         const result = await api.depositBank(
-          leftover.map(s => ({ code: s.code, quantity: s.quantity })),
+          items,
           ctx.name,
         );
         await api.waitForCooldown(result);
+        applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'deposit routine recycle cleanup' });
         await ctx.refresh();
       } catch (err) {
+        invalidateBank(`[${ctx.name}] recycle cleanup deposit failed: ${err.message}`);
         log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
       }
     }
@@ -103,13 +107,16 @@ export class DepositBankRoutine extends BaseRoutine {
       await moveTo(ctx, BANK.x, BANK.y);
       log.info(`[${ctx.name}] Re-depositing ${leftover.length} unsold item(s)`);
       try {
+        const items = leftover.map(s => ({ code: s.code, quantity: s.quantity }));
         const result = await api.depositBank(
-          leftover.map(s => ({ code: s.code, quantity: s.quantity })),
+          items,
           ctx.name,
         );
         await api.waitForCooldown(result);
+        applyBankDelta(items, 'deposit', { charName: ctx.name, reason: 'deposit routine GE cleanup' });
         await ctx.refresh();
       } catch (err) {
+        invalidateBank(`[${ctx.name}] GE cleanup deposit failed: ${err.message}`);
         log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
       }
     }

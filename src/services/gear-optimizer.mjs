@@ -13,6 +13,7 @@
 import { calcTurnDamage, simulateCombat } from './combat-simulator.mjs';
 import * as gameData from './game-data.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
+import { bankCount } from './inventory-manager.mjs';
 import * as log from '../log.mjs';
 
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
@@ -103,7 +104,8 @@ export function getCandidatesForSlot(ctx, slot, bankItems) {
     }
 
     // Check bank
-    if (bankItems && (bankItems.get(item.code) || 0) >= 1) {
+    const inBank = Math.max(bankCount(item.code), bankItems?.get(item.code) || 0);
+    if (inBank >= 1) {
       candidates.set(item.code, { item, source: 'bank' });
     }
   }
@@ -144,7 +146,7 @@ function deduplicateRingCandidates(candidates, ring1Item, ctx, bankItems) {
     const equippedCount = [c.ring1_slot, c.ring2_slot]
       .filter(code => code === item.code).length;
     const inInventory = ctx.itemCount(item.code);
-    const inBank = (bankItems?.get(item.code) || 0);
+    const inBank = Math.max(bankCount(item.code), bankItems?.get(item.code) || 0);
     return (equippedCount + inInventory + inBank) >= 2;
   });
 }
@@ -385,7 +387,7 @@ function findBestTool(ctx, skill, bankItems) {
   for (const tool of tools) {
     if (equippedWeapon === tool.code) return { item: tool, source: 'equipped' };
     if (ctx.hasItem(tool.code)) return { item: tool, source: 'inventory' };
-    if (bankItems && (bankItems.get(tool.code) || 0) >= 1) return { item: tool, source: 'bank' };
+    if (Math.max(bankCount(tool.code), bankItems?.get(tool.code) || 0) >= 1) return { item: tool, source: 'bank' };
   }
 
   return null;
@@ -446,7 +448,7 @@ export async function optimizeForGathering(ctx, skill) {
     const char = ctx.get();
     const equippedCount = [char.ring1_slot, char.ring2_slot].filter(c => c === ring1Code).length;
     const inInventory = ctx.itemCount(ring1Code);
-    const inBank = bankItems.get(ring1Code) || 0;
+    const inBank = Math.max(bankCount(ring1Code), bankItems.get(ring1Code) || 0);
     if (equippedCount + inInventory + inBank < 2) {
       loadout.set('ring2', char.ring2_slot || null);
     }

@@ -4,6 +4,7 @@
  */
 import { getCharacter } from './api.mjs';
 import { clearGearCache } from './helpers.mjs';
+import { updateCharacter } from './services/inventory-manager.mjs';
 
 export class CharacterContext {
   constructor(name) {
@@ -16,6 +17,7 @@ export class CharacterContext {
 
   async refresh() {
     this._char = await getCharacter(this.name);
+    updateCharacter(this.name, this._char);
 
     // Reset all losses and gear cache on level-up so bot retries task monsters
     // and re-evaluates gear (new items may be available at the new level)

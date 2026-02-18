@@ -7,6 +7,7 @@ import { readFileSync } from 'fs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
+import { applyBankDelta, bankCount, invalidateBank } from './inventory-manager.mjs';
 import { moveTo } from '../helpers.mjs';
 import { BANK } from '../data/locations.mjs';
 
@@ -210,15 +211,21 @@ export async function executeSellFlow(ctx) {
         break;
       }
 
-      const qty = Math.min(candidate.quantity, space);
+      const available = bankCount(candidate.code);
+      const qty = Math.min(candidate.quantity, space, available);
       if (qty <= 0) continue;
 
       try {
         const result = await api.withdrawBank([{ code: candidate.code, quantity: qty }], ctx.name);
         await api.waitForCooldown(result);
+        applyBankDelta([{ code: candidate.code, quantity: qty }], 'withdraw', {
+          charName: ctx.name,
+          reason: 'GE sell flow withdrawal',
+        });
         await ctx.refresh();
         withdrawn.push({ code: candidate.code, quantity: qty });
       } catch (err) {
+        invalidateBank(`[${ctx.name}] GE withdraw failed for ${candidate.code}: ${err.message}`);
         log.warn(`[${ctx.name}] GE: could not withdraw ${candidate.code}: ${err.message}`);
       }
     }
