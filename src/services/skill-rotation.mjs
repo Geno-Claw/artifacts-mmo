@@ -21,6 +21,7 @@ const DEFAULT_GOALS = {
   jewelrycrafting: 2,
   combat: 10,
   npc_task: 1,
+  item_task: 1,
 };
 
 export class SkillRotation {
@@ -160,6 +161,9 @@ export class SkillRotation {
       return this._setupCombat(ctx);
     }
     if (skill === 'npc_task') {
+      return true; // always viable
+    }
+    if (skill === 'item_task') {
       return true; // always viable
     }
     return false;

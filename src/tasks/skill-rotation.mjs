@@ -60,6 +60,9 @@ export class SkillRotationTask extends BaseTask {
     if (skill === 'npc_task') {
       return this._executeNpcTask(ctx);
     }
+    if (skill === 'item_task') {
+      return this._executeItemTask(ctx);
+    }
 
     // Unknown skill — force rotate
     await this.rotation.forceRotate(ctx);
@@ -435,6 +438,174 @@ export class SkillRotationTask extends BaseTask {
     }
 
     return !ctx.inventoryFull();
+  }
+
+  // --- Item Tasks ---
+
+  async _executeItemTask(ctx) {
+    const ITEMS_MASTER = TASKS_MASTER.items;
+
+    // 1. Accept a task if we don't have one
+    if (!ctx.hasTask()) {
+      await moveTo(ctx, ITEMS_MASTER.x, ITEMS_MASTER.y);
+      const result = await api.acceptTask(ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+      const c = ctx.get();
+      log.info(`[${ctx.name}] Item Task: accepted ${c.task} x${c.task_total}`);
+    }
+
+    // 2. Complete task if done
+    if (ctx.taskComplete()) {
+      await moveTo(ctx, ITEMS_MASTER.x, ITEMS_MASTER.y);
+      const result = await api.completeTask(ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+      this.rotation.recordProgress(1);
+      log.info(`[${ctx.name}] Item Task: completed! (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+      await this._exchangeTaskCoins(ctx);
+      return true;
+    }
+
+    const c = ctx.get();
+    const itemCode = c.task;
+    const needed = c.task_total - c.task_progress;
+
+    // 3. Check prerequisites — can we obtain this item?
+    const item = gameData.getItem(itemCode);
+    if (!item) {
+      log.warn(`[${ctx.name}] Item Task: unknown item ${itemCode}, cancelling`);
+      await this._cancelItemTask(ctx, ITEMS_MASTER);
+      return true;
+    }
+
+    // Check if it's a gatherable resource drop
+    const resource = gameData.getResourceForDrop(itemCode);
+    // Check if it's craftable
+    const craftable = item.craft ? true : false;
+
+    if (!resource && !craftable) {
+      log.warn(`[${ctx.name}] Item Task: ${itemCode} can't be gathered or crafted, cancelling`);
+      await this._cancelItemTask(ctx, ITEMS_MASTER);
+      return true;
+    }
+
+    // Prerequisite check for gathering
+    if (resource) {
+      const charLevel = ctx.skillLevel(resource.skill);
+      if (charLevel < resource.level) {
+        // Can we craft it instead?
+        if (!craftable) {
+          log.warn(`[${ctx.name}] Item Task: need ${resource.skill} lv${resource.level} for ${itemCode} (have lv${charLevel}), cancelling`);
+          await this._cancelItemTask(ctx, ITEMS_MASTER);
+          return true;
+        }
+        // Fall through to crafting path
+      } else {
+        // Gather path
+        return this._gatherForItemTask(ctx, itemCode, resource, needed);
+      }
+    }
+
+    // Crafting path
+    if (craftable) {
+      const plan = gameData.resolveRecipeChain(item.craft);
+      if (!plan) {
+        log.warn(`[${ctx.name}] Item Task: can't resolve recipe for ${itemCode}, cancelling`);
+        await this._cancelItemTask(ctx, ITEMS_MASTER);
+        return true;
+      }
+      for (const step of plan) {
+        if (step.type === 'gather' && step.resource) {
+          if (ctx.skillLevel(step.resource.skill) < step.resource.level) {
+            log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${step.resource.skill} lv${step.resource.level}, cancelling`);
+            await this._cancelItemTask(ctx, ITEMS_MASTER);
+            return true;
+          }
+        }
+      }
+      // TODO: implement crafting for item tasks — for now just gather
+    }
+
+    // If we have items in inventory, trade them first
+    const haveQty = ctx.itemCount(itemCode);
+    if (haveQty > 0) {
+      return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
+    }
+
+    // Gather the item
+    if (resource) {
+      return this._gatherForItemTask(ctx, itemCode, resource, needed);
+    }
+
+    // Shouldn't reach here
+    log.warn(`[${ctx.name}] Item Task: no path to obtain ${itemCode}, cancelling`);
+    await this._cancelItemTask(ctx, ITEMS_MASTER);
+    return true;
+  }
+
+  async _cancelItemTask(ctx, masterLoc) {
+    if (ctx.taskCoins() < 1) {
+      log.warn(`[${ctx.name}] Item Task: can't cancel (no task coins), force-rotating`);
+      this.rotation.goalProgress = this.rotation.goalTarget;
+      return;
+    }
+    await moveTo(ctx, masterLoc.x, masterLoc.y);
+    const result = await api.cancelTask(ctx.name);
+    await api.waitForCooldown(result);
+    await ctx.refresh();
+    log.info(`[${ctx.name}] Item Task: cancelled`);
+  }
+
+  async _gatherForItemTask(ctx, itemCode, resource, needed) {
+    const loc = await gameData.getResourceLocation(resource.code);
+    if (!loc) {
+      log.warn(`[${ctx.name}] Item Task: can't find location for ${resource.code}`);
+      this.rotation.goalProgress = this.rotation.goalTarget;
+      return true;
+    }
+
+    // Trade any already-gathered items first
+    const haveQty = ctx.itemCount(itemCode);
+    if (haveQty > 0) {
+      return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
+    }
+
+    // If inventory is getting full, trade what we have
+    if (ctx.inventoryFull()) return false;
+
+    await equipForGathering(ctx, resource.skill);
+    await moveTo(ctx, loc.x, loc.y);
+    const result = await gatherOnce(ctx);
+    const items = result.details?.items || [];
+    log.info(`[${ctx.name}] Item Task: gathering ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'}`);
+
+    // Check if we now have items to trade
+    const nowHave = ctx.itemCount(itemCode);
+    if (nowHave > 0 && nowHave >= Math.min(needed, 10)) {
+      return this._tradeItemTask(ctx, itemCode, Math.min(nowHave, needed));
+    }
+
+    return !ctx.inventoryFull();
+  }
+
+  async _tradeItemTask(ctx, itemCode, quantity) {
+    const ITEMS_MASTER = TASKS_MASTER.items;
+    await moveTo(ctx, ITEMS_MASTER.x, ITEMS_MASTER.y);
+    try {
+      const result = await api.taskTrade(itemCode, quantity, ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+      const c = ctx.get();
+      log.info(`[${ctx.name}] Item Task: traded ${itemCode} x${quantity} (${c.task_progress}/${c.task_total})`);
+    } catch (err) {
+      if (err.code === 478) {
+        log.warn(`[${ctx.name}] Item Task: missing items for trade`);
+      } else {
+        throw err;
+      }
+    }
+    return true;
   }
 
   // --- Task coin exchange ---

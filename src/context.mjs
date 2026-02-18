@@ -105,6 +105,10 @@ export class CharacterContext {
     delete this._losses[monsterCode];
   }
 
+  taskType() {
+    return this.get().task_type || null;
+  }
+
   taskCoins() {
     return this.get().tasks_coins || 0;
   }

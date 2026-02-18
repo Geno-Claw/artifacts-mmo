@@ -116,6 +116,10 @@ export async function cancelTask(name = CHARACTER) {
   return request('POST', `/my/${name}/action/task/cancel`);
 }
 
+export async function taskTrade(code, quantity, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/task/trade`, { code, quantity });
+}
+
 export async function taskExchange(name = CHARACTER) {
   return request('POST', `/my/${name}/action/task/exchange`);
 }
