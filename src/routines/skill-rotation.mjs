@@ -641,8 +641,16 @@ export class SkillRotationRoutine extends BaseRoutine {
       // TODO: implement crafting for item tasks — for now just gather
     }
 
-    // If we have items in inventory, trade them first
+    // Try to withdraw from bank first
     const haveQty = ctx.itemCount(itemCode);
+    if (haveQty === 0 && !ctx.inventoryFull()) {
+      const bankQty = await this._withdrawForItemTask(ctx, itemCode, needed);
+      if (bankQty > 0) {
+        return this._tradeItemTask(ctx, itemCode, Math.min(bankQty, needed));
+      }
+    }
+
+    // If we have items in inventory, trade them
     if (haveQty > 0) {
       return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
     }
@@ -669,6 +677,28 @@ export class SkillRotationRoutine extends BaseRoutine {
     await api.waitForCooldown(result);
     await ctx.refresh();
     log.info(`[${ctx.name}] Item Task: cancelled`);
+  }
+
+  async _withdrawForItemTask(ctx, itemCode, needed) {
+    const bank = await gameData.getBankItems();
+    const inBank = bank.get(itemCode) || 0;
+    if (inBank <= 0) return 0;
+
+    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+    const toWithdraw = Math.min(inBank, needed, space);
+    if (toWithdraw <= 0) return 0;
+
+    try {
+      await moveTo(ctx, 4, 1); // bank location
+      const result = await api.withdrawBank({ code: itemCode, quantity: toWithdraw }, ctx.name);
+      await api.waitForCooldown(result);
+      await ctx.refresh();
+      log.info(`[${ctx.name}] Item Task: withdrew ${itemCode} x${toWithdraw} from bank`);
+      return toWithdraw;
+    } catch (err) {
+      log.warn(`[${ctx.name}] Item Task: bank withdraw failed for ${itemCode}: ${err.message}`);
+      return 0;
+    }
   }
 
   async _gatherForItemTask(ctx, itemCode, resource, needed) {
