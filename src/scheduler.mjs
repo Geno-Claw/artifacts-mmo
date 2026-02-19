@@ -5,14 +5,15 @@
 import * as log from './log.mjs';
 import { recordRoutineState } from './services/ui-state.mjs';
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 export class Scheduler {
   constructor(ctx, routines = []) {
     this.ctx = ctx;
     this.routines = [...routines].sort((a, b) => b.priority - a.priority);
+
+    this.stopRequested = false;
+    this.runningPromise = null;
+    this.sleepTimer = null;
+    this.sleepResolver = null;
   }
 
   /** Return the highest-priority routine whose canRun() passes. */
@@ -23,12 +24,55 @@ export class Scheduler {
     return null;
   }
 
-  /** Main loop — runs forever. */
-  async run() {
+  _finishSleep(completed) {
+    if (this.sleepTimer) {
+      clearTimeout(this.sleepTimer);
+      this.sleepTimer = null;
+    }
+    const resolve = this.sleepResolver;
+    this.sleepResolver = null;
+    if (resolve) {
+      resolve(completed);
+    }
+  }
+
+  _interruptSleep() {
+    this._finishSleep(false);
+  }
+
+  _sleep(ms) {
+    if (this.stopRequested) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      this.sleepResolver = resolve;
+      this.sleepTimer = setTimeout(() => {
+        this._finishSleep(true);
+      }, ms);
+    });
+  }
+
+  async stop() {
+    this.stopRequested = true;
+    this._interruptSleep();
+
+    if (!this.runningPromise) return;
+    try {
+      await this.runningPromise;
+    } catch {
+      // Runtime manager observes loop failures separately.
+    }
+  }
+
+  async _runLoop() {
+    this.stopRequested = false;
     log.info(`[${this.ctx.name}] Bot loop started`);
 
-    while (true) {
+    while (!this.stopRequested) {
       await this.ctx.refresh();
+      if (this.stopRequested) break;
+
       const routine = this.pickRoutine();
 
       if (!routine) {
@@ -37,8 +81,9 @@ export class Scheduler {
           phase: 'idle',
           priority: null,
         });
-        log.warn(`[${this.ctx.name}] No runnable routines — idling 30s`);
-        await sleep(30_000);
+        log.warn(`[${this.ctx.name}] No runnable routines - idling 30s`);
+        const slept = await this._sleep(30_000);
+        if (!slept) break;
         continue;
       }
 
@@ -47,35 +92,46 @@ export class Scheduler {
         phase: 'start',
         priority: routine.priority,
       });
-      log.info(`[${this.ctx.name}] → ${routine.name}`);
+      log.info(`[${this.ctx.name}] -> ${routine.name}`);
 
       try {
         if (routine.loop) {
           let keepGoing = true;
-          while (keepGoing) {
+          while (keepGoing && !this.stopRequested) {
             await this.ctx.refresh();
+            if (this.stopRequested) break;
+
             if (!routine.canRun(this.ctx)) {
               log.info(`[${this.ctx.name}] ${routine.name}: conditions changed, yielding`);
               break;
             }
-            // Preemption: yield if a higher-priority routine needs to run
-            const preempt = this.routines.find(r => r.priority > routine.priority && r.canRun(this.ctx));
+
+            // Preemption: yield if a higher-priority routine needs to run.
+            const preempt = this.routines.find(
+              r => r.priority > routine.priority && r.canRun(this.ctx),
+            );
             if (preempt && routine.canBePreempted(this.ctx)) {
               log.info(`[${this.ctx.name}] ${routine.name}: preempted by ${preempt.name}`);
               break;
             }
+
             keepGoing = await routine.execute(this.ctx);
           }
-        } else {
+        } else if (!this.stopRequested) {
           await routine.execute(this.ctx);
         }
-        recordRoutineState(this.ctx.name, {
-          routineName: routine.name,
-          phase: 'done',
-          priority: routine.priority,
-        });
-        log.info(`[${this.ctx.name}] ${routine.name}: done`);
+
+        if (!this.stopRequested) {
+          recordRoutineState(this.ctx.name, {
+            routineName: routine.name,
+            phase: 'done',
+            priority: routine.priority,
+          });
+          log.info(`[${this.ctx.name}] ${routine.name}: done`);
+        }
       } catch (err) {
+        if (this.stopRequested) break;
+
         recordRoutineState(this.ctx.name, {
           routineName: routine.name,
           phase: 'error',
@@ -83,10 +139,34 @@ export class Scheduler {
           error: err.message,
         });
         log.error(`[${this.ctx.name}] ${routine.name} failed`, err.message);
-        await sleep(10_000);
+
+        const slept = await this._sleep(10_000);
+        if (!slept) break;
       }
 
-      await sleep(1_000);
+      const slept = await this._sleep(1_000);
+      if (!slept) break;
     }
+
+    recordRoutineState(this.ctx.name, {
+      routineName: null,
+      phase: 'idle',
+      priority: null,
+    });
+    log.info(`[${this.ctx.name}] Bot loop stopped`);
+  }
+
+  /** Main loop - runs until stop() is called. */
+  async run() {
+    if (this.runningPromise) {
+      return this.runningPromise;
+    }
+
+    this.runningPromise = this._runLoop().finally(() => {
+      this._finishSleep(false);
+      this.runningPromise = null;
+    });
+
+    return this.runningPromise;
   }
 }

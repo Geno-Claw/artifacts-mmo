@@ -169,6 +169,82 @@ body::before {
   text-transform: uppercase;
 }
 
+.dashboard-controls {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  padding: 2px 16px 14px;
+}
+
+.dashboard-control-btn {
+  min-width: 94px;
+}
+
+.dashboard-control-btn[data-runtime-control] {
+  min-width: 118px;
+}
+
+.dashboard-control-status {
+  position: relative;
+  z-index: 2;
+  width: min(620px, calc(100vw - 32px));
+  margin: 0 auto 10px;
+  padding: 0 2px;
+}
+
+.dashboard-control-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dashboard-control-status-value {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  word-break: break-word;
+}
+
+.dashboard-control-status-value.is-error {
+  color: #5a231e;
+}
+
+.dashboard-control-banner {
+  position: relative;
+  z-index: 2;
+  width: min(620px, calc(100vw - 32px));
+  margin: 0 auto 12px;
+  font-size: 6px;
+  line-height: 1.4;
+  padding: 8px 12px;
+  letter-spacing: 1px;
+  border-left: 2px solid rgba(42, 36, 32, 0.18);
+  background: rgba(42, 36, 32, 0.08);
+  color: var(--ink);
+}
+
+.dashboard-control-banner.info {
+  color: #2f4732;
+  background: rgba(96, 120, 72, 0.14);
+}
+
+.dashboard-control-banner.success {
+  color: #2f4732;
+  background: rgba(96, 120, 72, 0.18);
+}
+
+.dashboard-control-banner.warning {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.14);
+}
+
+.dashboard-control-banner.error {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.18);
+}
+
 /* Brush stroke divider */
 .divider {
   display: flex;
@@ -683,6 +759,21 @@ body::before {
   background: rgba(96, 120, 72, 0.14);
 }
 
+.modal-banner.success {
+  color: #2f4732;
+  background: rgba(96, 120, 72, 0.18);
+}
+
+.modal-banner.warning {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.14);
+}
+
+.modal-banner.error {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.18);
+}
+
 .modal-content {
   overflow: auto;
   padding: 12px;
@@ -899,6 +990,98 @@ body::before {
   color: var(--ink-faint);
 }
 
+.config-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-editor-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.config-editor-meta .modal-stat {
+  min-height: 40px;
+}
+
+.config-editor-textarea {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.45);
+  border: none;
+  padding: 10px;
+  box-shadow:
+    inset 0 0 0 1px rgba(42, 36, 32, 0.18),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.config-editor-textarea:focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--ink),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.config-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.config-editor-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  padding: 6px 9px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.22);
+}
+
+.config-editor-btn:hover {
+  background: var(--ink-light);
+}
+
+.config-editor-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.config-validation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-validation-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 7px 8px;
+  background: rgba(200, 48, 40, 0.08);
+  border-left: 2px solid rgba(200, 48, 40, 0.35);
+  font-size: 6px;
+  line-height: 1.6;
+}
+
+.config-validation-path {
+  color: var(--vermillion);
+}
+
+.config-validation-message {
+  color: var(--ink);
+  word-break: break-word;
+}
+
 @media (max-width: 700px) {
   .character-modal {
     width: calc(100vw - 12px);
@@ -921,6 +1104,19 @@ body::before {
   .achievement-search-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .config-editor-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .config-editor-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-control-status-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -966,6 +1162,42 @@ body::before {
     <span class="divider-line"></span>
   </div>
 </header>
+
+<div class="dashboard-controls">
+  <button
+    class="action-btn dashboard-control-btn"
+    id="openConfigBtn"
+    type="button"
+    title="Config editor"
+    aria-haspopup="dialog"
+    hidden
+  >CONFIG</button>
+  <button
+    class="action-btn dashboard-control-btn"
+    id="restartBotBtn"
+    type="button"
+    title="Restart bot runtime"
+    data-runtime-control="restart"
+    hidden
+  >RESTART BOT</button>
+</div>
+<section class="dashboard-control-status" id="controlStatusPanel" aria-live="polite" hidden>
+  <div class="dashboard-control-status-grid">
+    <article class="modal-stat">
+      <div class="modal-stat-label">Runtime</div>
+      <div class="modal-stat-value dashboard-control-status-value" id="controlRuntimeState">--</div>
+    </article>
+    <article class="modal-stat">
+      <div class="modal-stat-label">Operation</div>
+      <div class="modal-stat-value dashboard-control-status-value" id="controlOperationState">IDLE</div>
+    </article>
+    <article class="modal-stat">
+      <div class="modal-stat-label">Updated</div>
+      <div class="modal-stat-value dashboard-control-status-value" id="controlStatusUpdatedAt">--</div>
+    </article>
+  </div>
+</section>
+<div class="dashboard-control-banner" id="controlResultBanner" aria-live="polite" hidden></div>
 
 <!-- Cards -->
 <main class="cards-container" id="cardsContainer"></main>
@@ -1217,17 +1449,33 @@ const appState = {
 
 const cardRefs = new Map();
 let eventSource = null;
+const CONFIG_MODAL_NAME = '__config__';
 const MODAL_KIND_LABELS = {
   skills: 'Skills',
   inven: 'Inventory',
   equip: 'Equipment',
   stats: 'Stats',
   achiev: 'Achievements',
+  config: 'Config',
 };
 const ACHIEVEMENT_FILTER_LABELS = {
   all: 'All',
   completed: 'Completed',
   'in-progress': 'In Progress',
+};
+const CONTROL_ACTION_LABELS = {
+  reload: 'Reload Config',
+  restart: 'Restart Bot',
+};
+const CONTROL_ACTION_ENDPOINTS = {
+  reload: '/api/control/reload-config',
+  restart: '/api/control/restart',
+};
+const CONTROL_OPERATION_STATE_VALUES = new Set(['idle', 'in-flight', 'success', 'failure']);
+const CONTROL_STATUS_POLL_MS = 5000;
+const runtimeFeatures = {
+  configEditorAvailable: false,
+  controlPanelAvailable: false,
 };
 
 const modalState = {
@@ -1242,6 +1490,12 @@ const modalState = {
   lastFocusedElement: null,
   achievementFilter: 'all',
   achievementSearch: '',
+  configEditorText: '',
+  configIfMatchHash: '',
+  configValidationErrors: [],
+  configBusy: false,
+  configResultBanner: null,
+  configActionController: null,
 };
 
 const modalRefs = {
@@ -1253,6 +1507,29 @@ const modalRefs = {
   banner: null,
   content: null,
   closeBtn: null,
+  configBtn: null,
+};
+
+const controlState = {
+  operationState: 'idle', // idle | in-flight | success | failure
+  activeAction: '',
+  statusSnapshot: null,
+  statusError: '',
+  resultBanner: null,
+  actionController: null,
+  statusController: null,
+  statusSeq: 0,
+  pollTimer: null,
+  resetTimer: null,
+};
+
+const controlRefs = {
+  restartBtn: null,
+  statusPanel: null,
+  runtimeState: null,
+  operationState: null,
+  updatedAt: null,
+  banner: null,
 };
 
 function toNumber(value, fallback = 0) {
@@ -1510,6 +1787,273 @@ function formatTime(value) {
     : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function formatUpperToken(value, fallback = '--') {
+  const text = safeText(value, '');
+  if (!text) return fallback;
+  return text.replace(/[_-]+/g, ' ').toUpperCase();
+}
+
+function normalizeControlAction(value, fallback = '') {
+  const normalized = safeText(value, '').toLowerCase();
+  if (normalized === 'reload' || normalized === 'reload-config' || normalized === 'reload_config') {
+    return 'reload';
+  }
+  if (normalized === 'restart' || normalized === 'restart-bot' || normalized === 'restart_bot') {
+    return 'restart';
+  }
+  return fallback;
+}
+
+function getControlActionLabel(action, fallback = '') {
+  const normalized = normalizeControlAction(action, '');
+  return CONTROL_ACTION_LABELS[normalized] || fallback;
+}
+
+function normalizeControlOperationState(value, fallback = 'idle') {
+  const normalized = safeText(value, '').toLowerCase();
+  if (
+    normalized === 'pending'
+    || normalized === 'inflight'
+    || normalized === 'in_flight'
+    || normalized === 'running'
+    || normalized === 'busy'
+  ) {
+    return 'in-flight';
+  }
+  if (normalized === 'ok' || normalized === 'done' || normalized === 'completed') {
+    return 'success';
+  }
+  if (normalized === 'failed' || normalized === 'fail' || normalized === 'error') {
+    return 'failure';
+  }
+  if (CONTROL_OPERATION_STATE_VALUES.has(normalized)) {
+    return normalized;
+  }
+  return CONTROL_OPERATION_STATE_VALUES.has(fallback) ? fallback : 'idle';
+}
+
+function setControlResultBanner(tone, text) {
+  const normalizedTone = safeText(tone, '').toLowerCase();
+  const normalizedText = safeText(text, '');
+  if (!normalizedText) {
+    controlState.resultBanner = null;
+    return;
+  }
+  controlState.resultBanner = {
+    tone: normalizedTone === 'info'
+      || normalizedTone === 'success'
+      || normalizedTone === 'warning'
+      || normalizedTone === 'error'
+      ? normalizedTone
+      : 'warning',
+    text: normalizedText,
+  };
+}
+
+function clearControlResetTimer() {
+  if (!controlState.resetTimer) return;
+  clearTimeout(controlState.resetTimer);
+  controlState.resetTimer = null;
+}
+
+function setControlOperationState(nextState, { action = '' } = {}) {
+  const normalizedState = normalizeControlOperationState(nextState, 'idle');
+  const nextAction = normalizeControlAction(action, controlState.activeAction);
+
+  controlState.operationState = normalizedState;
+  if (normalizedState === 'idle') {
+    controlState.activeAction = '';
+    clearControlResetTimer();
+    return;
+  }
+
+  if (nextAction) {
+    controlState.activeAction = nextAction;
+  }
+
+  clearControlResetTimer();
+  if (normalizedState === 'success' || normalizedState === 'failure') {
+    const stateAtSchedule = normalizedState;
+    controlState.resetTimer = setTimeout(() => {
+      if (controlState.operationState !== stateAtSchedule) return;
+      controlState.operationState = 'idle';
+      controlState.activeAction = '';
+      setControlResultBanner('', '');
+      renderControlPanel();
+    }, 6000);
+  }
+}
+
+function normalizeControlStatusSnapshot(rawPayload) {
+  const sourceRaw = extractApiData(rawPayload);
+  const source = sourceRaw && typeof sourceRaw === 'object' ? sourceRaw : {};
+  const operation = source.operation && typeof source.operation === 'object' ? source.operation : {};
+  const sourceErrorText = typeof source.error === 'string' ? source.error : '';
+
+  const lifecycle = safeText(
+    source.lifecycle
+      ?? source.lifecycleState
+      ?? source.runtimeState
+      ?? source.state
+      ?? source.status,
+    'unknown'
+  ).toLowerCase();
+
+  const operationAction = normalizeControlAction(
+    operation.name ?? operation.type ?? source.currentOperation ?? source.operationName ?? source.operation,
+    ''
+  );
+
+  const operationState = safeText(
+    operation.state ?? source.operationState ?? source.lockState ?? source.lockStatus,
+    ''
+  ).toLowerCase();
+
+  const inFlight = toBoolLike(
+    operation.inFlight ?? source.inFlight ?? source.operationInFlight ?? source.locked ?? source.busy
+  )
+    || operationState === 'in-flight'
+    || operationState === 'pending'
+    || operationState === 'running'
+    || operationState === 'busy';
+
+  const updatedAtMs = Math.max(0, toNumber(
+    source.updatedAtMs
+      ?? source.lastUpdatedAtMs
+      ?? source.fetchedAtMs
+      ?? source.updatedAt
+      ?? source.timestamp
+      ?? source.serverTimeMs,
+    0
+  ));
+
+  const detail = safeText(
+    operation.detail
+      ?? source.detail
+      ?? source.message
+      ?? source.summary
+      ?? source.error?.detail
+      ?? source.error?.message
+      ?? source.lastError?.detail
+      ?? source.lastError?.message
+      ?? sourceErrorText,
+    ''
+  );
+
+  return {
+    lifecycle: lifecycle || 'unknown',
+    inFlight,
+    operationAction,
+    updatedAtMs: updatedAtMs || Date.now(),
+    detail,
+  };
+}
+
+function getControlOperationDisplayValue() {
+  const actionLabel = formatUpperToken(getControlActionLabel(controlState.activeAction, ''), '');
+  if (controlState.operationState === 'in-flight') {
+    return actionLabel ? `IN-FLIGHT - ${actionLabel}` : 'IN-FLIGHT';
+  }
+  if ((controlState.operationState === 'success' || controlState.operationState === 'failure') && actionLabel) {
+    return `${formatUpperToken(controlState.operationState, 'IDLE')} - ${actionLabel}`;
+  }
+  if (controlState.operationState === 'idle' && controlState.statusSnapshot?.inFlight) {
+    const statusAction = formatUpperToken(getControlActionLabel(controlState.statusSnapshot.operationAction, ''), '');
+    return statusAction ? `IN-FLIGHT - ${statusAction}` : 'IN-FLIGHT';
+  }
+  return formatUpperToken(controlState.operationState, 'IDLE');
+}
+
+function renderControlPanel() {
+  const controlsAvailable = runtimeFeatures.controlPanelAvailable;
+
+  if (controlRefs.restartBtn) {
+    controlRefs.restartBtn.hidden = !controlsAvailable;
+  }
+  if (controlRefs.statusPanel) {
+    controlRefs.statusPanel.hidden = !controlsAvailable;
+  }
+
+  if (!controlsAvailable) {
+    if (controlRefs.restartBtn) controlRefs.restartBtn.disabled = true;
+    if (controlRefs.runtimeState) {
+      controlRefs.runtimeState.textContent = '--';
+      controlRefs.runtimeState.classList.remove('is-error');
+    }
+    if (controlRefs.operationState) {
+      controlRefs.operationState.textContent = 'IDLE';
+      controlRefs.operationState.classList.remove('is-error');
+    }
+    if (controlRefs.updatedAt) {
+      controlRefs.updatedAt.textContent = '--';
+      controlRefs.updatedAt.classList.remove('is-error');
+    }
+    if (controlRefs.banner) {
+      controlRefs.banner.hidden = true;
+      controlRefs.banner.className = 'dashboard-control-banner';
+      controlRefs.banner.textContent = '';
+    }
+    return;
+  }
+
+  const snapshot = controlState.statusSnapshot;
+  const serverLocked = !!snapshot?.inFlight;
+  const localLocked = controlState.operationState === 'in-flight';
+  const controlsLocked = serverLocked || localLocked;
+
+  if (controlRefs.restartBtn) {
+    controlRefs.restartBtn.disabled = controlsLocked;
+  }
+
+  const runtimeValue = formatUpperToken(snapshot?.lifecycle, 'UNKNOWN');
+  if (controlRefs.runtimeState) {
+    controlRefs.runtimeState.textContent = runtimeValue;
+    controlRefs.runtimeState.classList.toggle('is-error', runtimeValue === 'ERROR' || !!controlState.statusError);
+  }
+
+  if (controlRefs.operationState) {
+    controlRefs.operationState.textContent = getControlOperationDisplayValue();
+    controlRefs.operationState.classList.toggle('is-error', controlState.operationState === 'failure');
+  }
+
+  if (controlRefs.updatedAt) {
+    controlRefs.updatedAt.textContent = formatTime(snapshot?.updatedAtMs);
+    controlRefs.updatedAt.classList.toggle('is-error', !!controlState.statusError);
+  }
+
+  if (controlRefs.banner) {
+    const banner = controlState.resultBanner;
+    if (!banner) {
+      controlRefs.banner.hidden = true;
+      controlRefs.banner.className = 'dashboard-control-banner';
+      controlRefs.banner.textContent = '';
+    } else {
+      controlRefs.banner.hidden = false;
+      controlRefs.banner.className = `dashboard-control-banner ${banner.tone}`;
+      controlRefs.banner.textContent = banner.text;
+    }
+  }
+}
+
+function stopControlStatusPolling() {
+  if (controlState.pollTimer) {
+    clearInterval(controlState.pollTimer);
+    controlState.pollTimer = null;
+  }
+  if (controlState.statusController) {
+    controlState.statusController.abort();
+    controlState.statusController = null;
+  }
+}
+
+function startControlStatusPolling() {
+  stopControlStatusPolling();
+  if (!runtimeFeatures.controlPanelAvailable) return;
+  controlState.pollTimer = setInterval(() => {
+    fetchControlStatus({ silentErrors: true });
+  }, CONTROL_STATUS_POLL_MS);
+}
+
 function hasMeaningfulStatValue(value) {
   const text = safeText(value, '');
   if (!text) return false;
@@ -1623,11 +2167,215 @@ function normalizeLogHistory(rawHistory) {
     .sort((a, b) => b.atMs - a.atMs);
 }
 
+function closestFromEventTarget(event, selector) {
+  const rawTarget = event?.target;
+  if (rawTarget instanceof Element) {
+    return rawTarget.closest(selector);
+  }
+  const parent = rawTarget?.parentElement;
+  if (parent instanceof Element) {
+    return parent.closest(selector);
+  }
+  return null;
+}
+
 function extractApiData(payload) {
   if (payload && typeof payload === 'object' && 'data' in payload) {
     return payload.data;
   }
   return payload;
+}
+
+function setConfigResultBanner(tone, text) {
+  const normalizedTone = safeText(tone, '').toLowerCase();
+  const normalizedText = safeText(text, '');
+  if (!normalizedText) {
+    modalState.configResultBanner = null;
+    return;
+  }
+  modalState.configResultBanner = {
+    tone: normalizedTone === 'success' || normalizedTone === 'warning' || normalizedTone === 'error'
+      ? normalizedTone
+      : 'warning',
+    text: normalizedText,
+  };
+}
+
+function normalizeValidationPath(pathValue) {
+  if (Array.isArray(pathValue)) {
+    if (pathValue.length === 0) return '$';
+    return pathValue.reduce((acc, part) => {
+      if (typeof part === 'number') return `${acc}[${part}]`;
+      const token = safeText(part, '');
+      return token ? `${acc}.${token}` : acc;
+    }, '$');
+  }
+
+  const text = safeText(pathValue, '');
+  if (!text) return '$';
+  if (text.startsWith('$')) return text;
+  if (text.startsWith('/')) {
+    const tokens = text
+      .split('/')
+      .filter(Boolean)
+      .map((token) => token.replace(/~1/g, '/').replace(/~0/g, '~'));
+    if (tokens.length === 0) return '$';
+    return `$${tokens.map((token) => (/^\d+$/.test(token) ? `[${token}]` : `.${token}`)).join('')}`;
+  }
+  if (/^\d+$/.test(text)) return `$[${text}]`;
+  if (text.startsWith('.')) return `$${text}`;
+  return `$.${text}`;
+}
+
+function normalizeValidationErrors(rawPayload) {
+  const source = extractApiData(rawPayload);
+  let rows = [];
+
+  if (Array.isArray(source)) {
+    rows = source;
+  } else if (source && typeof source === 'object') {
+    if (Array.isArray(source.errors)) rows = source.errors;
+    else if (Array.isArray(source.validationErrors)) rows = source.validationErrors;
+    else if (Array.isArray(source.issues)) rows = source.issues;
+    else if (source.error && typeof source.error === 'object' && Array.isArray(source.error.errors)) rows = source.error.errors;
+  }
+
+  return rows
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return { path: '$', message: safeText(entry, 'Validation error') };
+      }
+      const row = entry && typeof entry === 'object' ? entry : {};
+      const message = safeText(
+        row.message ?? row.error ?? row.detail ?? row.reason ?? row.msg,
+        ''
+      );
+      if (!message) return null;
+      const path = normalizeValidationPath(
+        row.path ?? row.instancePath ?? row.dataPath ?? row.pointer ?? row.field ?? row.location
+      );
+      return { path, message };
+    })
+    .filter((row) => !!row);
+}
+
+function normalizeConfigEnvelope(rawPayload, { requireJson = false } = {}) {
+  const sourceRaw = extractApiData(rawPayload);
+  if (typeof sourceRaw === 'string') {
+    const rawJson = sourceRaw;
+    if (requireJson && !safeText(rawJson, '')) {
+      throw new Error('Config payload missing JSON content');
+    }
+    return {
+      rawJson,
+      ifMatchHash: '',
+      configPath: '',
+      updatedAtMs: 0,
+    };
+  }
+
+  const source = sourceRaw && typeof sourceRaw === 'object' ? sourceRaw : {};
+  const ifMatchHash = safeText(
+    source.ifMatchHash ?? source.hash ?? source.etag ?? source.contentHash ?? source.matchHash,
+    ''
+  );
+  const configPath = safeText(source.configPath ?? source.path ?? source.filePath ?? source.file, '');
+  const updatedAtMs = Math.max(
+    0,
+    toNumber(source.updatedAtMs ?? source.updatedAt ?? source.savedAtMs ?? source.fetchedAtMs, 0)
+  );
+
+  let rawJson = '';
+  const stringCandidates = [
+    source.rawJson,
+    source.rawConfig,
+    source.configText,
+    source.raw,
+    source.text,
+    source.content,
+  ];
+  for (const candidate of stringCandidates) {
+    if (typeof candidate !== 'string') continue;
+    if (safeText(candidate, '')) {
+      rawJson = candidate;
+      break;
+    }
+  }
+
+  if (!safeText(rawJson, '')) {
+    let configObject = null;
+    if (source.config && typeof source.config === 'object') configObject = source.config;
+    else if (source.value && typeof source.value === 'object') configObject = source.value;
+    else if (source.json && typeof source.json === 'object') configObject = source.json;
+    else if (source.contents && typeof source.contents === 'object') configObject = source.contents;
+    else if (!Array.isArray(source)) {
+      const metaKeys = new Set([
+        'ifMatchHash',
+        'hash',
+        'etag',
+        'contentHash',
+        'matchHash',
+        'configPath',
+        'path',
+        'filePath',
+        'file',
+        'updatedAtMs',
+        'updatedAt',
+        'savedAtMs',
+        'fetchedAtMs',
+        'ok',
+        'error',
+        'detail',
+        'code',
+        'errors',
+        'validationErrors',
+        'issues',
+      ]);
+      const hasConfigKeys = Object.keys(source).some((key) => !metaKeys.has(key));
+      if (hasConfigKeys) configObject = source;
+    }
+    if (configObject) {
+      try {
+        rawJson = JSON.stringify(configObject, null, 2);
+      } catch {
+        rawJson = '';
+      }
+    }
+  }
+
+  if (requireJson && !safeText(rawJson, '')) {
+    throw new Error('Config payload missing JSON content');
+  }
+
+  return {
+    rawJson,
+    ifMatchHash,
+    configPath,
+    updatedAtMs,
+  };
+}
+
+function buildConfigRequestPayload(parsedConfig) {
+  const payload = {
+    config: parsedConfig,
+    rawJson: `${modalState.configEditorText ?? ''}`,
+  };
+  const ifMatchHash = safeText(modalState.configIfMatchHash, '');
+  if (ifMatchHash) {
+    payload.ifMatchHash = ifMatchHash;
+  }
+  return payload;
+}
+
+function parseConfigEditorJson() {
+  try {
+    const value = JSON.parse(`${modalState.configEditorText ?? ''}`);
+    return { ok: true, value };
+  } catch (err) {
+    modalState.configValidationErrors = [];
+    setConfigResultBanner('error', `MALFORMED JSON - ${safeText(err?.message, 'Unable to parse config JSON')}`);
+    return { ok: false, value: null };
+  }
 }
 
 function toBoolLike(value) {
@@ -1743,6 +2491,9 @@ function isModalOpen() {
 }
 
 function getModalBannerState() {
+  if (modalState.activeKind === 'config') {
+    return modalState.configResultBanner;
+  }
   if (modalState.activeKind === 'achiev') return null;
 
   const snapshotChar = appState.characters.get(modalState.activeCharacterName);
@@ -1953,6 +2704,73 @@ function renderAchievementsModal(detail) {
   `;
 }
 
+function renderConfigModal(detail) {
+  const configPath = safeText(detail?.configPath, '--');
+  const hash = safeText(modalState.configIfMatchHash, '--');
+  const updatedAt = formatTime(detail?.updatedAtMs);
+  const editorText = `${modalState.configEditorText ?? ''}`;
+  const validationErrors = Array.isArray(modalState.configValidationErrors)
+    ? modalState.configValidationErrors
+    : [];
+  const busy = modalState.configBusy;
+  const busyAttr = busy ? ' disabled' : '';
+
+  const validationHtml = validationErrors.length > 0
+    ? `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Validation Errors</h3>
+        <div class="config-validation-list">
+          ${validationErrors.map((row) => `
+            <div class="config-validation-item">
+              <span class="config-validation-path">${escapeHtml(safeText(row.path, '$'))}</span>
+              <span class="config-validation-message">${escapeHtml(safeText(row.message, 'Validation error'))}</span>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    `
+    : '';
+
+  return `
+    <div class="config-editor">
+      <section class="modal-section">
+        <h3 class="modal-section-title">Active Config</h3>
+        <div class="config-editor-meta">
+          <article class="modal-stat">
+            <div class="modal-stat-label">Path</div>
+            <div class="modal-stat-value">${escapeHtml(configPath)}</div>
+          </article>
+          <article class="modal-stat">
+            <div class="modal-stat-label">If-Match Hash</div>
+            <div class="modal-stat-value">${escapeHtml(hash)}</div>
+          </article>
+        </div>
+        <div class="achievement-result-count">Loaded ${escapeHtml(updatedAt)}</div>
+      </section>
+      <section class="modal-section">
+        <h3 class="modal-section-title">Raw JSON</h3>
+        <textarea
+          class="config-editor-textarea"
+          data-config-json
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          autocorrect="off"
+          aria-label="Raw config JSON editor"${busyAttr}
+        >${escapeHtml(editorText)}</textarea>
+      </section>
+      <section class="modal-section">
+        <h3 class="modal-section-title">Actions</h3>
+        <div class="config-editor-actions">
+          <button type="button" class="config-editor-btn" data-config-action="validate"${busyAttr}>VALIDATE</button>
+          <button type="button" class="config-editor-btn" data-config-action="save"${busyAttr}>SAVE</button>
+        </div>
+      </section>
+      ${validationHtml}
+    </div>
+  `;
+}
+
 function renderAchievementsListInPlace() {
   if (!modalRefs.content || modalState.activeKind !== 'achiev' || modalState.status !== 'ready' || !modalState.detail) {
     return;
@@ -2052,6 +2870,10 @@ function renderModalContent() {
     renderAchievementsListInPlace();
     return;
   }
+  if (modalState.activeKind === 'config') {
+    modalRefs.content.innerHTML = renderConfigModal(modalState.detail);
+    return;
+  }
   modalRefs.content.innerHTML = renderStatsModal(modalState.detail);
 }
 
@@ -2064,6 +2886,8 @@ function renderModal() {
     if (modalState.activeKind === 'achiev') {
       const accountName = safeText(modalState.detail?.summary?.account, 'Account');
       modalRefs.title.textContent = `${accountName} - ${label}`;
+    } else if (modalState.activeKind === 'config') {
+      modalRefs.title.textContent = `Runtime Config - ${label}`;
     } else {
       modalRefs.title.textContent = `${modalState.activeCharacterName} - ${label}`;
     }
@@ -2090,6 +2914,11 @@ function abortModalFetch() {
     modalState.fetchController.abort();
     modalState.fetchController = null;
   }
+  if (modalState.configActionController) {
+    modalState.configActionController.abort();
+    modalState.configActionController = null;
+    modalState.configBusy = false;
+  }
 }
 
 async function fetchCharacterDetail(name) {
@@ -2114,7 +2943,11 @@ async function fetchCharacterDetail(name) {
     if (!res.ok) {
       const errText = safeText(payload?.error, `HTTP ${res.status}`);
       const errDetail = safeText(payload?.detail, '');
-      throw new Error(errDetail ? `${errText}: ${errDetail}` : errText);
+      let message = errDetail ? `${errText}: ${errDetail}` : errText;
+      if (res.status === 404 && errText === 'not_found') {
+        message = `${message}. Restart runtime to load latest dashboard routes.`;
+      }
+      throw new Error(message);
     }
 
     if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeCharacterName !== name) {
@@ -2140,9 +2973,384 @@ async function fetchCharacterDetail(name) {
 }
 
 function buildApiErrorMessage(response, payload, prefix) {
-  const base = safeText(payload?.error, `HTTP ${response.status}`);
-  const detail = safeText(payload?.detail, '');
+  const data = extractApiData(payload);
+  const base = safeText(payload?.error ?? data?.error, `HTTP ${response.status}`);
+  const detail = safeText(payload?.detail ?? data?.detail, '');
   return detail ? `${prefix}: ${base}: ${detail}` : `${prefix}: ${base}`;
+}
+
+async function fetchControlStatus({ silentErrors = false } = {}) {
+  if (controlState.statusController) {
+    controlState.statusController.abort();
+  }
+
+  const controller = new AbortController();
+  const seq = controlState.statusSeq + 1;
+  controlState.statusSeq = seq;
+  controlState.statusController = controller;
+
+  try {
+    const res = await fetch('/api/control/status', {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const payloadRaw = await res.json().catch(() => null);
+    if (controlState.statusSeq !== seq) return;
+
+    if (res.status === 404) {
+      runtimeFeatures.controlPanelAvailable = false;
+      controlState.statusSnapshot = null;
+      controlState.statusError = '';
+      setControlOperationState('idle');
+      setControlResultBanner('', '');
+      stopControlStatusPolling();
+      renderControlPanel();
+      return;
+    }
+
+    runtimeFeatures.controlPanelAvailable = true;
+
+    if (!res.ok) {
+      const message = buildApiErrorMessage(res, payloadRaw, 'Control status failed');
+      controlState.statusError = message;
+      controlState.statusSnapshot = {
+        lifecycle: 'error',
+        inFlight: false,
+        operationAction: '',
+        updatedAtMs: Date.now(),
+        detail: message,
+      };
+      if (!silentErrors) {
+        setControlResultBanner('warning', `CONTROL STATUS FAILURE - ${message}`);
+      }
+      renderControlPanel();
+      return;
+    }
+
+    controlState.statusSnapshot = normalizeControlStatusSnapshot(payloadRaw);
+    controlState.statusError = '';
+    renderControlPanel();
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (controlState.statusSeq !== seq) return;
+
+    controlState.statusError = safeText(err?.message, 'Control status request failed');
+    if (!controlState.statusSnapshot) {
+      controlState.statusSnapshot = {
+        lifecycle: 'unknown',
+        inFlight: false,
+        operationAction: '',
+        updatedAtMs: Date.now(),
+        detail: '',
+      };
+    }
+    if (!silentErrors) {
+      setControlResultBanner('warning', `CONTROL STATUS FAILURE - ${controlState.statusError}`);
+    }
+    renderControlPanel();
+  } finally {
+    if (controlState.statusController === controller) {
+      controlState.statusController = null;
+    }
+  }
+}
+
+async function runRuntimeControlAction(action) {
+  const normalizedAction = normalizeControlAction(action, '');
+  if (!normalizedAction || !runtimeFeatures.controlPanelAvailable) return;
+  if (controlState.operationState === 'in-flight') return;
+  if (controlState.statusSnapshot?.inFlight) {
+    setControlOperationState('failure', { action: normalizedAction });
+    setControlResultBanner('warning', 'CONTROL LOCKED - another runtime operation is already in-flight.');
+    renderControlPanel();
+    return;
+  }
+
+  if (controlState.actionController) {
+    controlState.actionController.abort();
+  }
+  const controller = new AbortController();
+  controlState.actionController = controller;
+
+  const actionLabel = formatUpperToken(getControlActionLabel(normalizedAction, normalizedAction), 'CONTROL');
+  setControlOperationState('in-flight', { action: normalizedAction });
+  setControlResultBanner('info', `${actionLabel} IN-FLIGHT...`);
+  renderControlPanel();
+
+  try {
+    const res = await fetch(CONTROL_ACTION_ENDPOINTS[normalizedAction], {
+      method: 'POST',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    const payloadRaw = await res.json().catch(() => null);
+
+    if (res.status === 404) {
+      runtimeFeatures.controlPanelAvailable = false;
+      setControlOperationState('failure', { action: normalizedAction });
+      setControlResultBanner('error', 'CONTROL UNAVAILABLE (404) - runtime control routes were not found.');
+      stopControlStatusPolling();
+      renderControlPanel();
+      return;
+    }
+
+    if (!res.ok) {
+      const message = buildApiErrorMessage(res, payloadRaw, `${getControlActionLabel(normalizedAction, 'Control action')} failed`);
+      setControlOperationState('failure', { action: normalizedAction });
+      setControlResultBanner('error', `${actionLabel} FAILURE - ${message}`);
+      renderControlPanel();
+      await fetchControlStatus({ silentErrors: true });
+      return;
+    }
+
+    const payload = extractApiData(payloadRaw);
+    const detail = safeText(
+      payload?.detail ?? payloadRaw?.detail ?? payload?.message ?? payloadRaw?.message,
+      ''
+    );
+
+    setControlOperationState('success', { action: normalizedAction });
+    setControlResultBanner('success', `${actionLabel} SUCCESS${detail ? ` - ${detail}` : ''}.`);
+    renderControlPanel();
+    await fetchControlStatus({ silentErrors: true });
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    setControlOperationState('failure', { action: normalizedAction });
+    setControlResultBanner('error', `${actionLabel} FAILURE - ${safeText(err?.message, 'Request failed')}`);
+    renderControlPanel();
+    await fetchControlStatus({ silentErrors: true });
+  } finally {
+    if (controlState.actionController === controller) {
+      controlState.actionController = null;
+    }
+    renderControlPanel();
+  }
+}
+
+async function fetchConfigDetail() {
+  if (!isModalOpen() || modalState.activeKind !== 'config') return;
+
+  abortModalFetch();
+  const controller = new AbortController();
+  const seq = modalState.fetchSeq + 1;
+  modalState.fetchSeq = seq;
+  modalState.fetchController = controller;
+  modalState.status = 'loading';
+  modalState.errorText = '';
+  modalState.configBusy = false;
+  modalState.configValidationErrors = [];
+  setConfigResultBanner('', '');
+  renderModal();
+
+  try {
+    const res = await fetch('/api/config', {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const payloadRaw = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(buildApiErrorMessage(res, payloadRaw, 'Config load failed'));
+    }
+
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'config') {
+      return;
+    }
+
+    const envelope = normalizeConfigEnvelope(payloadRaw, { requireJson: true });
+    modalState.detail = {
+      configPath: envelope.configPath,
+      updatedAtMs: envelope.updatedAtMs,
+    };
+    modalState.configEditorText = envelope.rawJson;
+    modalState.configIfMatchHash = envelope.ifMatchHash;
+    modalState.status = 'ready';
+    modalState.errorText = '';
+    modalState.configValidationErrors = [];
+    setConfigResultBanner('', '');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'config') {
+      return;
+    }
+    modalState.status = 'error';
+    modalState.errorText = safeText(err?.message, 'Failed to load config');
+  } finally {
+    if (modalState.fetchController === controller) {
+      modalState.fetchController = null;
+    }
+    renderModal();
+  }
+}
+
+async function runConfigValidate() {
+  if (!isModalOpen() || modalState.activeKind !== 'config' || modalState.status !== 'ready' || modalState.configBusy) {
+    return;
+  }
+
+  const parsed = parseConfigEditorJson();
+  if (!parsed.ok) {
+    renderModal();
+    return;
+  }
+
+  if (modalState.configActionController) {
+    modalState.configActionController.abort();
+  }
+  const controller = new AbortController();
+  modalState.configActionController = controller;
+  modalState.configBusy = true;
+  renderModal();
+
+  try {
+    const res = await fetch('/api/config/validate', {
+      method: 'POST',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildConfigRequestPayload(parsed.value)),
+    });
+
+    const payloadRaw = await res.json().catch(() => null);
+    if (!isModalOpen() || modalState.activeKind !== 'config') return;
+
+    const payload = extractApiData(payloadRaw);
+    const errors = normalizeValidationErrors(payloadRaw);
+    const explicitOk = payload && typeof payload === 'object' && typeof payload.ok === 'boolean'
+      ? payload.ok
+      : null;
+    const validationPassed = res.ok && explicitOk !== false && errors.length === 0;
+
+    if (validationPassed) {
+      modalState.configValidationErrors = [];
+      setConfigResultBanner('success', 'VALIDATE SUCCESS - config schema checks passed.');
+      return;
+    }
+
+    modalState.configValidationErrors = errors;
+    if (modalState.configValidationErrors.length === 0) {
+      const fallbackMessage = safeText(
+        payload?.detail ?? payloadRaw?.detail ?? payload?.error ?? payloadRaw?.error,
+        'Validation failed'
+      );
+      modalState.configValidationErrors = [{ path: '$', message: fallbackMessage }];
+    }
+    setConfigResultBanner('warning', 'VALIDATE FAILURE - review inline path + message errors.');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (!isModalOpen() || modalState.activeKind !== 'config') return;
+    modalState.configValidationErrors = [];
+    setConfigResultBanner('error', `VALIDATE FAILURE - ${safeText(err?.message, 'Request failed')}`);
+  } finally {
+    if (modalState.configActionController === controller) {
+      modalState.configActionController = null;
+      modalState.configBusy = false;
+    }
+    renderModal();
+  }
+}
+
+async function runConfigSave() {
+  if (!isModalOpen() || modalState.activeKind !== 'config' || modalState.status !== 'ready' || modalState.configBusy) {
+    return;
+  }
+
+  const parsed = parseConfigEditorJson();
+  if (!parsed.ok) {
+    renderModal();
+    return;
+  }
+
+  if (modalState.configActionController) {
+    modalState.configActionController.abort();
+  }
+  const controller = new AbortController();
+  modalState.configActionController = controller;
+  modalState.configBusy = true;
+  renderModal();
+
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    const ifMatchHash = safeText(modalState.configIfMatchHash, '');
+    if (ifMatchHash) {
+      headers['If-Match'] = ifMatchHash;
+    }
+
+    const res = await fetch('/api/config', {
+      method: 'PUT',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers,
+      body: JSON.stringify(buildConfigRequestPayload(parsed.value)),
+    });
+    const payloadRaw = await res.json().catch(() => null);
+    if (!isModalOpen() || modalState.activeKind !== 'config') return;
+
+    if (res.status === 409) {
+      modalState.configValidationErrors = normalizeValidationErrors(payloadRaw);
+      if (modalState.configValidationErrors.length === 0) {
+        const detail = safeText(payloadRaw?.detail ?? extractApiData(payloadRaw)?.detail, '');
+        if (detail) modalState.configValidationErrors = [{ path: '$', message: detail }];
+      }
+      setConfigResultBanner('warning', 'SAVE CONFLICT (409) - loaded hash is stale; reload before retry.');
+      return;
+    }
+
+    if (!res.ok) {
+      const errors = normalizeValidationErrors(payloadRaw);
+      modalState.configValidationErrors = errors;
+      if (modalState.configValidationErrors.length === 0) {
+        modalState.configValidationErrors = [{
+          path: '$',
+          message: buildApiErrorMessage(res, payloadRaw, 'Save failed'),
+        }];
+      }
+      setConfigResultBanner('error', 'SAVE FAILURE - config was not persisted.');
+      return;
+    }
+
+    const payload = extractApiData(payloadRaw);
+    if (payload && typeof payload === 'object' && payload.ok === false) {
+      modalState.configValidationErrors = normalizeValidationErrors(payloadRaw);
+      if (modalState.configValidationErrors.length === 0) {
+        const detail = safeText(payload.detail, 'Save failed');
+        modalState.configValidationErrors = [{ path: '$', message: detail }];
+      }
+      setConfigResultBanner('error', 'SAVE FAILURE - config was not persisted.');
+      return;
+    }
+
+    const envelope = normalizeConfigEnvelope(payloadRaw, { requireJson: false });
+    if (safeText(envelope.rawJson, '')) {
+      modalState.configEditorText = envelope.rawJson;
+    }
+    if (safeText(envelope.ifMatchHash, '')) {
+      modalState.configIfMatchHash = envelope.ifMatchHash;
+    }
+    modalState.detail = {
+      configPath: envelope.configPath || safeText(modalState.detail?.configPath, ''),
+      updatedAtMs: envelope.updatedAtMs || Date.now(),
+    };
+    modalState.configValidationErrors = [];
+    setConfigResultBanner('success', 'SAVE SUCCESS - config persisted.');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (!isModalOpen() || modalState.activeKind !== 'config') return;
+    modalState.configValidationErrors = [];
+    setConfigResultBanner('error', `SAVE FAILURE - ${safeText(err?.message, 'Request failed')}`);
+  } finally {
+    if (modalState.configActionController === controller) {
+      modalState.configActionController = null;
+      modalState.configBusy = false;
+    }
+    renderModal();
+  }
 }
 
 async function fetchAccountAchievementsDetail() {
@@ -2221,6 +3429,10 @@ async function fetchAccountAchievementsDetail() {
 
 function openCharacterModal(name, kind) {
   if (!name || !MODAL_KIND_LABELS[kind] || !modalRefs.host || !modalRefs.dialog) return;
+  if (kind === 'config') {
+    openConfigModal();
+    return;
+  }
 
   modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
     ? document.activeElement
@@ -2235,6 +3447,11 @@ function openCharacterModal(name, kind) {
     : (appState.characters.get(name)?.lastUpdatedAtMs || 0);
   modalState.achievementFilter = 'all';
   modalState.achievementSearch = '';
+  modalState.configEditorText = '';
+  modalState.configIfMatchHash = '';
+  modalState.configValidationErrors = [];
+  modalState.configBusy = false;
+  setConfigResultBanner('', '');
 
   modalRefs.host.hidden = false;
   document.body.classList.add('modal-open');
@@ -2250,6 +3467,38 @@ function openCharacterModal(name, kind) {
   } else {
     fetchCharacterDetail(name);
   }
+}
+
+function openConfigModal() {
+  if (!modalRefs.host || !modalRefs.dialog) return;
+
+  modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  modalState.activeCharacterName = CONFIG_MODAL_NAME;
+  modalState.activeKind = 'config';
+  modalState.status = 'loading';
+  modalState.detail = null;
+  modalState.errorText = '';
+  modalState.activeSnapshotUpdatedAtMs = 0;
+  modalState.achievementFilter = 'all';
+  modalState.achievementSearch = '';
+  modalState.configEditorText = '';
+  modalState.configIfMatchHash = '';
+  modalState.configValidationErrors = [];
+  modalState.configBusy = false;
+  setConfigResultBanner('', '');
+
+  modalRefs.host.hidden = false;
+  document.body.classList.add('modal-open');
+  renderModal();
+
+  requestAnimationFrame(() => {
+    if (modalRefs.closeBtn) modalRefs.closeBtn.focus();
+    else modalRefs.dialog.focus();
+  });
+
+  fetchConfigDetail();
 }
 
 function closeCharacterModal({ restoreFocus = true } = {}) {
@@ -2269,6 +3518,11 @@ function closeCharacterModal({ restoreFocus = true } = {}) {
   modalState.lastFocusedElement = null;
   modalState.achievementFilter = 'all';
   modalState.achievementSearch = '';
+  modalState.configEditorText = '';
+  modalState.configIfMatchHash = '';
+  modalState.configValidationErrors = [];
+  modalState.configBusy = false;
+  setConfigResultBanner('', '');
 
   if (restoreFocus && focusEl && document.contains(focusEl)) {
     focusEl.focus();
@@ -2316,7 +3570,7 @@ function onDocumentKeydown(event) {
 }
 
 function onCardActionClick(event) {
-  const button = event.target.closest('button[data-modal-kind]');
+  const button = closestFromEventTarget(event, 'button[data-modal-kind]');
   if (!button || button.disabled) return;
   const card = button.closest('.card');
   const name = card?.dataset?.charName;
@@ -2325,31 +3579,72 @@ function onCardActionClick(event) {
   openCharacterModal(name, kind);
 }
 
+function onConfigButtonClick() {
+  if (!runtimeFeatures.configEditorAvailable) return;
+  openConfigModal();
+}
+
+function onRuntimeControlButtonClick(event) {
+  const button = closestFromEventTarget(event, 'button[data-runtime-control]');
+  if (!button || button.disabled) return;
+
+  const action = normalizeControlAction(button.dataset.runtimeControl, '');
+  if (!action) return;
+  runRuntimeControlAction(action);
+}
+
 function onModalContentClick(event) {
-  if (!isModalOpen() || modalState.activeKind !== 'achiev' || modalState.status !== 'ready') return;
-  const button = event.target.closest('button[data-achievement-filter]');
-  if (!button || !modalRefs.content || !modalRefs.content.contains(button)) return;
+  if (!isModalOpen() || modalState.status !== 'ready' || !modalRefs.content) return;
 
-  const nextFilter = safeText(button.dataset.achievementFilter, '').toLowerCase();
-  if (!ACHIEVEMENT_FILTER_LABELS[nextFilter]) return;
-  if (modalState.achievementFilter === nextFilter) return;
+  if (modalState.activeKind === 'achiev') {
+    const button = closestFromEventTarget(event, 'button[data-achievement-filter]');
+    if (!button || !modalRefs.content.contains(button)) return;
 
-  modalState.achievementFilter = nextFilter;
-  renderAchievementsListInPlace();
+    const nextFilter = safeText(button.dataset.achievementFilter, '').toLowerCase();
+    if (!ACHIEVEMENT_FILTER_LABELS[nextFilter]) return;
+    if (modalState.achievementFilter === nextFilter) return;
+
+    modalState.achievementFilter = nextFilter;
+    renderAchievementsListInPlace();
+    return;
+  }
+
+  if (modalState.activeKind !== 'config') return;
+  const button = closestFromEventTarget(event, 'button[data-config-action]');
+  if (!button || !modalRefs.content.contains(button) || button.disabled) return;
+
+  const action = safeText(button.dataset.configAction, '').toLowerCase();
+  if (action === 'validate') {
+    runConfigValidate();
+    return;
+  }
+  if (action === 'save') {
+    runConfigSave();
+  }
 }
 
 function onModalContentInput(event) {
-  if (!isModalOpen() || modalState.activeKind !== 'achiev' || modalState.status !== 'ready') return;
-  const input = event.target.closest('input[data-achievement-search]');
-  if (!input || !modalRefs.content || !modalRefs.content.contains(input)) return;
+  if (!isModalOpen() || modalState.status !== 'ready' || !modalRefs.content) return;
 
-  modalState.achievementSearch = `${input.value ?? ''}`;
-  renderAchievementsListInPlace();
+  if (modalState.activeKind === 'achiev') {
+    const input = closestFromEventTarget(event, 'input[data-achievement-search]');
+    if (!input || !modalRefs.content.contains(input)) return;
+
+    modalState.achievementSearch = `${input.value ?? ''}`;
+    renderAchievementsListInPlace();
+    return;
+  }
+
+  if (modalState.activeKind !== 'config') return;
+  const editor = closestFromEventTarget(event, 'textarea[data-config-json]');
+  if (!editor || !modalRefs.content.contains(editor)) return;
+
+  modalState.configEditorText = `${editor.value ?? ''}`;
 }
 
 function maybeRefreshActiveModalFromSnapshot() {
   if (!isModalOpen()) return;
-  if (modalState.activeKind === 'achiev') return;
+  if (modalState.activeKind === 'achiev' || modalState.activeKind === 'config') return;
 
   const activeChar = appState.characters.get(modalState.activeCharacterName);
   if (!activeChar) {
@@ -2367,6 +3662,48 @@ function maybeRefreshActiveModalFromSnapshot() {
   renderModal();
 }
 
+function applyConfigFeatureVisibility() {
+  if (!modalRefs.configBtn) return;
+  modalRefs.configBtn.hidden = !runtimeFeatures.configEditorAvailable;
+}
+
+function applyRuntimeControlFeatureVisibility() {
+  renderControlPanel();
+}
+
+async function probeConfigFeatureAvailability() {
+  runtimeFeatures.configEditorAvailable = false;
+  applyConfigFeatureVisibility();
+
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    runtimeFeatures.configEditorAvailable = res.status !== 404;
+  } catch {
+    runtimeFeatures.configEditorAvailable = false;
+  }
+
+  applyConfigFeatureVisibility();
+}
+
+async function probeControlFeatureAvailability() {
+  runtimeFeatures.controlPanelAvailable = false;
+  controlState.statusSnapshot = null;
+  controlState.statusError = '';
+  setControlOperationState('idle');
+  setControlResultBanner('', '');
+  applyRuntimeControlFeatureVisibility();
+
+  await fetchControlStatus({ silentErrors: true });
+
+  if (runtimeFeatures.controlPanelAvailable) {
+    startControlStatusPolling();
+  } else {
+    stopControlStatusPolling();
+  }
+
+  applyRuntimeControlFeatureVisibility();
+}
+
 function setupModalFramework() {
   modalRefs.host = document.getElementById('modalHost');
   modalRefs.scrim = document.getElementById('modalScrim');
@@ -2376,10 +3713,23 @@ function setupModalFramework() {
   modalRefs.banner = document.getElementById('modalBanner');
   modalRefs.content = document.getElementById('modalContent');
   modalRefs.closeBtn = document.getElementById('modalCloseBtn');
+  modalRefs.configBtn = document.getElementById('openConfigBtn');
+  controlRefs.restartBtn = document.getElementById('restartBotBtn');
+  controlRefs.statusPanel = document.getElementById('controlStatusPanel');
+  controlRefs.runtimeState = document.getElementById('controlRuntimeState');
+  controlRefs.operationState = document.getElementById('controlOperationState');
+  controlRefs.updatedAt = document.getElementById('controlStatusUpdatedAt');
+  controlRefs.banner = document.getElementById('controlResultBanner');
 
   const cardsContainer = document.getElementById('cardsContainer');
   if (cardsContainer) {
     cardsContainer.addEventListener('click', onCardActionClick);
+  }
+  if (modalRefs.configBtn) {
+    modalRefs.configBtn.addEventListener('click', onConfigButtonClick);
+  }
+  if (controlRefs.restartBtn) {
+    controlRefs.restartBtn.addEventListener('click', onRuntimeControlButtonClick);
   }
   if (modalRefs.scrim) {
     modalRefs.scrim.addEventListener('click', () => closeCharacterModal());
@@ -2392,6 +3742,7 @@ function setupModalFramework() {
     modalRefs.content.addEventListener('input', onModalContentInput);
   }
   document.addEventListener('keydown', onDocumentKeydown);
+  renderControlPanel();
 }
 
 function syncCards() {
@@ -2509,6 +3860,10 @@ function connectLiveEvents() {
    ============================================================== */
 async function init() {
   setupModalFramework();
+  await Promise.all([
+    probeConfigFeatureAvailability(),
+    probeControlFeatureAvailability(),
+  ]);
   createPetals();
 
   try {
@@ -2528,6 +3883,15 @@ async function init() {
     }
   }, 100);
 }
+
+window.addEventListener('beforeunload', () => {
+  stopControlStatusPolling();
+  if (controlState.actionController) {
+    controlState.actionController.abort();
+    controlState.actionController = null;
+  }
+  clearControlResetTimer();
+});
 
 document.addEventListener('DOMContentLoaded', init);
 </script>

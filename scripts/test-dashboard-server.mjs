@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { resolve } from 'path';
-import { fileURLToPath } from 'url';
+import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
+import * as fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
 process.env.ARTIFACTS_API ||= 'https://artifacts-api.test';
@@ -13,7 +21,6 @@ const {
   recordCharacterSnapshot,
   recordLog,
 } = uiState;
-const { startDashboardServer } = await import('../src/dashboard-server.mjs');
 
 function assertHasKeys(obj, keys, label) {
   assert.ok(obj && typeof obj === 'object', `${label} must be an object`);
@@ -202,6 +209,87 @@ function assertAccountAchievementsShape(payload) {
   }
 }
 
+function assertConfigPayloadShape(payload, label = 'config payload') {
+  assertHasKeys(payload, ['path', 'hash', 'config'], label);
+  assert.equal(typeof payload.path, 'string', `${label}.path must be a string`);
+  assert.equal(typeof payload.hash, 'string', `${label}.hash must be a string`);
+  assert.ok(payload.config && typeof payload.config === 'object', `${label}.config must be an object`);
+}
+
+function assertValidationErrorsShape(errors, label = 'validation errors') {
+  assert.ok(Array.isArray(errors), `${label} must be an array`);
+  assert.ok(errors.length > 0, `${label} must not be empty`);
+  for (const [idx, entry] of errors.entries()) {
+    assertHasKeys(entry, ['path', 'message'], `${label}[${idx}]`);
+    assert.equal(typeof entry.path, 'string', `${label}[${idx}].path must be a string`);
+    assert.equal(typeof entry.message, 'string', `${label}[${idx}].message must be a string`);
+  }
+}
+
+function deepCloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function mutateConfigName(config, suffix) {
+  const next = deepCloneJson(config);
+  assert.ok(Array.isArray(next.characters), 'config.characters must be an array');
+  assert.ok(next.characters.length > 0, 'config.characters must not be empty');
+  const first = next.characters[0] || {};
+  const baseName = `${first.name || 'TestCharacter'}`.trim() || 'TestCharacter';
+  next.characters[0] = {
+    ...first,
+    name: `${baseName}_${suffix}`,
+  };
+  return next;
+}
+
+function createConfigFixture(rootDir) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'dashboard-config-test-'));
+  const configPath = join(tempDir, 'characters.json');
+  const sourcePath = resolve(rootDir, 'config/characters-local.json');
+  copyFileSync(sourcePath, configPath);
+
+  return {
+    tempDir,
+    configPath,
+  };
+}
+
+function readTextFromFd(fd) {
+  const stat = fs.fstatSync(fd);
+  const size = Number(stat.size) || 0;
+  if (size <= 0) return '';
+  const buf = Buffer.alloc(size);
+  fs.readSync(fd, buf, 0, size, 0);
+  return buf.toString('utf-8');
+}
+
+function openAtomicProbe(configPath) {
+  const fd = fs.openSync(configPath, 'r');
+  return {
+    fd,
+    inode: fs.fstatSync(fd).ino,
+    text: readTextFromFd(fd),
+    close() {
+      fs.closeSync(fd);
+    },
+  };
+}
+
+function assertAtomicReplaceBehavior(configPath, probe) {
+  const currentStat = fs.statSync(configPath);
+  assert.notEqual(
+    currentStat.ino,
+    probe.inode,
+    'save should replace config via rename (inode should change)',
+  );
+  assert.equal(
+    readTextFromFd(probe.fd),
+    probe.text,
+    'pre-save descriptor should keep seeing old bytes after atomic rename',
+  );
+}
+
 function createJsonResponse(status, payload) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -216,6 +304,33 @@ function normalizeFetchUrl(input) {
   if (input instanceof URL) return input.toString();
   if (input && typeof input.url === 'string') return input.url;
   return String(input);
+}
+
+async function requestJson(url, { method = 'GET', body } = {}) {
+  const headers = {};
+  let requestBody;
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    requestBody = JSON.stringify(body);
+  }
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: requestBody,
+  });
+
+  const text = await res.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (err) {
+      assert.fail(`Expected JSON from ${method} ${url}; parse failed: ${err.message}; body=${text}`);
+    }
+  }
+
+  return { res, payload };
 }
 
 function createArtifactsApiMock(baseUrl) {
@@ -285,6 +400,223 @@ function createArtifactsApiMock(baseUrl) {
       });
     },
   };
+}
+
+function createDeferred() {
+  let resolveFn = () => {};
+  let rejectFn = () => {};
+  const promise = new Promise((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return {
+    promise,
+    resolve: resolveFn,
+    reject: rejectFn,
+  };
+}
+
+async function waitFor(predicate, {
+  timeoutMs = 1_000,
+  intervalMs = 10,
+  label = 'condition',
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = null;
+
+  while (Date.now() <= deadline) {
+    try {
+      const value = await predicate();
+      if (value) return value;
+    } catch (err) {
+      lastErr = err;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+
+  if (lastErr) {
+    throw new Error(`Timed out waiting for ${label}: ${lastErr.message}`);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+function extractLifecycleState(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+
+  const direct = getFirstPresent(payload, ['lifecycle', 'state', 'lifecycleState', 'runtimeState', 'status']);
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+  if (direct && typeof direct === 'object') {
+    const nested = getFirstPresent(direct, ['lifecycle', 'state', 'lifecycleState', 'status']);
+    if (typeof nested === 'string' && nested.trim()) return nested.trim();
+  }
+
+  if (payload.runtime && typeof payload.runtime === 'object') {
+    const nested = getFirstPresent(payload.runtime, ['lifecycle', 'state', 'lifecycleState', 'status']);
+    if (typeof nested === 'string' && nested.trim()) return nested.trim();
+  }
+
+  return '';
+}
+
+function assertControlStatusShape(payload, label = 'control status payload') {
+  assert.ok(payload && typeof payload === 'object' && !Array.isArray(payload), `${label} must be an object`);
+
+  const lifecycle = extractLifecycleState(payload).toLowerCase();
+  const lifecycleStates = new Set(['stopped', 'starting', 'running', 'stopping', 'error']);
+  assert.equal(Boolean(lifecycle), true, `${label} must include lifecycle state string`);
+  assert.equal(
+    lifecycleStates.has(lifecycle),
+    true,
+    `${label} lifecycle must be one of ${Array.from(lifecycleStates).join(', ')} (got "${lifecycle}")`,
+  );
+
+  const busy = getFirstPresent(payload, ['busy', 'inFlight', 'operationInFlight', 'locked']);
+  const lock = payload.lock;
+  const operation = payload.operation;
+  const hasLockSignal = typeof busy === 'boolean'
+    || typeof lock === 'boolean'
+    || (lock && typeof lock === 'object')
+    || typeof operation === 'string'
+    || (operation && typeof operation === 'object');
+  assert.equal(hasLockSignal, true, `${label} must include lock/operation signal`);
+
+  if (Object.hasOwn(payload, 'updatedAtMs')) {
+    assert.equal(typeof payload.updatedAtMs, 'number', `${label}.updatedAtMs must be numeric`);
+  }
+}
+
+function assertControlSuccessShape(payload, label) {
+  assert.ok(payload && typeof payload === 'object' && !Array.isArray(payload), `${label} payload must be an object`);
+  const ok = getFirstPresent(payload, ['ok', 'success']);
+  if (ok !== undefined) {
+    assert.equal(Boolean(ok), true, `${label} should report success`);
+  }
+  const operation = getFirstPresent(payload, ['operation', 'action', 'op']);
+  if (operation !== undefined) {
+    assert.equal(typeof operation, 'string', `${label} operation should be a string`);
+  }
+}
+
+function createControlConflictError(activeOperation) {
+  const err = new Error(`Operation already in-flight: ${activeOperation}`);
+  err.status = 409;
+  err.code = 'operation_in_flight';
+  return err;
+}
+
+function createRuntimeControlMock() {
+  const state = {
+    lifecycle: 'running',
+    inFlight: null,
+    statusCalls: 0,
+    reloadCalls: 0,
+    restartCalls: 0,
+    gates: new Map(),
+  };
+
+  function setGate(operation, deferred) {
+    state.gates.set(operation, deferred);
+  }
+
+  async function runOperation(operation, {
+    enteringState = null,
+    intermediateState = null,
+    finalState = 'running',
+  } = {}) {
+    if (state.inFlight) {
+      throw createControlConflictError(state.inFlight);
+    }
+
+    state.inFlight = operation;
+    if (enteringState) state.lifecycle = enteringState;
+
+    try {
+      const gate = state.gates.get(operation);
+      if (gate) {
+        await gate.promise;
+      }
+
+      if (intermediateState) state.lifecycle = intermediateState;
+      state.lifecycle = finalState;
+      return {
+        ok: true,
+        operation,
+        lifecycle: state.lifecycle,
+        inFlight: false,
+        updatedAtMs: Date.now(),
+      };
+    } finally {
+      state.gates.delete(operation);
+      state.inFlight = null;
+    }
+  }
+
+  const api = {
+    state,
+    setGate,
+    async waitForInFlight(operation, timeoutMs = 1_000) {
+      await waitFor(() => state.inFlight === operation, {
+        timeoutMs,
+        label: `runtime mock in-flight ${operation}`,
+      });
+    },
+    getStatus() {
+      state.statusCalls += 1;
+      return {
+        lifecycle: state.lifecycle,
+        inFlight: Boolean(state.inFlight),
+        operation: state.inFlight ? { name: state.inFlight, inFlight: true } : null,
+        lock: {
+          inFlight: Boolean(state.inFlight),
+          operation: state.inFlight,
+        },
+        updatedAtMs: Date.now(),
+      };
+    },
+    status() {
+      return api.getStatus();
+    },
+    async start() {
+      state.lifecycle = 'running';
+      return {
+        ok: true,
+        operation: 'start',
+        lifecycle: state.lifecycle,
+        updatedAtMs: Date.now(),
+      };
+    },
+    async stop() {
+      state.lifecycle = 'stopped';
+      return {
+        ok: true,
+        operation: 'stop',
+        lifecycle: state.lifecycle,
+        updatedAtMs: Date.now(),
+      };
+    },
+    async reloadConfig() {
+      state.reloadCalls += 1;
+      return runOperation('reload-config', {
+        enteringState: 'running',
+        finalState: 'running',
+      });
+    },
+    async reload() {
+      return api.reloadConfig();
+    },
+    async restart() {
+      state.restartCalls += 1;
+      return runOperation('restart', {
+        enteringState: 'stopping',
+        intermediateState: 'starting',
+        finalState: 'running',
+      });
+    },
+  };
+
+  return api;
 }
 
 function parseSseEvent(rawBlock) {
@@ -378,84 +710,98 @@ async function nextSseEvent(sse, eventName, maxEvents = 20, timeoutMs = 1_500) {
 }
 
 async function run() {
-  const originalFetch = globalThis.fetch;
-  const apiMock = createArtifactsApiMock(process.env.ARTIFACTS_API || 'https://artifacts-api.test');
-  globalThis.fetch = async (input, init) => {
-    const urlText = normalizeFetchUrl(input);
-    if (apiMock.handles(urlText)) {
-      return apiMock.fetch(urlText, init);
-    }
-    return originalFetch(input, init);
-  };
-
-  _resetUiStateForTests();
-  initializeUiState({
-    characterNames: ['Alpha'],
-    configPath: './config/characters.json',
-    startedAt: 123,
-    logLimit: 120,
-  });
-
-  recordCharacterSnapshot('Alpha', {
-    level: 12,
-    hp: 140,
-    max_hp: 200,
-    xp: 5600,
-    max_xp: 8000,
-    x: 3,
-    y: 9,
-    layer: 'overworld',
-    gold: 777,
-    task: 'chicken',
-    task_type: 'monsters',
-    task_progress: 17,
-    task_total: 50,
-    mining_level: 9,
-    mining_xp: 410,
-    mining_max_xp: 1000,
-    woodcutting_level: 4,
-    woodcutting_xp: 120,
-    woodcutting_max_xp: 400,
-    fishing_level: 2,
-    fishing_xp: 70,
-    fishing_max_xp: 250,
-    weaponcrafting_level: 3,
-    weaponcrafting_xp: 44,
-    weaponcrafting_max_xp: 200,
-    inventory: [
-      { slot: 1, code: 'copper_ore', quantity: 12 },
-      { slot: 2, code: 'spruce_log', quantity: 3 },
-      { slot: 3, code: null, quantity: 0 },
-    ],
-    weapon_slot: 'copper_sword',
-    weapon_slot_quantity: 1,
-    helmet_slot: 'wooden_helmet',
-    helmet_slot_quantity: 1,
-    ring1_slot: 'topaz_ring',
-    ring1_slot_quantity: 1,
-  });
-
-  for (let i = 0; i < 65; i++) {
-    recordLog('Alpha', {
-      level: 'info',
-      line: `detail-log-${i}`,
-      at: i,
-    });
-  }
-
   const rootDir = resolve(fileURLToPath(new URL('../', import.meta.url)));
-  const dashboard = await startDashboardServer({
-    host: '127.0.0.1',
-    port: 0,
-    rootDir,
-    heartbeatMs: 100,
-    broadcastDebounceMs: 20,
-  });
-
-  const baseUrl = `http://127.0.0.1:${dashboard.port}`;
-  const sse = await openSse(`${baseUrl}/api/ui/events`);
-
+  const configFixture = createConfigFixture(rootDir);
+  const originalFetch = globalThis.fetch;
+  const originalBotConfig = process.env.BOT_CONFIG;
+  const originalBotConfigSchema = process.env.BOT_CONFIG_SCHEMA;
+  const apiMock = createArtifactsApiMock(process.env.ARTIFACTS_API || 'https://artifacts-api.test');
+  const runtimeControlMock = createRuntimeControlMock();
+  let dashboard = null;
+  let sse = null;
   try {
+    process.env.BOT_CONFIG = configFixture.configPath;
+    process.env.BOT_CONFIG_SCHEMA = resolve(rootDir, 'config/characters.schema.json');
+
+    const { startDashboardServer } = await import('../src/dashboard-server.mjs');
+
+    globalThis.fetch = async (input, init) => {
+      const urlText = normalizeFetchUrl(input);
+      if (apiMock.handles(urlText)) {
+        return apiMock.fetch(urlText, init);
+      }
+      return originalFetch(input, init);
+    };
+
+    _resetUiStateForTests();
+    initializeUiState({
+      characterNames: ['Alpha'],
+      configPath: './config/characters.json',
+      startedAt: 123,
+      logLimit: 120,
+    });
+
+    recordCharacterSnapshot('Alpha', {
+      level: 12,
+      hp: 140,
+      max_hp: 200,
+      xp: 5600,
+      max_xp: 8000,
+      x: 3,
+      y: 9,
+      layer: 'overworld',
+      gold: 777,
+      task: 'chicken',
+      task_type: 'monsters',
+      task_progress: 17,
+      task_total: 50,
+      mining_level: 9,
+      mining_xp: 410,
+      mining_max_xp: 1000,
+      woodcutting_level: 4,
+      woodcutting_xp: 120,
+      woodcutting_max_xp: 400,
+      fishing_level: 2,
+      fishing_xp: 70,
+      fishing_max_xp: 250,
+      weaponcrafting_level: 3,
+      weaponcrafting_xp: 44,
+      weaponcrafting_max_xp: 200,
+      inventory: [
+        { slot: 1, code: 'copper_ore', quantity: 12 },
+        { slot: 2, code: 'spruce_log', quantity: 3 },
+        { slot: 3, code: null, quantity: 0 },
+      ],
+      weapon_slot: 'copper_sword',
+      weapon_slot_quantity: 1,
+      helmet_slot: 'wooden_helmet',
+      helmet_slot_quantity: 1,
+      ring1_slot: 'topaz_ring',
+      ring1_slot_quantity: 1,
+    });
+
+    for (let i = 0; i < 65; i++) {
+      recordLog('Alpha', {
+        level: 'info',
+        line: `detail-log-${i}`,
+        at: i,
+      });
+    }
+
+    dashboard = await startDashboardServer({
+      host: '127.0.0.1',
+      port: 0,
+      rootDir,
+      heartbeatMs: 100,
+      broadcastDebounceMs: 20,
+      runtimeManager: runtimeControlMock,
+      runtime: runtimeControlMock,
+      controlRuntime: runtimeControlMock,
+    });
+
+    const baseUrl = `http://127.0.0.1:${dashboard.port}`;
+    sse = await openSse(`${baseUrl}/api/ui/events`);
+
     const health = await fetch(`${baseUrl}/healthz`);
     assert.equal(health.status, 200);
 
@@ -513,11 +859,144 @@ async function run() {
     assert.ok(apiMock.state.detailsCalls >= 1, 'Expected account summary endpoint to call upstream details at least once');
     assert.ok(apiMock.state.achievementCalls >= 1, 'Expected account achievements endpoint to call upstream achievements at least once');
 
+    // Phase 4: config API contract tests.
+    const getConfig = await requestJson(`${baseUrl}/api/config`);
+    assert.equal(getConfig.res.status, 200, `Expected /api/config 200, got ${getConfig.res.status}`);
+    assertConfigPayloadShape(getConfig.payload, 'GET /api/config payload');
+    assert.equal(
+      resolve(getConfig.payload.path),
+      resolve(configFixture.configPath),
+      'GET /api/config should return active BOT_CONFIG path',
+    );
+
+    const validateValid = await requestJson(`${baseUrl}/api/config/validate`, {
+      method: 'POST',
+      body: { config: deepCloneJson(getConfig.payload.config) },
+    });
+    assert.equal(validateValid.res.status, 200, `Expected /api/config/validate 200, got ${validateValid.res.status}`);
+    assert.equal(validateValid.payload?.ok, true, 'valid config should return ok=true');
+    assert.ok(Array.isArray(validateValid.payload?.errors), 'valid config response should include errors array');
+    assert.equal(validateValid.payload.errors.length, 0, 'valid config should return empty errors array');
+
+    const validateInvalid = await requestJson(`${baseUrl}/api/config/validate`, {
+      method: 'POST',
+      body: { config: { characters: [{ name: 'MissingRoutines' }] } },
+    });
+    assert.equal(validateInvalid.res.status, 200, `Expected invalid /api/config/validate 200, got ${validateInvalid.res.status}`);
+    assert.equal(validateInvalid.payload?.ok, false, 'invalid config should return ok=false');
+    assertValidationErrorsShape(validateInvalid.payload?.errors, 'invalid config errors');
+
+    const staleHash = `${getConfig.payload.hash}`;
+    const savedConfig = mutateConfigName(getConfig.payload.config, 'phase4save');
+    const atomicProbe = openAtomicProbe(configFixture.configPath);
+    let saveRes;
+    try {
+      saveRes = await requestJson(`${baseUrl}/api/config`, {
+        method: 'PUT',
+        body: {
+          config: savedConfig,
+          ifMatchHash: staleHash,
+        },
+      });
+      assertAtomicReplaceBehavior(configFixture.configPath, atomicProbe);
+    } finally {
+      atomicProbe.close();
+    }
+    assert.equal(saveRes.res.status, 200, `Expected /api/config PUT 200, got ${saveRes.res.status}`);
+    assertHasKeys(saveRes.payload, ['ok', 'hash', 'savedAtMs'], 'PUT /api/config success payload');
+    assert.equal(saveRes.payload.ok, true, 'successful save should return ok=true');
+    assert.equal(typeof saveRes.payload.hash, 'string', 'successful save should return new hash string');
+    assert.equal(typeof saveRes.payload.savedAtMs, 'number', 'successful save should return numeric savedAtMs');
+
+    const savedDiskConfig = JSON.parse(readFileSync(configFixture.configPath, 'utf-8'));
+    assert.equal(
+      savedDiskConfig?.characters?.[0]?.name,
+      savedConfig?.characters?.[0]?.name,
+      'successful save should persist updated config to disk',
+    );
+
+    const conflictInodeBefore = fs.statSync(configFixture.configPath).ino;
+    const beforeConflictRaw = readFileSync(configFixture.configPath, 'utf-8');
+    const conflictRes = await requestJson(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      body: {
+        config: mutateConfigName(savedConfig, 'phase4conflict'),
+        ifMatchHash: staleHash,
+      },
+    });
+    assert.equal(conflictRes.res.status, 409, `Expected stale hash /api/config PUT to return 409, got ${conflictRes.res.status}`);
+    assert.equal(typeof conflictRes.payload?.error, 'string', 'conflict response should include error');
+
+    const conflictInodeAfter = fs.statSync(configFixture.configPath).ino;
+    assert.equal(conflictInodeAfter, conflictInodeBefore, 'stale hash should not replace config file');
+    const afterConflictRaw = readFileSync(configFixture.configPath, 'utf-8');
+    assert.equal(afterConflictRaw, beforeConflictRaw, 'stale hash conflict should not mutate persisted config');
+
+    // Phase 5: runtime control API contract tests.
+    const controlStatus = await requestJson(`${baseUrl}/api/control/status`);
+    assert.equal(
+      controlStatus.res.status,
+      200,
+      `Expected /api/control/status 200, got ${controlStatus.res.status}`,
+    );
+    assertControlStatusShape(controlStatus.payload, 'GET /api/control/status payload');
+
+    const reloadControl = await requestJson(`${baseUrl}/api/control/reload-config`, { method: 'POST' });
+    assert.equal(
+      reloadControl.res.status,
+      200,
+      `Expected /api/control/reload-config 200, got ${reloadControl.res.status}`,
+    );
+    assertControlSuccessShape(reloadControl.payload, 'POST /api/control/reload-config');
+
+    const restartControl = await requestJson(`${baseUrl}/api/control/restart`, { method: 'POST' });
+    assert.equal(
+      restartControl.res.status,
+      200,
+      `Expected /api/control/restart 200, got ${restartControl.res.status}`,
+    );
+    assertControlSuccessShape(restartControl.payload, 'POST /api/control/restart');
+
+    const reloadGate = createDeferred();
+    runtimeControlMock.setGate('reload-config', reloadGate);
+
+    const pendingReload = requestJson(`${baseUrl}/api/control/reload-config`, { method: 'POST' });
+    await runtimeControlMock.waitForInFlight('reload-config', 1_500);
+
+    const controlConflict = await requestJson(`${baseUrl}/api/control/restart`, { method: 'POST' });
+    assert.equal(
+      controlConflict.res.status,
+      409,
+      `Expected in-flight control conflict 409, got ${controlConflict.res.status}`,
+    );
+    assert.equal(
+      typeof controlConflict.payload?.error,
+      'string',
+      'control conflict payload should include error string',
+    );
+
+    reloadGate.resolve();
+    const pendingReloadResult = await pendingReload;
+    assert.equal(
+      pendingReloadResult.res.status,
+      200,
+      `Expected in-flight reload request to complete with 200, got ${pendingReloadResult.res.status}`,
+    );
+    assertControlSuccessShape(
+      pendingReloadResult.payload,
+      'POST /api/control/reload-config (pending completion)',
+    );
+
     console.log('test-dashboard-server: PASS');
   } finally {
-    await sse.close();
-    await dashboard.close();
+    if (sse) await sse.close();
+    if (dashboard) await dashboard.close();
     globalThis.fetch = originalFetch;
+    if (originalBotConfig === undefined) delete process.env.BOT_CONFIG;
+    else process.env.BOT_CONFIG = originalBotConfig;
+    if (originalBotConfigSchema === undefined) delete process.env.BOT_CONFIG_SCHEMA;
+    else process.env.BOT_CONFIG_SCHEMA = originalBotConfigSchema;
+    rmSync(configFixture.tempDir, { recursive: true, force: true });
   }
 }
 
