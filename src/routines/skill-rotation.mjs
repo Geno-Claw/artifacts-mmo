@@ -604,6 +604,21 @@ export class SkillRotationRoutine extends BaseRoutine {
       return true;
     }
 
+    // Try to withdraw from bank and trade first (before gathering)
+    const haveQty = ctx.itemCount(itemCode);
+    if (!ctx.inventoryFull()) {
+      const bankQty = await this._withdrawForItemTask(ctx, itemCode, needed - haveQty);
+      const totalHave = ctx.itemCount(itemCode);
+      if (totalHave > 0) {
+        return this._tradeItemTask(ctx, itemCode, Math.min(totalHave, needed));
+      }
+    }
+
+    // If we have items in inventory, trade them
+    if (haveQty > 0) {
+      return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
+    }
+
     // Prerequisite check for gathering
     if (resource) {
       const charLevel = ctx.skillLevel(resource.skill);
@@ -641,22 +656,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       // TODO: implement crafting for item tasks — for now just gather
     }
 
-    // Try to withdraw from bank and trade in batches
-    const haveQty = ctx.itemCount(itemCode);
-    if (!ctx.inventoryFull()) {
-      const bankQty = await this._withdrawForItemTask(ctx, itemCode, needed - haveQty);
-      const totalHave = ctx.itemCount(itemCode);
-      if (totalHave > 0) {
-        return this._tradeItemTask(ctx, itemCode, Math.min(totalHave, needed));
-      }
-    }
-
-    // If we have items in inventory, trade them
-    if (haveQty > 0) {
-      return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
-    }
-
-    // Gather the item
+    // Fallback gather
     if (resource) {
       return this._gatherForItemTask(ctx, itemCode, resource, needed);
     }
