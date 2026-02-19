@@ -712,7 +712,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     // Trade if we've accumulated a batch (20% of remaining, min 1)
     const haveQty = ctx.itemCount(itemCode);
-    const batchTarget = Math.max(1, Math.ceil(needed * 0.2));
+    const batchTarget = Math.ceil(needed * 0.2);
     if (haveQty >= batchTarget || (haveQty > 0 && ctx.inventoryFull())) {
       return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
     }
