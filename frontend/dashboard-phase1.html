@@ -245,6 +245,80 @@ body::before {
   background: rgba(200, 48, 40, 0.18);
 }
 
+.orders-panel {
+  position: relative;
+  z-index: 2;
+  width: min(980px, calc(100vw - 32px));
+  margin: 0 auto 16px;
+  padding: 10px 12px;
+  background: rgba(42, 36, 32, 0.07);
+  border-left: 2px solid rgba(42, 36, 32, 0.24);
+}
+
+.orders-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.orders-panel-title {
+  font-size: 7px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.orders-panel-meta {
+  font-size: 6px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+.orders-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px;
+}
+
+.order-row {
+  background: rgba(42, 36, 32, 0.08);
+  border-left: 2px solid rgba(42, 36, 32, 0.28);
+  padding: 6px 8px;
+  min-height: 60px;
+}
+
+.order-row[data-status=\"claimed\"] {
+  border-left-color: rgba(200, 48, 40, 0.85);
+}
+
+.order-row[data-status=\"fulfilled\"] {
+  border-left-color: rgba(96, 120, 72, 0.85);
+}
+
+.order-item {
+  font-size: 6px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.order-meta {
+  margin-top: 4px;
+  font-size: 5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.orders-empty {
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 1px;
+}
+
 /* Brush stroke divider */
 .divider {
   display: flex;
@@ -1199,6 +1273,14 @@ body::before {
 </section>
 <div class="dashboard-control-banner" id="controlResultBanner" aria-live="polite" hidden></div>
 
+<section class="orders-panel" id="ordersPanel" aria-live="polite">
+  <div class="orders-panel-header">
+    <p class="orders-panel-title">Order Board</p>
+    <p class="orders-panel-meta" id="ordersPanelMeta">0 active</p>
+  </div>
+  <div class="orders-list" id="ordersList"></div>
+</section>
+
 <!-- Cards -->
 <main class="cards-container" id="cardsContainer"></main>
 
@@ -1445,10 +1527,16 @@ function drawCherryBranch(canvas) {
 const appState = {
   order: [],
   characters: new Map(),
+  orders: [],
 };
 
 const cardRefs = new Map();
 let eventSource = null;
+const ordersRefs = {
+  panel: null,
+  list: null,
+  meta: null,
+};
 const CONFIG_MODAL_NAME = '__config__';
 const MODAL_KIND_LABELS = {
   skills: 'Skills',
@@ -1791,6 +1879,61 @@ function formatUpperToken(value, fallback = '--') {
   const text = safeText(value, '');
   if (!text) return fallback;
   return text.replace(/[_-]+/g, ' ').toUpperCase();
+}
+
+function normalizeOrderStatus(status) {
+  const value = safeText(status, '').toLowerCase();
+  if (value === 'fulfilled') return 'fulfilled';
+  if (value === 'claimed') return 'claimed';
+  return 'open';
+}
+
+function normalizeOrderRow(raw) {
+  const itemCode = safeText(raw?.itemCode, '');
+  const sourceType = safeText(raw?.sourceType, '');
+  const sourceCode = safeText(raw?.sourceCode, '');
+  if (!itemCode || !sourceType || !sourceCode) return null;
+
+  return {
+    id: safeText(raw?.id, `${sourceType}:${sourceCode}:${itemCode}`),
+    itemCode,
+    sourceType,
+    sourceCode,
+    status: normalizeOrderStatus(raw?.status),
+    remainingQty: Math.max(0, toNumber(raw?.remainingQty, 0)),
+    requestedQty: Math.max(0, toNumber(raw?.requestedQty, 0)),
+    claimer: safeText(raw?.claim?.charName, ''),
+    createdAtMs: toNumber(raw?.createdAtMs, 0),
+  };
+}
+
+function renderOrdersPanel() {
+  if (!ordersRefs.panel || !ordersRefs.list || !ordersRefs.meta) return;
+
+  const activeRows = appState.orders
+    .filter(order => order.status !== 'fulfilled' && order.remainingQty > 0)
+    .sort((a, b) => a.createdAtMs - b.createdAtMs || a.id.localeCompare(b.id));
+
+  ordersRefs.meta.textContent = `${activeRows.length} active`;
+
+  if (activeRows.length === 0) {
+    ordersRefs.list.innerHTML = '<div class=\"orders-empty\">No active cross-character orders.</div>';
+    return;
+  }
+
+  ordersRefs.list.innerHTML = activeRows.map((row) => {
+    const sourceLabel = `${row.sourceType}:${row.sourceCode}`;
+    const claimer = row.claimer ? `claimer ${row.claimer}` : 'unclaimed';
+    return `
+      <article class=\"order-row\" data-status=\"${escapeHtml(row.status)}\">
+        <div class=\"order-item\">${escapeHtml(row.itemCode)} · remaining ${escapeHtml(formatNumberish(row.remainingQty, '0'))}</div>
+        <div class=\"order-meta\">
+          <div>${escapeHtml(sourceLabel)}</div>
+          <div>${escapeHtml(claimer)}</div>
+        </div>
+      </article>
+    `;
+  }).join('');
 }
 
 function normalizeControlAction(value, fallback = '') {
@@ -3824,6 +3967,10 @@ function applySnapshot(snapshot) {
       .filter(char => !!char?.name)
       .map(char => [char.name, normalizeCharacter(char)])
   );
+  appState.orders = (Array.isArray(snapshot.orders) ? snapshot.orders : [])
+    .map(normalizeOrderRow)
+    .filter(Boolean);
+  renderOrdersPanel();
   syncCards();
   maybeRefreshActiveModalFromSnapshot();
 }
@@ -3860,6 +4007,9 @@ function connectLiveEvents() {
    ============================================================== */
 async function init() {
   setupModalFramework();
+  ordersRefs.panel = document.getElementById('ordersPanel');
+  ordersRefs.list = document.getElementById('ordersList');
+  ordersRefs.meta = document.getElementById('ordersPanelMeta');
   await Promise.all([
     probeConfigFeatureAvailability(),
     probeControlFeatureAvailability(),

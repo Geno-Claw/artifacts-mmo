@@ -180,6 +180,47 @@
           "description": "Target quantities for task exchange reward items. Keys are item codes, values are desired quantities to accumulate in bank. Also works dynamically — crafting recipes with unmet bank deps that are task rewards will auto-trigger exchanges. Empty object enables dynamic-only mode.",
           "additionalProperties": { "type": "number", "minimum": 1 },
           "default": {}
+        },
+        "orderBoard": {
+          "type": "object",
+          "description": "Cross-character crafting order board settings for skill rotation order creation/fulfillment.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Legacy master toggle; when true, both createOrders and fulfillOrders default to true unless explicitly overridden"
+            },
+            "createOrders": {
+              "type": "boolean",
+              "default": false,
+              "description": "Allow posting orders when this character cannot self-obtain required gather/fight crafting dependencies"
+            },
+            "fulfillOrders": {
+              "type": "boolean",
+              "default": false,
+              "description": "Allow claiming and fulfilling board orders during gather/combat rotation loops"
+            },
+            "leaseMs": {
+              "type": "number",
+              "minimum": 1000,
+              "default": 120000,
+              "description": "How long a claimed order lease lasts before another character can claim it"
+            },
+            "blockedRetryMs": {
+              "type": "number",
+              "minimum": 1000,
+              "default": 600000,
+              "description": "How long a character is blocked from retrying an order after marking it blocked"
+            }
+          },
+          "default": {
+            "enabled": false,
+            "createOrders": false,
+            "fulfillOrders": false,
+            "leaseMs": 120000,
+            "blockedRetryMs": 600000
+          }
         }
       }
     },

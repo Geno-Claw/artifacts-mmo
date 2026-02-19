@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
 const { BANK } = await import('../src/data/locations.mjs');
 const inventoryManager = await import('../src/services/inventory-manager.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');
+const orderBoard = await import('../src/services/order-board.mjs');
 
 const {
   _resetForTests: resetInventoryManager,
@@ -25,6 +28,16 @@ const {
   withdrawBankItems,
   withdrawGoldFromBank,
 } = bankOps;
+
+const {
+  _resetOrderBoardForTests: resetOrderBoard,
+  claimOrder,
+  createOrMergeOrder,
+  getOrderBoardSnapshot,
+  initializeOrderBoard,
+} = orderBoard;
+
+const ORDER_BOARD_TEST_PATH = join(tmpdir(), `bank-ops-order-board-${process.pid}.json`);
 
 const state = {
   bank: new Map(),
@@ -284,9 +297,12 @@ async function resetHarness() {
   resetState();
   resetInventoryManager();
   resetBankOps();
+  resetOrderBoard();
   setInventoryApi(fakeApi);
   setBankOpsApi(fakeApi);
   _setForcedBatchReserveFailuresForTests(0);
+  const isolatedPath = `${ORDER_BOARD_TEST_PATH}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await initializeOrderBoard({ path: isolatedPath });
 }
 
 async function run() {
@@ -406,7 +422,40 @@ async function run() {
   assert.deepEqual(state.moveCalls[0], { x: BANK.x, y: BANK.y, name: 'G' }, 'item deposit move target must be bank');
   assert.equal(bankCount('birch_wood'), 3, 'item deposit should update bank delta');
 
-  // 8) depositAllInventory uses centralized deposit path.
+  // 8) Deposits should advance claimed order-board progress.
+  await resetHarness();
+  setBank([]);
+  await getBankItems(true);
+  const order = createOrMergeOrder({
+    requesterName: 'CrafterA',
+    recipeCode: 'oak_spear',
+    itemCode: 'birch_wood',
+    sourceType: 'gather',
+    sourceCode: 'birch_tree',
+    gatherSkill: 'woodcutting',
+    sourceLevel: 5,
+    quantity: 2,
+  });
+  assert.ok(order, 'expected test order to be created');
+  const claimed = claimOrder(order.id, { charName: 'OrderWorker', leaseMs: 5_000 });
+  assert.ok(claimed, 'expected order to be claimed by worker');
+
+  const ctxOrder = makeCtx('OrderWorker', {
+    startX: BANK.x,
+    startY: BANK.y,
+    inventory: [{ code: 'birch_wood', quantity: 2 }],
+  });
+  await depositBankItems(ctxOrder, [{ code: 'birch_wood', quantity: 2 }], {
+    reason: 'test order-board deposit hook',
+  });
+
+  const orderSnapshot = getOrderBoardSnapshot();
+  const updatedOrder = orderSnapshot.orders.find(row => row.id === order.id);
+  assert.ok(updatedOrder, 'order should remain in board snapshot');
+  assert.equal(updatedOrder.remainingQty, 0, 'deposit hook should reduce remaining qty');
+  assert.equal(updatedOrder.status, 'fulfilled', 'deposit hook should fulfill fully deposited order');
+
+  // 9) depositAllInventory uses centralized deposit path.
   await resetHarness();
   setBank([]);
   await getBankItems(true);
@@ -423,7 +472,7 @@ async function run() {
   assert.equal(bankCount('copper_ore'), 3, 'depositAllInventory should deposit copper_ore');
   assert.equal(bankCount('tin_ore'), 1, 'depositAllInventory should deposit tin_ore');
 
-  // 9) Off-bank gold withdraw/deposit auto-moves to bank.
+  // 10) Off-bank gold withdraw/deposit auto-moves to bank.
   await resetHarness();
   setBank([]);
   await getBankItems(true);
@@ -435,7 +484,7 @@ async function run() {
   assert.equal(state.moveCalls.length, 1, 'depositGoldToBank should not move again when already at bank');
   assert.equal(state.depositGoldCalls.length, 1, 'depositGoldToBank should call API once');
 
-  // 10) Location errors are not treated as stale availability (no retry + no invalidation).
+  // 11) Location errors are not treated as stale availability (no retry + no invalidation).
   await resetHarness();
   setBank([['spruce_wood', 4]]);
   await getBankItems(true);

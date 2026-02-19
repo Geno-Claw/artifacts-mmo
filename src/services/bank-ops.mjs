@@ -8,6 +8,7 @@ import * as log from '../log.mjs';
 import { BANK } from '../data/locations.mjs';
 import { canUseItem } from './item-conditions.mjs';
 import * as gameData from './game-data.mjs';
+import { recordDeposits } from './order-board.mjs';
 import {
   applyBankDelta,
   availableBankCount,
@@ -524,6 +525,11 @@ export async function depositBankItems(ctx, items, opts = {}) {
       charName: ctx.name,
       reason,
     });
+    try {
+      recordDeposits({ charName: ctx.name, items: normalized });
+    } catch (err) {
+      log.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`);
+    }
     await ctx.refresh();
     return normalized;
   } catch (err) {

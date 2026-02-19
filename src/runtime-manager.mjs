@@ -6,6 +6,11 @@ import * as log from './log.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
 import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
+import {
+  flushOrderBoard,
+  initializeOrderBoard,
+  releaseClaimsForChars,
+} from './services/order-board.mjs';
 import { createCharacter, subscribeActionEvents } from './api.mjs';
 import { initializeUiState, recordCooldown, recordLog } from './services/ui-state.mjs';
 
@@ -267,6 +272,18 @@ export class RuntimeManager {
   async _cleanupRun(run) {
     if (!run) return;
 
+    try {
+      releaseClaimsForChars(run.characterNames, 'runtime_cleanup');
+    } catch (err) {
+      log.warn(`[Runtime] Could not release order claims during cleanup: ${err?.message || String(err)}`);
+    }
+
+    try {
+      await flushOrderBoard();
+    } catch (err) {
+      log.warn(`[Runtime] Could not flush order board during cleanup: ${err?.message || String(err)}`);
+    }
+
     if (typeof run.unsubscribeActionEvents === 'function') {
       try {
         run.unsubscribeActionEvents();
@@ -309,6 +326,7 @@ export class RuntimeManager {
 
       await initGameData();
       await initInventoryManager();
+      await initializeOrderBoard();
       loadSellRules();
 
       for (const charCfg of config.characters) {

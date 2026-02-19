@@ -13,18 +13,59 @@ import { SkillRotation } from '../services/skill-rotation.mjs';
 import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights, equipForGathering } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
+<<<<<<< Updated upstream
 import { withdrawBankItem } from '../services/bank-ops.mjs';
+=======
+import { depositBankItems, withdrawBankItems } from '../services/bank-ops.mjs';
+import {
+  claimOrder,
+  getOrderBoardSnapshot,
+  listClaimableOrders,
+  markCharBlocked,
+  releaseClaim,
+  renewClaim,
+} from '../services/order-board.mjs';
+import { optimizeForMonster } from '../services/gear-optimizer.mjs';
+>>>>>>> Stashed changes
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
+const DEFAULT_ORDER_BOARD = Object.freeze({
+  enabled: false,
+  createOrders: false,
+  fulfillOrders: false,
+  leaseMs: 120_000,
+  blockedRetryMs: 600_000,
+});
+
+function normalizeOrderBoardConfig(cfg = {}) {
+  const input = cfg && typeof cfg === 'object' ? cfg : {};
+  const enabled = input.enabled === true;
+  const leaseMs = Number(input.leaseMs);
+  const blockedRetryMs = Number(input.blockedRetryMs);
+  const createOrders = typeof input.createOrders === 'boolean' ? input.createOrders : enabled;
+  const fulfillOrders = typeof input.fulfillOrders === 'boolean' ? input.fulfillOrders : enabled;
+
+  return {
+    enabled,
+    createOrders,
+    fulfillOrders,
+    leaseMs: Number.isFinite(leaseMs) && leaseMs > 0 ? Math.floor(leaseMs) : DEFAULT_ORDER_BOARD.leaseMs,
+    blockedRetryMs: Number.isFinite(blockedRetryMs) && blockedRetryMs > 0
+      ? Math.floor(blockedRetryMs)
+      : DEFAULT_ORDER_BOARD.blockedRetryMs,
+  };
+}
 
 export class SkillRotationRoutine extends BaseRoutine {
-  constructor({ priority = 5, maxLosses = MAX_LOSSES_DEFAULT, ...rotationCfg } = {}) {
+  constructor({ priority = 5, maxLosses = MAX_LOSSES_DEFAULT, orderBoard = {}, ...rotationCfg } = {}) {
     super({ name: 'Skill Rotation', priority, loop: true });
-    this.rotation = new SkillRotation(rotationCfg);
+    this.rotation = new SkillRotation({ ...rotationCfg, orderBoard });
     this.maxLosses = maxLosses;
+    this.orderBoard = normalizeOrderBoardConfig(orderBoard);
     this._currentBatch = 1;
     this._foodWithdrawn = false;
+    this._activeOrderClaim = null;
   }
 
   canRun(ctx) {
@@ -54,7 +95,10 @@ export class SkillRotationRoutine extends BaseRoutine {
       const hasCraftPlan = !!(this.rotation.recipe && this.rotation.productionPlan);
       const hasGatherTarget = !!(this.rotation.resource && this.rotation.resourceLoc);
 
-      if (hasCraftPlan) return this._executeCrafting(ctx);
+      if (hasCraftPlan) {
+        await this._clearActiveOrderClaim(ctx, { reason: 'alchemy_crafting_mode' });
+        return this._executeCrafting(ctx);
+      }
       if (hasGatherTarget) return this._executeGathering(ctx);
 
       log.warn(`[${ctx.name}] Rotation: alchemy state invalid (missing craft plan and gather target), rotating`);
@@ -66,15 +110,18 @@ export class SkillRotationRoutine extends BaseRoutine {
       return this._executeGathering(ctx);
     }
     if (CRAFTING_SKILLS.has(skill)) {
+      await this._clearActiveOrderClaim(ctx, { reason: 'crafting_mode' });
       return this._executeCrafting(ctx);
     }
     if (skill === 'combat') {
       return this._executeCombat(ctx);
     }
     if (skill === 'npc_task') {
+      await this._clearActiveOrderClaim(ctx, { reason: 'npc_task_mode' });
       return this._executeNpcTask(ctx);
     }
     if (skill === 'item_task') {
+      await this._clearActiveOrderClaim(ctx, { reason: 'item_task_mode' });
       return this._executeItemTask(ctx);
     }
 
@@ -83,41 +130,249 @@ export class SkillRotationRoutine extends BaseRoutine {
     return true;
   }
 
+  _canFulfillOrders() {
+    return this.orderBoard.fulfillOrders === true;
+  }
+
+  _isClaimForSource(sourceType) {
+    return !!(this._activeOrderClaim && this._activeOrderClaim.sourceType === sourceType);
+  }
+
+  _recordProgress(n = 1) {
+    if (this._activeOrderClaim) return false;
+    this.rotation.recordProgress(n);
+    return true;
+  }
+
+  async _clearActiveOrderClaim(ctx, { reason = 'clear_claim' } = {}) {
+    const active = this._activeOrderClaim;
+    if (!active) return;
+
+    this._activeOrderClaim = null;
+    try {
+      releaseClaim(active.orderId, { charName: ctx.name, reason });
+    } catch (err) {
+      log.warn(`[${ctx.name}] Order claim release failed (${active.orderId}): ${err?.message || String(err)}`);
+    }
+  }
+
+  _resolveOrderById(orderId) {
+    if (!orderId) return null;
+    const snapshot = getOrderBoardSnapshot();
+    return snapshot.orders.find(order => order.id === orderId) || null;
+  }
+
+  _syncActiveClaimFromBoard() {
+    if (!this._activeOrderClaim) return null;
+
+    const order = this._resolveOrderById(this._activeOrderClaim.orderId);
+    if (!order || order.status === 'fulfilled') {
+      this._activeOrderClaim = null;
+      return null;
+    }
+
+    if (order.claim?.charName !== this._activeOrderClaim.charName) {
+      this._activeOrderClaim = null;
+      return null;
+    }
+
+    this._activeOrderClaim = {
+      ...this._activeOrderClaim,
+      itemCode: order.itemCode,
+      sourceType: order.sourceType,
+      sourceCode: order.sourceCode,
+      gatherSkill: order.gatherSkill || null,
+      sourceLevel: order.sourceLevel || 0,
+      remainingQty: order.remainingQty,
+      claim: order.claim,
+    };
+
+    return this._activeOrderClaim;
+  }
+
+  _claimOrderForChar(ctx, order) {
+    if (!order) return null;
+    const claimed = claimOrder(order.id, {
+      charName: ctx.name,
+      leaseMs: this.orderBoard.leaseMs,
+    });
+    if (!claimed) return null;
+
+    const active = {
+      orderId: claimed.id,
+      charName: ctx.name,
+      itemCode: claimed.itemCode,
+      sourceType: claimed.sourceType,
+      sourceCode: claimed.sourceCode,
+      gatherSkill: claimed.gatherSkill || null,
+      sourceLevel: claimed.sourceLevel || 0,
+      remainingQty: claimed.remainingQty,
+      claim: claimed.claim,
+    };
+    this._activeOrderClaim = active;
+    log.info(`[${ctx.name}] Order claim: ${claimed.itemCode} via ${claimed.sourceType}:${claimed.sourceCode} (remaining ${claimed.remainingQty})`);
+    return active;
+  }
+
+  async _acquireGatherOrderClaim(ctx) {
+    const orders = listClaimableOrders({
+      sourceType: 'gather',
+      gatherSkill: this.rotation.currentSkill,
+      charName: ctx.name,
+    });
+
+    for (const order of orders) {
+      const active = this._claimOrderForChar(ctx, order);
+      if (active) return active;
+    }
+    return null;
+  }
+
+  async _acquireCombatOrderClaim(ctx) {
+    const orders = listClaimableOrders({
+      sourceType: 'fight',
+      charName: ctx.name,
+    });
+
+    for (const order of orders) {
+      const sim = await optimizeForMonster(ctx, order.sourceCode);
+      if (!sim || !sim.simResult?.win || sim.simResult.hpLostPercent > 90) continue;
+
+      const active = this._claimOrderForChar(ctx, order);
+      if (active) return active;
+    }
+    return null;
+  }
+
+  async _ensureOrderClaim(ctx, sourceType) {
+    if (!this._canFulfillOrders()) return null;
+
+    const active = this._syncActiveClaimFromBoard();
+    if (active && active.sourceType !== sourceType) {
+      await this._clearActiveOrderClaim(ctx, { reason: 'source_type_changed' });
+      return null;
+    }
+
+    if (active) {
+      const renewed = renewClaim(active.orderId, {
+        charName: ctx.name,
+        leaseMs: this.orderBoard.leaseMs,
+      });
+      if (!renewed) {
+        this._activeOrderClaim = null;
+        return null;
+      }
+      return this._syncActiveClaimFromBoard();
+    }
+
+    if (sourceType === 'gather') {
+      return this._acquireGatherOrderClaim(ctx);
+    }
+    if (sourceType === 'fight') {
+      return this._acquireCombatOrderClaim(ctx);
+    }
+    return null;
+  }
+
+  async _depositClaimItemsIfNeeded(ctx) {
+    const claim = this._syncActiveClaimFromBoard();
+    if (!claim) return false;
+
+    const carried = ctx.itemCount(claim.itemCode);
+    if (carried <= 0) return false;
+
+    const shouldDeposit = carried >= claim.remainingQty || ctx.inventoryFull();
+    if (!shouldDeposit) return false;
+
+    await depositBankItems(ctx, [{ code: claim.itemCode, quantity: carried }], {
+      reason: `order claim ${claim.orderId}`,
+    });
+    const fresh = this._syncActiveClaimFromBoard();
+    if (!fresh) {
+      log.info(`[${ctx.name}] Order fulfilled: ${claim.itemCode}`);
+    } else {
+      log.info(`[${ctx.name}] Order progress: ${fresh.itemCode} remaining ${fresh.remainingQty}`);
+    }
+    return true;
+  }
+
+  async _blockAndReleaseClaim(ctx, reason = 'blocked') {
+    const claim = this._syncActiveClaimFromBoard();
+    if (!claim) return;
+
+    try {
+      markCharBlocked(claim.orderId, {
+        charName: ctx.name,
+        blockedRetryMs: this.orderBoard.blockedRetryMs,
+      });
+      log.info(`[${ctx.name}] Order claim blocked (${reason}): ${claim.itemCode} via ${claim.sourceCode}`);
+    } catch (err) {
+      log.warn(`[${ctx.name}] Could not block claim ${claim.orderId}: ${err?.message || String(err)}`);
+    } finally {
+      this._activeOrderClaim = null;
+    }
+  }
+
   // --- Gathering (mining, woodcutting, fishing) ---
 
   async _executeGathering(ctx) {
-    const loc = this.rotation.resourceLoc;
+    let claim = await this._ensureOrderClaim(ctx, 'gather');
+
+    let resource = this.rotation.resource;
+    let loc = this.rotation.resourceLoc;
+    if (claim) {
+      resource = gameData.getResource(claim.sourceCode);
+      loc = resource ? await gameData.getResourceLocation(resource.code) : null;
+      if (!resource || !loc) {
+        log.warn(`[${ctx.name}] Order claim invalid for gather ${claim.sourceCode}; releasing claim`);
+        await this._clearActiveOrderClaim(ctx, { reason: 'missing_gather_source' });
+        claim = null;
+        resource = this.rotation.resource;
+        loc = this.rotation.resourceLoc;
+      }
+    }
+
     if (!loc) {
       await this.rotation.forceRotate(ctx);
       return true;
     }
 
     // Safety: verify we can actually gather this resource
-    {
-      const res = this.rotation.resource;
-      if (res && res.level > ctx.skillLevel(res.skill)) {
-        log.warn(`[${ctx.name}] ${res.code}: skill too low (need ${res.skill} lv${res.level}, have lv${ctx.skillLevel(res.skill)}), rotating`);
-        await this.rotation.forceRotate(ctx);
+    if (resource && resource.level > ctx.skillLevel(resource.skill)) {
+      if (claim) {
+        await this._blockAndReleaseClaim(ctx, 'insufficient_skill');
         return true;
       }
+      log.warn(`[${ctx.name}] ${resource.code}: skill too low (need ${resource.skill} lv${resource.level}, have lv${ctx.skillLevel(resource.skill)}), rotating`);
+      await this.rotation.forceRotate(ctx);
+      return true;
     }
 
-    // Smelt/process raw materials before gathering more
-    const smelted = await this._trySmelting(ctx);
-    if (smelted) return !ctx.inventoryFull();
+    // Smelt/process raw materials before gathering more (skip while fulfilling orders)
+    if (!claim) {
+      const smelted = await this._trySmelting(ctx);
+      if (smelted) return !ctx.inventoryFull();
+    }
 
     // Equip optimal gathering gear (tool + prospecting)
-    await equipForGathering(ctx, this.rotation.currentSkill);
+    await equipForGathering(ctx, resource?.skill || this.rotation.currentSkill);
 
     await moveTo(ctx, loc.x, loc.y);
     const result = await gatherOnce(ctx);
 
     const items = result.details?.items || [];
     const totalQty = items.reduce((sum, i) => sum + i.quantity, 0);
-    this.rotation.recordProgress(totalQty);
+    const progressed = this._recordProgress(totalQty);
 
-    const res = this.rotation.resource;
-    log.info(`[${ctx.name}] ${res.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+    if (progressed) {
+      const res = this.rotation.resource;
+      log.info(`[${ctx.name}] ${res.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+    } else {
+      const active = this._syncActiveClaimFromBoard();
+      const remaining = active ? active.remainingQty : 0;
+      log.info(`[${ctx.name}] Order gather ${resource.code}: ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (remaining ${remaining})`);
+      await this._depositClaimItemsIfNeeded(ctx);
+    }
 
     return !ctx.inventoryFull();
   }
@@ -161,49 +416,81 @@ export class SkillRotationRoutine extends BaseRoutine {
   // --- Combat ---
 
   async _executeCombat(ctx) {
-    const loc = this.rotation.monsterLoc;
-    if (!loc) {
+    let claim = await this._ensureOrderClaim(ctx, 'fight');
+
+    let monsterCode = this.rotation.monster?.code || null;
+    let loc = this.rotation.monsterLoc;
+
+    if (claim) {
+      monsterCode = claim.sourceCode;
+      loc = await gameData.getMonsterLocation(monsterCode);
+      if (!loc) {
+        log.warn(`[${ctx.name}] Order claim invalid for monster ${monsterCode}; blocking claim`);
+        await this._blockAndReleaseClaim(ctx, 'missing_monster_location');
+        claim = null;
+        monsterCode = this.rotation.monster?.code || null;
+        loc = this.rotation.monsterLoc;
+      }
+    }
+
+    if (!monsterCode || !loc) {
       await this.rotation.forceRotate(ctx);
       return true;
     }
 
     // Optimize gear for target monster (cached — only runs once per target)
-    await equipForCombat(ctx, this.rotation.monster.code);
-    await prepareCombatPotions(ctx, this.rotation.monster.code);
+    await equipForCombat(ctx, monsterCode);
+    await prepareCombatPotions(ctx, monsterCode);
 
     // Withdraw food from bank for all remaining fights (once per combat goal)
-    if (!this._foodWithdrawn) {
+    if (!claim && !this._foodWithdrawn) {
       const remaining = this.rotation.goalTarget - this.rotation.goalProgress;
-      await withdrawFoodForFights(ctx, this.rotation.monster.code, remaining);
+      await withdrawFoodForFights(ctx, monsterCode, remaining);
       this._foodWithdrawn = true;
     }
 
     await moveTo(ctx, loc.x, loc.y);
-    if (!(await restBeforeFight(ctx, this.rotation.monster.code))) {
+    if (!(await restBeforeFight(ctx, monsterCode))) {
+      if (claim) {
+        await this._blockAndReleaseClaim(ctx, 'rest_failed');
+        return true;
+      }
       await this.rotation.forceRotate(ctx);
       return true;
     }
 
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);
-    const monster = this.rotation.monster;
 
     if (r.win) {
-      ctx.clearLosses(monster.code);
-      this.rotation.recordProgress(1);
-      log.info(`[${ctx.name}] ${monster.code}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
-      return !ctx.inventoryFull();
-    } else {
-      ctx.recordLoss(monster.code);
-      const losses = ctx.consecutiveLosses(monster.code);
-      log.warn(`[${ctx.name}] ${monster.code}: LOSS ${r.turns}t (${losses} losses)`);
+      ctx.clearLosses(monsterCode);
 
-      if (losses >= this.maxLosses) {
-        log.info(`[${ctx.name}] Too many losses, rotating to different skill`);
-        await this.rotation.forceRotate(ctx);
+      if (this._recordProgress(1)) {
+        log.info(`[${ctx.name}] ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+      } else {
+        const active = this._syncActiveClaimFromBoard();
+        const remaining = active ? active.remainingQty : 0;
+        log.info(`[${ctx.name}] Order fight ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (remaining ${remaining})`);
+        await this._depositClaimItemsIfNeeded(ctx);
       }
+
+      return !ctx.inventoryFull();
+    }
+
+    ctx.recordLoss(monsterCode);
+    const losses = ctx.consecutiveLosses(monsterCode);
+    log.warn(`[${ctx.name}] ${monsterCode}: LOSS ${r.turns}t (${losses} losses)`);
+
+    if (this._isClaimForSource('fight') && losses >= this.maxLosses) {
+      await this._blockAndReleaseClaim(ctx, 'combat_losses');
       return true;
     }
+
+    if (losses >= this.maxLosses) {
+      log.info(`[${ctx.name}] Too many losses, rotating to different skill`);
+      await this.rotation.forceRotate(ctx);
+    }
+    return true;
   }
 
   // --- Crafting ---
@@ -692,8 +979,18 @@ export class SkillRotationRoutine extends BaseRoutine {
     if (toWithdraw <= 0) return 0;
 
     try {
+<<<<<<< Updated upstream
       const result = await withdrawBankItem(ctx, itemCode, toWithdraw, { reason: `item task: ${itemCode}` });
       const withdrawn = result.withdrawn.reduce((sum, w) => sum + w.quantity, 0);
+=======
+      const result = await withdrawBankItems(ctx, [{ code: itemCode, quantity: toWithdraw }], {
+        reason: 'item task withdrawal',
+        mode: 'partial',
+        retryStaleOnce: true,
+      });
+      const row = result.withdrawn.find(entry => entry.code === itemCode);
+      const withdrawn = row?.quantity || 0;
+>>>>>>> Stashed changes
       if (withdrawn > 0) {
         log.info(`[${ctx.name}] Item Task: withdrew ${itemCode} x${withdrawn} from bank`);
       }

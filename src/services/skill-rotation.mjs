@@ -6,6 +6,7 @@
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
+import { createOrMergeOrder } from './order-board.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -24,10 +25,50 @@ const DEFAULT_GOALS = {
   item_task: 1,
 };
 
+const DEFAULT_ORDER_BOARD = Object.freeze({
+  enabled: false,
+  createOrders: false,
+  fulfillOrders: false,
+  leaseMs: 120_000,
+  blockedRetryMs: 600_000,
+});
+
+function normalizeOrderBoardConfig(cfg = {}) {
+  const raw = cfg && typeof cfg === 'object' ? cfg : {};
+  const enabled = raw.enabled === true;
+  const leaseMs = Number(raw.leaseMs);
+  const blockedRetryMs = Number(raw.blockedRetryMs);
+  const createOrders = typeof raw.createOrders === 'boolean' ? raw.createOrders : enabled;
+  const fulfillOrders = typeof raw.fulfillOrders === 'boolean' ? raw.fulfillOrders : enabled;
+
+  return {
+    enabled,
+    createOrders,
+    fulfillOrders,
+    leaseMs: Number.isFinite(leaseMs) && leaseMs > 0 ? Math.floor(leaseMs) : DEFAULT_ORDER_BOARD.leaseMs,
+    blockedRetryMs: Number.isFinite(blockedRetryMs) && blockedRetryMs > 0
+      ? Math.floor(blockedRetryMs)
+      : DEFAULT_ORDER_BOARD.blockedRetryMs,
+  };
+}
+
 export class SkillRotation {
   constructor(
-    { skills, goals = {}, weights, craftCollection = {}, craftBlacklist = {}, taskCollection = {} } = {},
-    { gameDataSvc = gameData, findBestCombatTargetFn = findBestCombatTarget } = {},
+    {
+      skills,
+      goals = {},
+      weights,
+      craftCollection = {},
+      craftBlacklist = {},
+      taskCollection = {},
+      orderBoard = {},
+    } = {},
+    {
+      gameDataSvc = gameData,
+      findBestCombatTargetFn = findBestCombatTarget,
+      optimizeForMonsterFn = optimizeForMonster,
+      createOrMergeOrderFn = createOrMergeOrder,
+    } = {},
   ) {
     if (weights && Object.keys(weights).length > 0) {
       this.weights = weights;
@@ -42,6 +83,9 @@ export class SkillRotation {
     this.taskCollection = taskCollection;          // { itemCode: targetQty } manual targets
     this.gameData = gameDataSvc;
     this.findBestCombatTarget = findBestCombatTargetFn;
+    this.optimizeForMonster = optimizeForMonsterFn;
+    this.createOrMergeOrder = createOrMergeOrderFn;
+    this.orderBoard = normalizeOrderBoardConfig(orderBoard);
     this._exchangeNeeds = new Map();              // { itemCode → qty } dynamic targets from crafting
 
     // Current rotation state
@@ -338,7 +382,10 @@ export class SkillRotation {
   _buildCraftCandidate(recipe, ctx, bank) {
     const plan = this.gameData.resolveRecipeChain(recipe.craft);
     if (!plan || plan.length === 0) return null;
-    if (!this.gameData.canFulfillPlan(plan, ctx)) return null;
+    if (!this.gameData.canFulfillPlan(plan, ctx)) {
+      this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank);
+      return null;
+    }
 
     // Skip recipes with unmet bank-only dependencies (true bank items — not monster drops)
     const bankSteps = plan.filter(s => s.type === 'bank');
@@ -353,12 +400,14 @@ export class SkillRotation {
     // For fight steps: check if bank already has enough (shortcut) or if we need combat viability
     const fightSteps = plan.filter(s => s.type === 'fight');
     let needsCombat = false;
+    const fightStepDeficits = [];
     for (const step of fightSteps) {
       const inBank = bank.get(step.itemCode) || 0;
       const inInventory = ctx.itemCount(step.itemCode);
-      if (inBank + inInventory < step.quantity) {
+      const deficit = step.quantity - (inBank + inInventory);
+      if (deficit > 0) {
         needsCombat = true;
-        break;
+        fightStepDeficits.push({ ...step, deficit });
       }
     }
     // Combat viability is checked async in _buildCraftCandidateAsync — mark it here
@@ -370,7 +419,7 @@ export class SkillRotation {
       availability: this._scoreRecipeAvailability(plan, ctx, bank),
       bankOnly: this._isPlanBankOnly(plan, ctx, bank),
       needsCombat,
-      fightSteps: needsCombat ? fightSteps : [],
+      fightSteps: needsCombat ? fightStepDeficits : [],
     };
   }
 
@@ -394,12 +443,13 @@ export class SkillRotation {
       for (const step of candidate.fightSteps) {
         const monsterCode = step.monster.code;
         if (!simCache.has(monsterCode)) {
-          const result = await optimizeForMonster(ctx, monsterCode);
+          const result = await this.optimizeForMonster(ctx, monsterCode);
           simCache.set(monsterCode, result);
         }
         const simResult = simCache.get(monsterCode);
         if (!simResult || !simResult.simResult.win || simResult.simResult.hpLostPercent > 90) {
           viable = false;
+          this._queueFightOrder(step, candidate.recipe, ctx);
           log.info(`[${ctx.name}] Rotation: ${candidate.recipe.code} needs ${step.itemCode} from ${monsterCode} — can't win fight, skipping`);
           break;
         }
@@ -408,6 +458,61 @@ export class SkillRotation {
     }
 
     return verified;
+  }
+
+  _queueGatherOrdersForDeficits(plan, recipe, ctx, bank) {
+    const bankItems = bank || new Map();
+
+    for (const step of plan) {
+      if (step.type !== 'gather' || !step.resource) continue;
+      if (ctx.skillLevel(step.resource.skill) >= step.resource.level) continue;
+
+      const deficit = this._deficitQty(step.quantity, step.itemCode, bankItems, ctx);
+      if (deficit <= 0) continue;
+
+      this._enqueueOrder({
+        requesterName: ctx.name,
+        recipeCode: recipe.code,
+        itemCode: step.itemCode,
+        sourceType: 'gather',
+        sourceCode: step.resource.code,
+        gatherSkill: step.resource.skill,
+        sourceLevel: step.resource.level,
+        quantity: deficit,
+      });
+    }
+  }
+
+  _queueFightOrder(step, recipe, ctx) {
+    const qty = Math.max(0, Math.floor(Number(step.deficit || 0)));
+    if (qty <= 0) return;
+
+    this._enqueueOrder({
+      requesterName: ctx.name,
+      recipeCode: recipe.code,
+      itemCode: step.itemCode,
+      sourceType: 'fight',
+      sourceCode: step.monster.code,
+      sourceLevel: step.monster.level,
+      quantity: qty,
+    });
+  }
+
+  _enqueueOrder(payload) {
+    if (!this.orderBoard.createOrders) return;
+    try {
+      this.createOrMergeOrder(payload);
+    } catch (err) {
+      log.warn(`[OrderBoard] Could not enqueue order for ${payload?.itemCode || 'unknown'}: ${err?.message || String(err)}`);
+    }
+  }
+
+  _deficitQty(requiredQty, itemCode, bank, ctx) {
+    const required = Math.max(0, Math.floor(Number(requiredQty) || 0));
+    if (required <= 0) return 0;
+    const inInventory = ctx.itemCount(itemCode);
+    const inBank = bank.get(itemCode) || 0;
+    return Math.max(0, required - (inInventory + inBank));
   }
 
   /**

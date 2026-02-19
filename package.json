@@ -18,10 +18,11 @@
     "test:phase5": "node scripts/test-runtime-manager.mjs && node scripts/test-dashboard-server.mjs",
     "test:inventory-manager": "node scripts/test-inventory-manager.mjs",
     "test:bank-ops": "node scripts/test-bank-ops.mjs",
+    "test:order-board": "node scripts/test-order-board.mjs",
     "test:no-direct-bank-api": "node scripts/test-no-direct-bank-api.mjs",
     "test:potions": "node scripts/test-potion-manager.mjs",
     "test:bank-travel": "node scripts/test-bank-travel-potions.mjs",
-    "test:all": "node scripts/test-inventory-manager.mjs && node scripts/test-bank-ops.mjs && node scripts/test-no-direct-bank-api.mjs && node scripts/test-skill-rotation.mjs && node scripts/test-potion-manager.mjs && node scripts/test-bank-travel-potions.mjs"
+    "test:all": "node scripts/test-inventory-manager.mjs && node scripts/test-bank-ops.mjs && node scripts/test-order-board.mjs && node scripts/test-no-direct-bank-api.mjs && node scripts/test-skill-rotation.mjs && node scripts/test-potion-manager.mjs && node scripts/test-bank-travel-potions.mjs"
   },
   "engines": {
     "node": ">=20"

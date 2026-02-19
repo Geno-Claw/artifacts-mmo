@@ -10,6 +10,7 @@ import {
   validateBotConfig,
 } from './services/config-store.mjs';
 import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './services/ui-state.mjs';
+import { getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
 
 function toPositiveInt(value, fallback) {
   const num = Number(value);
@@ -324,9 +325,17 @@ export async function startDashboardServer({
 
   const clients = new Set();
   let broadcastTimer = null;
+  function buildSnapshotPayload() {
+    const snapshot = getUiSnapshot();
+    const orderBoard = getOrderBoardSnapshot();
+    return {
+      ...snapshot,
+      orders: Array.isArray(orderBoard.orders) ? orderBoard.orders : [],
+    };
+  }
 
   function broadcastSnapshot() {
-    const snapshot = getUiSnapshot();
+    const snapshot = buildSnapshotPayload();
     for (const client of clients) {
       try {
         sendEvent(client.res, 'snapshot', snapshot);
@@ -345,6 +354,9 @@ export async function startDashboardServer({
   }
 
   const unsubscribeUiEvents = subscribeUiEvents(() => {
+    scheduleBroadcast();
+  });
+  const unsubscribeOrderBoardEvents = subscribeOrderBoardEvents(() => {
     scheduleBroadcast();
   });
 
@@ -584,7 +596,12 @@ export async function startDashboardServer({
       }
 
       if (pathname === '/api/ui/snapshot') {
-        sendJson(res, 200, getUiSnapshot());
+        sendJson(res, 200, buildSnapshotPayload());
+        return;
+      }
+
+      if (pathname === '/api/ui/orders') {
+        sendJson(res, 200, getOrderBoardSnapshot());
         return;
       }
 
@@ -709,7 +726,7 @@ export async function startDashboardServer({
 
         const client = { res };
         clients.add(client);
-        sendEvent(res, 'snapshot', getUiSnapshot());
+        sendEvent(res, 'snapshot', buildSnapshotPayload());
 
         const cleanup = () => {
           clients.delete(client);
@@ -737,6 +754,7 @@ export async function startDashboardServer({
     }
     clearInterval(heartbeatTimer);
     unsubscribeUiEvents();
+    unsubscribeOrderBoardEvents();
 
     for (const client of clients) {
       try {

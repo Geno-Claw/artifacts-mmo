@@ -272,6 +272,156 @@ async function testCraftingCollectionPrefersBankOnlyMissingItem() {
   assert.equal(rotation.goalTarget, 1);
 }
 
+async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
+  const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'hard_ore',
+      resource: { code: 'hard_rocks', skill: 'mining', level: 40 },
+      quantity: 3,
+    },
+  ];
+  const createdOrders = [];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false,
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { weaponcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { mining: 5 }, itemCounts: {} }),
+    new Map(),
+  );
+  assert.equal(candidate, null, 'recipe should be rejected when gather skill is too low');
+  assert.equal(createdOrders.length, 1, 'a gather order should be created');
+  assert.equal(createdOrders[0].sourceType, 'gather');
+  assert.equal(createdOrders[0].sourceCode, 'hard_rocks');
+  assert.equal(createdOrders[0].itemCode, 'hard_ore');
+  assert.equal(createdOrders[0].quantity, 3);
+}
+
+async function testOrderBoardCanDisableOrderCreation() {
+  const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'hard_ore',
+      resource: { code: 'hard_rocks', skill: 'mining', level: 40 },
+      quantity: 3,
+    },
+  ];
+  const createdOrders = [];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false,
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { weaponcrafting: 1 }, orderBoard: { enabled: true, createOrders: false } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { mining: 5 }, itemCounts: {} }),
+    new Map(),
+  );
+  assert.equal(candidate, null, 'recipe should still be rejected when gather skill is too low');
+  assert.equal(createdOrders.length, 0, 'order creation should be skipped when createOrders is false');
+}
+
+async function testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop() {
+  const createdOrders = [];
+  const recipe = makeRecipe('wolf_hat', 'gearcrafting', 20);
+
+  const rotation = new SkillRotation(
+    { weights: { gearcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: makeGameDataStub(),
+      findBestCombatTargetFn: async () => null,
+      optimizeForMonsterFn: async () => ({ simResult: { win: false, hpLostPercent: 100 } }),
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  const verified = await rotation._verifyCombatViability([{
+    recipe,
+    needsCombat: true,
+    fightSteps: [{
+      itemCode: 'wolf_pelt',
+      monster: { code: 'wolf', level: 20 },
+      deficit: 2,
+    }],
+  }], makeCtx());
+
+  assert.equal(verified.length, 0, 'unwinnable combat candidate should be rejected');
+  assert.equal(createdOrders.length, 1, 'a fight order should be created');
+  assert.equal(createdOrders[0].sourceType, 'fight');
+  assert.equal(createdOrders[0].sourceCode, 'wolf');
+  assert.equal(createdOrders[0].itemCode, 'wolf_pelt');
+  assert.equal(createdOrders[0].quantity, 2);
+}
+
+async function testRoutineCanDisableOrderFulfillment() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: false,
+    },
+  });
+
+  const claim = await routine._ensureOrderClaim({ name: 'Tester' }, 'gather');
+  assert.equal(claim, null, 'routine should not claim orders when fulfillOrders is false');
+}
+
+async function testRoutineSkipsGoalProgressWhileOrderClaimIsActive() {
+  const routine = new SkillRotationRoutine();
+  let progress = 0;
+  routine.rotation = {
+    recordProgress: (n) => { progress += n; },
+  };
+
+  routine._activeOrderClaim = {
+    orderId: 'order-1',
+    sourceType: 'gather',
+    itemCode: 'copper_ore',
+  };
+
+  const progressedWithClaim = routine._recordProgress(3);
+  assert.equal(progressedWithClaim, false, 'normal goal progress should be skipped while order claim is active');
+  assert.equal(progress, 0);
+
+  routine._activeOrderClaim = null;
+  const progressedAfterClaim = routine._recordProgress(2);
+  assert.equal(progressedAfterClaim, true, 'normal goal progress should resume once claim is cleared');
+  assert.equal(progress, 2);
+}
+
 function makeRoutineWithAlchemyState(state) {
   const routine = new SkillRotationRoutine();
   let gatherCalls = 0;
@@ -408,6 +558,11 @@ async function run() {
   await testCraftingXpPrefersBankOnlyRecipe();
   await testCraftingXpFallsBackToHighestLevelWhenNoBankOnly();
   await testCraftingCollectionPrefersBankOnlyMissingItem();
+  await testOrderBoardCreatesGatherOrderForUnmetGatherSkill();
+  await testOrderBoardCanDisableOrderCreation();
+  await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();
+  await testRoutineCanDisableOrderFulfillment();
+  await testRoutineSkipsGoalProgressWhileOrderClaimIsActive();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
   await testCraftingWithdrawSkipsFinalRecipeOutput();

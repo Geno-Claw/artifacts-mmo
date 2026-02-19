@@ -21,6 +21,13 @@ const {
   recordCharacterSnapshot,
   recordLog,
 } = uiState;
+const orderBoard = await import('../src/services/order-board.mjs');
+const {
+  _resetOrderBoardForTests,
+  claimOrder,
+  createOrMergeOrder,
+  initializeOrderBoard,
+} = orderBoard;
 
 function assertHasKeys(obj, keys, label) {
   assert.ok(obj && typeof obj === 'object', `${label} must be an object`);
@@ -70,6 +77,36 @@ function assertSnapshotShape(snapshot, label = 'snapshot payload') {
   assert.ok(Array.isArray(snapshot.characters), `${label}.characters must be an array`);
   for (const [idx, char] of snapshot.characters.entries()) {
     assertSnapshotCharacterShape(char, `${label}.characters[${idx}]`);
+  }
+}
+
+function assertOrderRowShape(row, label = 'order row') {
+  assertHasKeys(row, [
+    'id',
+    'itemCode',
+    'sourceType',
+    'sourceCode',
+    'requestedQty',
+    'remainingQty',
+    'status',
+  ], label);
+  assert.equal(typeof row.id, 'string');
+  assert.equal(typeof row.itemCode, 'string');
+  assert.equal(typeof row.sourceType, 'string');
+  assert.equal(typeof row.sourceCode, 'string');
+  assert.equal(typeof row.requestedQty, 'number');
+  assert.equal(typeof row.remainingQty, 'number');
+  assert.equal(typeof row.status, 'string');
+}
+
+function assertOrdersPayloadShape(payload, label = 'orders payload') {
+  assert.ok(payload && typeof payload === 'object', `${label} must be an object`);
+  assert.ok(Array.isArray(payload.orders), `${label}.orders must be an array`);
+  if (Object.hasOwn(payload, 'updatedAtMs')) {
+    assert.equal(typeof payload.updatedAtMs, 'number', `${label}.updatedAtMs must be numeric`);
+  }
+  for (const [idx, row] of payload.orders.entries()) {
+    assertOrderRowShape(row, `${label}.orders[${idx}]`);
   }
 }
 
@@ -719,6 +756,7 @@ async function run() {
   const runtimeControlMock = createRuntimeControlMock();
   let dashboard = null;
   let sse = null;
+  const orderBoardPath = join(configFixture.tempDir, 'order-board.json');
   try {
     process.env.BOT_CONFIG = configFixture.configPath;
     process.env.BOT_CONFIG_SCHEMA = resolve(rootDir, 'config/characters.schema.json');
@@ -788,6 +826,22 @@ async function run() {
       });
     }
 
+    _resetOrderBoardForTests();
+    await initializeOrderBoard({ path: orderBoardPath });
+    const seedOrder = createOrMergeOrder({
+      requesterName: 'CrafterAlpha',
+      recipeCode: 'bronze_dagger',
+      itemCode: 'copper_ore',
+      sourceType: 'gather',
+      sourceCode: 'copper_rocks',
+      gatherSkill: 'mining',
+      sourceLevel: 10,
+      quantity: 3,
+    });
+    assert.ok(seedOrder, 'expected order board seed order');
+    const claimResult = claimOrder(seedOrder.id, { charName: 'WorkerAlpha', leaseMs: 10_000 });
+    assert.ok(claimResult, 'expected order board seed claim');
+
     dashboard = await startDashboardServer({
       host: '127.0.0.1',
       port: 0,
@@ -809,8 +863,17 @@ async function run() {
     assert.equal(snapshotRes.status, 200);
     const snapshot = await snapshotRes.json();
     assertSnapshotShape(snapshot);
+    assert.ok(Array.isArray(snapshot.orders), 'snapshot should include top-level orders array');
+    assert.ok(snapshot.orders.length >= 1, 'snapshot should include seeded order');
+    assertOrderRowShape(snapshot.orders[0], 'snapshot.orders[0]');
     assert.equal(snapshot.characters.length, 1);
     assert.equal(snapshot.characters[0].name, 'Alpha');
+
+    const ordersRes = await fetch(`${baseUrl}/api/ui/orders`);
+    assert.equal(ordersRes.status, 200, 'orders endpoint should return 200');
+    const ordersPayload = await ordersRes.json();
+    assertOrdersPayloadShape(ordersPayload, 'GET /api/ui/orders payload');
+    assert.ok(ordersPayload.orders.length >= 1, 'orders endpoint should include seeded order');
 
     const detailRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}`);
     assert.equal(detailRes.status, 200);
@@ -831,6 +894,7 @@ async function run() {
     const initialEvent = await sse.nextEvent(1_500);
     assert.equal(initialEvent.event, 'snapshot');
     assertSnapshotShape(initialEvent.data, 'initial SSE snapshot');
+    assert.ok(Array.isArray(initialEvent.data.orders), 'initial SSE snapshot should include orders array');
     assert.equal(initialEvent.data.characters.length, 1);
 
     recordLog('Alpha', {
@@ -991,6 +1055,7 @@ async function run() {
   } finally {
     if (sse) await sse.close();
     if (dashboard) await dashboard.close();
+    _resetOrderBoardForTests();
     globalThis.fetch = originalFetch;
     if (originalBotConfig === undefined) delete process.env.BOT_CONFIG;
     else process.env.BOT_CONFIG = originalBotConfig;
