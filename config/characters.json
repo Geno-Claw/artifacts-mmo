@@ -55,11 +55,11 @@
       ],
       "settings": {
         "potions": {
-          "enabled": false,
+          "enabled": true,
           "combat": {
-            "enabled": false,
-            "refillBelow": 2,
-            "targetQuantity": 5,
+            "enabled": true,
+            "refillBelow": 1,
+            "targetQuantity": 20,
             "poisonBias": true,
             "respectNonPotionUtility": true
           },
@@ -176,8 +176,8 @@
             "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
-            "combat": 1,
-            "npc_task": 1,
+            "combat": 0,
+            "npc_task": 0,
             "item_task": 1
           },
           "goals": {
