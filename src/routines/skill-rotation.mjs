@@ -474,7 +474,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     // Optimize gear for NPC task monster — also validates fight is winnable
     const { simResult } = await equipForCombat(ctx, monster);
-    if (!simResult || !simResult.win || simResult.hpLostPercent > 80) {
+    if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
       log.warn(`[${ctx.name}] NPC Task: simulation predicts loss vs ${monster} even with optimal gear, skipping`);
       this.rotation.goalProgress = this.rotation.goalTarget;
       return true;

@@ -302,7 +302,7 @@ export async function findBestCombatTarget(ctx) {
 
     const result = await optimizeForMonster(ctx, monster.code);
     if (!result || !result.simResult.win) continue;
-    if (result.simResult.hpLostPercent > 80) continue; // need ≥20% HP remaining
+    if (result.simResult.hpLostPercent > 90) continue; // need ≥10% HP remaining
 
     const candidate = {
       monsterCode: monster.code,

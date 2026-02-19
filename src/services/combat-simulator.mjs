@@ -118,7 +118,7 @@ export function canBeatMonster(ctx, monsterCode) {
     log.info(`[${ctx.name}] Sim vs ${monsterCode}: ${summary} (char ${charDmg}/t, mob ${monsterDmg}/t)`);
   }
 
-  return result.win && result.hpLostPercent <= 80; // win with ≥20% HP remaining
+  return result.win && result.hpLostPercent <= 90; // win with ≥10% HP remaining
 }
 
 /**
@@ -139,5 +139,6 @@ export function hpNeededForFight(ctx, monsterCode) {
   if (!result.win) return null;
 
   const damageTaken = charStats.max_hp - result.remainingHp;
-  return damageTaken + 1; // +1 so we don't end at exactly 0
+  const critBuffer = Math.ceil(charStats.max_hp * 0.10); // 10% HP buffer for crit hits
+  return damageTaken + critBuffer;
 }
