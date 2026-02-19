@@ -641,12 +641,13 @@ export class SkillRotationRoutine extends BaseRoutine {
       // TODO: implement crafting for item tasks — for now just gather
     }
 
-    // Try to withdraw from bank first
+    // Try to withdraw from bank and trade in batches
     const haveQty = ctx.itemCount(itemCode);
-    if (haveQty === 0 && !ctx.inventoryFull()) {
-      const bankQty = await this._withdrawForItemTask(ctx, itemCode, needed);
-      if (bankQty > 0) {
-        return this._tradeItemTask(ctx, itemCode, Math.min(bankQty, needed));
+    if (!ctx.inventoryFull()) {
+      const bankQty = await this._withdrawForItemTask(ctx, itemCode, needed - haveQty);
+      const totalHave = ctx.itemCount(itemCode);
+      if (totalHave > 0) {
+        return this._tradeItemTask(ctx, itemCode, Math.min(totalHave, needed));
       }
     }
 
@@ -709,26 +710,22 @@ export class SkillRotationRoutine extends BaseRoutine {
       return true;
     }
 
-    // Trade any already-gathered items first
+    // Trade if we've accumulated a batch (20% of remaining, min 1)
     const haveQty = ctx.itemCount(itemCode);
-    if (haveQty > 0) {
+    const batchTarget = Math.max(1, Math.ceil(needed * 0.2));
+    if (haveQty >= batchTarget || (haveQty > 0 && ctx.inventoryFull())) {
       return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
     }
 
-    // If inventory is getting full, trade what we have
+    // If inventory is full but no task items, can't continue
     if (ctx.inventoryFull()) return false;
 
+    // Gather
     await equipForGathering(ctx, resource.skill);
     await moveTo(ctx, loc.x, loc.y);
     const result = await gatherOnce(ctx);
     const items = result.details?.items || [];
-    log.info(`[${ctx.name}] Item Task: gathering ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'}`);
-
-    // Check if we now have items to trade
-    const nowHave = ctx.itemCount(itemCode);
-    if (nowHave > 0 && nowHave >= Math.min(needed, 10)) {
-      return this._tradeItemTask(ctx, itemCode, Math.min(nowHave, needed));
-    }
+    log.info(`[${ctx.name}] Item Task: gathering ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${ctx.itemCount(itemCode)}/${batchTarget} for next trade)`);
 
     return !ctx.inventoryFull();
   }
