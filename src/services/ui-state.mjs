@@ -3,7 +3,7 @@
  * Keeps a fixed roster from BOT_CONFIG and emits change notifications.
  */
 
-const DEFAULT_STALE_AFTER_MS = 45_000;
+const DEFAULT_STALE_AFTER_MS = 120_000;
 const MAX_LOG_HISTORY = 50;
 const DEFAULT_LOG_LIMIT = 20;
 const KNOWN_SKILL_CODES = Object.freeze([
@@ -191,7 +191,15 @@ function defaultCharacterState(name) {
 }
 
 function isCharacterStale(char, serverTimeMs = nowMs()) {
-  return char.lastUpdatedAtMs <= 0 || (serverTimeMs - char.lastUpdatedAtMs) > uiMeta.staleAfterMs;
+  // Never updated → stale
+  if (char.lastUpdatedAtMs <= 0) return true;
+
+  // If cooldown is still active (not yet expired), character is busy — not stale
+  if (char.cooldown.endsAtMs > serverTimeMs) return false;
+
+  // Cooldown expired (READY): stale only if no updates for staleAfterMs since cooldown ended
+  const idleSinceMs = Math.max(char.lastUpdatedAtMs, char.cooldown.endsAtMs);
+  return (serverTimeMs - idleSinceMs) > uiMeta.staleAfterMs;
 }
 
 function cloneCharacterState(char, serverTimeMs) {
