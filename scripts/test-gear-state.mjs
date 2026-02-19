@@ -339,6 +339,51 @@ async function testRecomputeTriggersOnRevisionAndLevel(basePath) {
   await flushGearState();
 }
 
+async function testGearStatePassesPlanningFlagToOptimizer(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({ name: 'Planner', level: 10, capacity: 30 });
+  const seenOpts = [];
+
+  _setDepsForTests({
+    gameDataSvc: createBaseGameData([{ code: 'slime', level: 1 }]),
+    optimizeForMonsterFn: async (_ctx, _monsterCode, opts) => {
+      seenOpts.push(opts || {});
+      return {
+        loadout: mapLoadout({ weapon: 'starter_sword' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      };
+    },
+    getBankRevisionFn: () => 12,
+    globalCountFn: () => 10,
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-planning-flag.json'),
+    characters: [{
+      name: 'Planner',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  assert.equal(seenOpts.length, 1, 'optimizer should be called for bracket monsters');
+  assert.equal(
+    seenOpts[0]?.includeCraftableUnavailable,
+    true,
+    'gear-state should request planning candidates including craftable unavailable gear',
+  );
+
+  await flushGearState();
+}
+
 async function testPublishDesiredOrdersCraftOnlyForGloballyMissing(basePath) {
   _resetGearStateForTests();
 
@@ -510,6 +555,7 @@ async function run() {
     await testTrimToFitReservesTenSlots(tempDir);
     await testScarcityAssignmentUsesCharacterOrder(tempDir);
     await testRecomputeTriggersOnRevisionAndLevel(tempDir);
+    await testGearStatePassesPlanningFlagToOptimizer(tempDir);
     await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);
     await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
     console.log('test-gear-state: PASS');

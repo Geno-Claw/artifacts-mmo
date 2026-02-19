@@ -79,7 +79,8 @@ function buildStats(baseStats, gearSet) {
  * Collect all available items for a slot from equipped, inventory, and bank.
  * Filtered by character level. Returns deduplicated by item code.
  */
-export function getCandidatesForSlot(ctx, slot, bankItems) {
+export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
+  const includeCraftableUnavailable = opts.includeCraftableUnavailable === true;
   const char = ctx.get();
   const charLevel = char.level;
   const candidates = new Map(); // code → { item, source }
@@ -107,6 +108,12 @@ export function getCandidatesForSlot(ctx, slot, bankItems) {
     const inBank = Math.max(bankCount(item.code), bankItems?.get(item.code) || 0);
     if (inBank >= 1) {
       candidates.set(item.code, { item, source: 'bank' });
+      continue;
+    }
+
+    // Planning mode: include craftable items that are not yet owned.
+    if (includeCraftableUnavailable && item?.craft?.skill) {
+      candidates.set(item.code, { item, source: 'craftable' });
     }
   }
 
@@ -135,11 +142,15 @@ function isBetterResult(a, b) {
  * For ring2: remove the ring1 item from candidates unless 2+ copies
  * exist across equipped + inventory + bank.
  */
-function deduplicateRingCandidates(candidates, ring1Item, ctx, bankItems) {
+function deduplicateRingCandidates(candidates, ring1Item, ctx, bankItems, opts = {}) {
+  const includeCraftableUnavailable = opts.includeCraftableUnavailable === true;
   if (!ring1Item) return candidates;
 
-  return candidates.filter(({ item }) => {
+  return candidates.filter(({ item, source }) => {
     if (item.code !== ring1Item.code) return true;
+
+    // Planning mode can assume missing craftable duplicates can be crafted.
+    if (includeCraftableUnavailable && source === 'craftable') return true;
 
     // Count total copies across all sources
     const c = ctx.get();
@@ -158,9 +169,13 @@ function deduplicateRingCandidates(candidates, ring1Item, ctx, bankItems) {
  *
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {string} monsterCode
+ * @param {{ includeCraftableUnavailable?: boolean }} [opts]
  * @returns {Promise<{ loadout: Map<string, string|null>, simResult: object } | null>}
  */
-export async function optimizeForMonster(ctx, monsterCode) {
+export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
+  const candidateOpts = {
+    includeCraftableUnavailable: opts.includeCraftableUnavailable === true,
+  };
   const monster = gameData.getMonster(monsterCode);
   if (!monster) return null;
 
@@ -175,7 +190,7 @@ export async function optimizeForMonster(ctx, monsterCode) {
   }
 
   // --- Phase 1: Weapon (maximize outgoing DPS) ---
-  const weaponCandidates = getCandidatesForSlot(ctx, 'weapon', bankItems);
+  const weaponCandidates = getCandidatesForSlot(ctx, 'weapon', bankItems, candidateOpts);
   let bestWeaponDmg = -1;
   let bestWeapon = loadout.get('weapon');
 
@@ -193,7 +208,7 @@ export async function optimizeForMonster(ctx, monsterCode) {
 
   // --- Phase 2: Defensive slots (maximize survivability) ---
   for (const slot of DEFENSIVE_SLOTS) {
-    const candidates = getCandidatesForSlot(ctx, slot, bankItems);
+    const candidates = getCandidatesForSlot(ctx, slot, bankItems, candidateOpts);
     let bestResult = null;
     let bestItem = loadout.get(slot);
 
@@ -222,11 +237,11 @@ export async function optimizeForMonster(ctx, monsterCode) {
 
   // --- Phase 3: Accessories (maximize survivability, full sim) ---
   for (const slot of ACCESSORY_SLOTS) {
-    let candidates = getCandidatesForSlot(ctx, slot, bankItems);
+    let candidates = getCandidatesForSlot(ctx, slot, bankItems, candidateOpts);
 
     // Ring dedup: exclude ring1's choice from ring2 candidates
     if (slot === 'ring2') {
-      candidates = deduplicateRingCandidates(candidates, loadout.get('ring1'), ctx, bankItems);
+      candidates = deduplicateRingCandidates(candidates, loadout.get('ring1'), ctx, bankItems, candidateOpts);
     }
 
     let bestResult = null;

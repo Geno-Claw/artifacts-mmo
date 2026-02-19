@@ -353,7 +353,9 @@ async function computeCharacterRequirements(name, ctx) {
   const allRecords = [];
   const monsters = _deps.gameDataSvc.findMonstersByLevel(level);
   for (const monster of monsters) {
-    const result = await _deps.optimizeForMonsterFn(ctx, monster.code);
+    const result = await _deps.optimizeForMonsterFn(ctx, monster.code, {
+      includeCraftableUnavailable: true,
+    });
     if (!result?.simResult?.win) continue;
     if (result.simResult.hpLostPercent > 90) continue;
 
