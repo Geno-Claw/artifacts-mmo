@@ -370,7 +370,7 @@ export async function startDashboardServer({
         pathname = pathname.slice(prefix.length) || '/';
       }
 
-      if (url.pathname === '/api/config') {
+      if (pathname === '/api/config') {
         if (method === 'GET') {
           try {
             const snapshot = await loadConfigSnapshot();
@@ -452,7 +452,7 @@ export async function startDashboardServer({
         return;
       }
 
-      if (url.pathname === '/api/config/validate') {
+      if (pathname === '/api/config/validate') {
         if (method !== 'POST') {
           sendJson(res, 405, { error: 'method_not_allowed' });
           return;
@@ -484,7 +484,7 @@ export async function startDashboardServer({
         return;
       }
 
-      if (url.pathname === '/api/control/status') {
+      if (pathname === '/api/control/status') {
         if (method !== 'GET') {
           sendError(res, 405, 'method_not_allowed', 'Only GET is allowed', 'method_not_allowed');
           return;
@@ -504,7 +504,7 @@ export async function startDashboardServer({
         return;
       }
 
-      if (url.pathname === '/api/control/reload-config') {
+      if (pathname === '/api/control/reload-config') {
         if (method !== 'POST') {
           sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
           return;
@@ -533,7 +533,7 @@ export async function startDashboardServer({
         return;
       }
 
-      if (url.pathname === '/api/control/restart') {
+      if (pathname === '/api/control/restart') {
         if (method !== 'POST') {
           sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
           return;

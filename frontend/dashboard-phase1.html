@@ -1468,8 +1468,8 @@ const CONTROL_ACTION_LABELS = {
   restart: 'Restart Bot',
 };
 const CONTROL_ACTION_ENDPOINTS = {
-  reload: '/api/control/reload-config',
-  restart: '/api/control/restart',
+  get reload() { return (window.__BASE_PATH__||'')+'/api/control/reload-config'; },
+  get restart() { return (window.__BASE_PATH__||'')+'/api/control/restart'; },
 };
 const CONTROL_OPERATION_STATE_VALUES = new Set(['idle', 'in-flight', 'success', 'failure']);
 const CONTROL_STATUS_POLL_MS = 5000;
@@ -2934,7 +2934,7 @@ async function fetchCharacterDetail(name) {
   renderModal();
 
   try {
-    const res = await fetch(`/api/ui/character/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${window.__BASE_PATH__||''}/api/ui/character/${encodeURIComponent(name)}`, {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -2990,7 +2990,7 @@ async function fetchControlStatus({ silentErrors = false } = {}) {
   controlState.statusController = controller;
 
   try {
-    const res = await fetch('/api/control/status', {
+    const res = await fetch((window.__BASE_PATH__||'')+'/api/control/status', {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -3146,7 +3146,7 @@ async function fetchConfigDetail() {
   renderModal();
 
   try {
-    const res = await fetch('/api/config', {
+    const res = await fetch((window.__BASE_PATH__||'')+'/api/config', {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -3205,7 +3205,7 @@ async function runConfigValidate() {
   renderModal();
 
   try {
-    const res = await fetch('/api/config/validate', {
+    const res = await fetch((window.__BASE_PATH__||'')+'/api/config/validate', {
       method: 'POST',
       cache: 'no-store',
       signal: controller.signal,
@@ -3282,7 +3282,7 @@ async function runConfigSave() {
       headers['If-Match'] = ifMatchHash;
     }
 
-    const res = await fetch('/api/config', {
+    const res = await fetch((window.__BASE_PATH__||'')+'/api/config', {
       method: 'PUT',
       cache: 'no-store',
       signal: controller.signal,
@@ -3367,11 +3367,11 @@ async function fetchAccountAchievementsDetail() {
 
   try {
     const [summaryRes, achievementsRes] = await Promise.all([
-      fetch('/api/ui/account/summary', {
+      fetch((window.__BASE_PATH__||'')+'/api/ui/account/summary', {
         cache: 'no-store',
         signal: controller.signal,
       }),
-      fetch('/api/ui/account/achievements', {
+      fetch((window.__BASE_PATH__||'')+'/api/ui/account/achievements', {
         cache: 'no-store',
         signal: controller.signal,
       }),
@@ -3676,7 +3676,7 @@ async function probeConfigFeatureAvailability() {
   applyConfigFeatureVisibility();
 
   try {
-    const res = await fetch('/api/config', { cache: 'no-store' });
+    const res = await fetch((window.__BASE_PATH__||'')+'/api/config', { cache: 'no-store' });
     runtimeFeatures.configEditorAvailable = res.status !== 404;
   } catch {
     runtimeFeatures.configEditorAvailable = false;
