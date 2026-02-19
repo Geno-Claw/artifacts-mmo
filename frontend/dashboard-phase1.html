@@ -77,6 +77,10 @@ body {
   position: relative;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 /* Additional paper fiber texture overlay */
 body::before {
   content: '';
@@ -579,6 +583,348 @@ body::before {
 }
 
 /* ============================================================
+   MODAL FRAMEWORK — character details
+   ============================================================ */
+.modal-host {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal-host[hidden] {
+  display: none;
+}
+
+.modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(42, 36, 32, 0.52);
+}
+
+.character-modal {
+  position: relative;
+  z-index: 1;
+  width: min(720px, calc(100vw - 22px));
+  max-height: calc(100vh - 28px);
+  background: var(--paper-warm);
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 -3px 0 0 var(--ink),
+    2px 0 0 0 var(--ink),
+    0 2px 0 0 var(--ink),
+    -1px 0 0 0 var(--ink),
+    5px 7px 0 0 rgba(42, 36, 32, 0.18);
+  outline: none;
+}
+
+.modal-header {
+  border-bottom: 1px solid rgba(42, 36, 32, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(42, 36, 32, 0.02));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.modal-kind {
+  font-size: 6px;
+  letter-spacing: 2px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+.modal-title {
+  margin-top: 5px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--vermillion);
+}
+
+.modal-close {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  padding: 6px 8px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.22);
+}
+
+.modal-close:hover {
+  background: var(--ink-light);
+}
+
+.modal-banner {
+  font-size: 6px;
+  line-height: 1.4;
+  padding: 8px 12px;
+  letter-spacing: 1px;
+  border-bottom: 1px solid rgba(42, 36, 32, 0.15);
+}
+
+.modal-banner.offline {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.12);
+}
+
+.modal-banner.stale {
+  color: #3f4732;
+  background: rgba(96, 120, 72, 0.14);
+}
+
+.modal-content {
+  overflow: auto;
+  padding: 12px;
+}
+
+.modal-state,
+.modal-empty,
+.modal-error {
+  padding: 12px;
+  background: rgba(42, 36, 32, 0.04);
+  border-left: 2px solid rgba(42, 36, 32, 0.16);
+  line-height: 1.7;
+  font-size: 7px;
+}
+
+.modal-error {
+  border-left-color: rgba(200, 48, 40, 0.5);
+  color: #5a231e;
+}
+
+.modal-section {
+  margin-bottom: 12px;
+}
+
+.modal-section:last-child {
+  margin-bottom: 0;
+}
+
+.modal-section-title {
+  font-size: 6px;
+  letter-spacing: 2px;
+  color: var(--ink-faint);
+  margin-bottom: 6px;
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.modal-stat {
+  background: rgba(42, 36, 32, 0.03);
+  border-left: 2px solid rgba(42, 36, 32, 0.12);
+  padding: 6px;
+}
+
+.modal-stat-label {
+  font-size: 5px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+}
+
+.modal-stat-value {
+  font-size: 7px;
+  color: var(--ink);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-list-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  background: rgba(42, 36, 32, 0.03);
+  border-left: 2px solid rgba(42, 36, 32, 0.12);
+  font-size: 7px;
+  line-height: 1.5;
+}
+
+.modal-list-item--two {
+  grid-template-columns: 1fr auto;
+}
+
+.modal-list-main {
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.modal-list-tag,
+.modal-list-slot {
+  color: var(--ink-faint);
+  font-size: 6px;
+}
+
+.modal-log-line {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+}
+
+.achievement-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.achievement-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.achievement-filter-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(42, 36, 32, 0.05);
+  border: none;
+  padding: 5px 7px;
+  cursor: pointer;
+  line-height: 1;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.15);
+}
+
+.achievement-filter-btn:hover {
+  background: rgba(42, 36, 32, 0.1);
+}
+
+.achievement-filter-btn.is-active {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.achievement-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.achievement-search-label {
+  font-size: 5px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+}
+
+.achievement-search-input {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.45);
+  border: none;
+  min-width: 170px;
+  padding: 6px 7px;
+  box-shadow:
+    inset 0 0 0 1px rgba(42, 36, 32, 0.18),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.achievement-search-input:focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--ink),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.achievement-result-count {
+  margin-top: 8px;
+  font-size: 6px;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+}
+
+.achievement-list-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.achievement-code {
+  color: var(--vermillion);
+}
+
+.achievement-title {
+  color: var(--ink);
+  font-size: 6px;
+  line-height: 1.4;
+}
+
+.achievement-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.achievement-status {
+  font-size: 6px;
+  letter-spacing: 1px;
+}
+
+.achievement-status.is-completed {
+  color: var(--ready-green);
+}
+
+.achievement-status.is-in-progress {
+  color: var(--indigo);
+}
+
+.achievement-status.is-not-started {
+  color: var(--ink-faint);
+}
+
+@media (max-width: 700px) {
+  .character-modal {
+    width: calc(100vw - 12px);
+    max-height: calc(100vh - 18px);
+  }
+
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .achievement-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .achievement-search {
+    width: 100%;
+  }
+
+  .achievement-search-input {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* ============================================================
    FOOTER
    ============================================================ */
 .page-footer {
@@ -623,6 +969,29 @@ body::before {
 
 <!-- Cards -->
 <main class="cards-container" id="cardsContainer"></main>
+
+<!-- Character modal host -->
+<div class="modal-host" id="modalHost" hidden>
+  <div class="modal-scrim" id="modalScrim"></div>
+  <section
+    class="character-modal"
+    id="characterModal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modalTitle"
+    tabindex="-1"
+  >
+    <header class="modal-header">
+      <div>
+        <p class="modal-kind" id="modalKind">DETAIL</p>
+        <h2 class="modal-title" id="modalTitle">Character</h2>
+      </div>
+      <button type="button" class="modal-close" id="modalCloseBtn" aria-label="Close character detail modal">CLOSE</button>
+    </header>
+    <div class="modal-banner" id="modalBanner" hidden></div>
+    <div class="modal-content" id="modalContent"></div>
+  </section>
+</div>
 
 <!-- Footer -->
 <footer class="page-footer">
@@ -848,6 +1217,43 @@ const appState = {
 
 const cardRefs = new Map();
 let eventSource = null;
+const MODAL_KIND_LABELS = {
+  skills: 'Skills',
+  inven: 'Inventory',
+  equip: 'Equipment',
+  stats: 'Stats',
+  achiev: 'Achievements',
+};
+const ACHIEVEMENT_FILTER_LABELS = {
+  all: 'All',
+  completed: 'Completed',
+  'in-progress': 'In Progress',
+};
+
+const modalState = {
+  activeCharacterName: '',
+  activeKind: '',
+  status: 'idle', // idle | loading | ready | error
+  detail: null,
+  errorText: '',
+  activeSnapshotUpdatedAtMs: 0,
+  fetchController: null,
+  fetchSeq: 0,
+  lastFocusedElement: null,
+  achievementFilter: 'all',
+  achievementSearch: '',
+};
+
+const modalRefs = {
+  host: null,
+  scrim: null,
+  dialog: null,
+  kind: null,
+  title: null,
+  banner: null,
+  content: null,
+  closeBtn: null,
+};
 
 function toNumber(value, fallback = 0) {
   const num = Number(value);
@@ -895,6 +1301,7 @@ function normalizeCharacter(raw) {
     status,
     stale,
     offline,
+    lastUpdatedAtMs: Math.max(0, toNumber(raw?.lastUpdatedAtMs, 0)),
     level: Math.max(0, toNumber(raw?.level, 0)),
     hp,
     maxHp,
@@ -980,15 +1387,15 @@ function buildCard(char, index) {
 
       <div class="buttons-section">
         <div class="btn-row">
-          <button class="action-btn" disabled title="Phase 2">EQUIP</button>
-          <button class="action-btn" disabled title="Phase 2">INVEN</button>
+          <button class="action-btn" type="button" data-modal-kind="equip" title="Equipment" aria-haspopup="dialog">EQUIP</button>
+          <button class="action-btn" type="button" data-modal-kind="inven" title="Inventory" aria-haspopup="dialog">INVEN</button>
         </div>
         <div class="btn-row">
-          <button class="action-btn" disabled title="Phase 2">SKILLS</button>
+          <button class="action-btn" type="button" data-modal-kind="skills" title="Skills" aria-haspopup="dialog">SKILLS</button>
         </div>
         <div class="btn-row">
-          <button class="action-btn" disabled title="Phase 2">STATS</button>
-          <button class="action-btn" disabled title="Phase 2">ACHIEV</button>
+          <button class="action-btn" type="button" data-modal-kind="stats" title="Stats" aria-haspopup="dialog">STATS</button>
+          <button class="action-btn" type="button" data-modal-kind="achiev" title="Achievements" aria-haspopup="dialog">ACHIEV</button>
         </div>
       </div>
     </div>
@@ -1080,6 +1487,913 @@ function applyCharacterState(char) {
   updateCooldown(refs, char);
 }
 
+function escapeHtml(value) {
+  return `${value ?? ''}`
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatNumberish(value, fallback = '--') {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toLocaleString() : fallback;
+}
+
+function formatTime(value) {
+  const ms = toNumber(value, 0);
+  if (ms <= 0) return '--';
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime())
+    ? '--'
+    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function hasMeaningfulStatValue(value) {
+  const text = safeText(value, '');
+  if (!text) return false;
+  if (text === '--') return false;
+  if (text === '-- / --') return false;
+  if (text.startsWith('--, --')) return false;
+  return true;
+}
+
+function normalizeSkills(rawSkills) {
+  const rows = [];
+  if (Array.isArray(rawSkills)) {
+    rawSkills.forEach((item, idx) => {
+      const code = safeText(item?.code, `skill-${idx + 1}`);
+      rows.push({
+        code,
+        level: Math.max(0, toNumber(item?.level, 0)),
+        xp: Math.max(0, toNumber(item?.xp, 0)),
+        maxXp: Math.max(0, toNumber(item?.maxXp, 0)),
+        pct: Math.max(0, Math.min(100, toNumber(item?.pct, statPct(toNumber(item?.xp, 0), toNumber(item?.maxXp, 0))))),
+      });
+    });
+  } else if (rawSkills && typeof rawSkills === 'object') {
+    Object.entries(rawSkills).forEach(([code, value]) => {
+      const item = value && typeof value === 'object' ? value : { level: value };
+      rows.push({
+        code: safeText(item?.code, code),
+        level: Math.max(0, toNumber(item?.level, 0)),
+        xp: Math.max(0, toNumber(item?.xp, 0)),
+        maxXp: Math.max(0, toNumber(item?.maxXp, 0)),
+        pct: Math.max(0, Math.min(100, toNumber(item?.pct, statPct(toNumber(item?.xp, 0), toNumber(item?.maxXp, 0))))),
+      });
+    });
+  }
+
+  return rows
+    .filter((item) => !!item.code)
+    .sort((a, b) => b.level - a.level || b.xp - a.xp || a.code.localeCompare(b.code));
+}
+
+function normalizeInventory(rawInventory) {
+  const rows = [];
+  if (Array.isArray(rawInventory)) {
+    rawInventory.forEach((item, idx) => {
+      rows.push({
+        code: safeText(item?.code, ''),
+        quantity: Math.max(0, toNumber(item?.quantity, 0)),
+        slotIndex: Number.isFinite(Number(item?.slotIndex)) ? Number(item.slotIndex) : idx,
+      });
+    });
+  } else if (rawInventory && typeof rawInventory === 'object') {
+    Object.entries(rawInventory).forEach(([key, value], idx) => {
+      const item = value && typeof value === 'object' ? value : { code: key, quantity: value };
+      rows.push({
+        code: safeText(item?.code, Number.isFinite(Number(key)) ? '' : key),
+        quantity: Math.max(0, toNumber(item?.quantity, 0)),
+        slotIndex: Number.isFinite(Number(item?.slotIndex))
+          ? Number(item.slotIndex)
+          : (Number.isFinite(Number(key)) ? Number(key) : idx),
+      });
+    });
+  }
+
+  return rows
+    .filter((item) => item.code && item.quantity > 0)
+    .sort((a, b) => a.slotIndex - b.slotIndex || a.code.localeCompare(b.code));
+}
+
+function normalizeEquipment(rawEquipment) {
+  const rows = [];
+  if (Array.isArray(rawEquipment)) {
+    rawEquipment.forEach((item, idx) => {
+      rows.push({
+        slot: safeText(item?.slot, `slot-${idx + 1}`),
+        code: safeText(item?.code, 'empty'),
+        quantity: Math.max(0, toNumber(item?.quantity, item?.code ? 1 : 0)),
+      });
+    });
+  } else if (rawEquipment && typeof rawEquipment === 'object') {
+    Object.entries(rawEquipment).forEach(([slot, value]) => {
+      if (!value) {
+        rows.push({ slot: safeText(slot, 'slot'), code: 'empty', quantity: 0 });
+        return;
+      }
+      const item = value && typeof value === 'object' ? value : { code: value, quantity: 1 };
+      rows.push({
+        slot: safeText(item?.slot, slot),
+        code: safeText(item?.code, 'empty'),
+        quantity: Math.max(0, toNumber(item?.quantity, item?.code ? 1 : 0)),
+      });
+    });
+  }
+
+  return rows.sort((a, b) => a.slot.localeCompare(b.slot));
+}
+
+function normalizeLogHistory(rawHistory) {
+  if (!Array.isArray(rawHistory)) return [];
+  return rawHistory
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { atMs: 0, level: 'info', line: item };
+      }
+      return {
+        atMs: Math.max(0, toNumber(item?.atMs ?? item?.at ?? item?.ts, 0)),
+        level: safeText(item?.level, 'info'),
+        line: safeText(item?.line ?? item?.message, ''),
+      };
+    })
+    .filter((entry) => !!entry.line)
+    .sort((a, b) => b.atMs - a.atMs);
+}
+
+function extractApiData(payload) {
+  if (payload && typeof payload === 'object' && 'data' in payload) {
+    return payload.data;
+  }
+  return payload;
+}
+
+function toBoolLike(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  const text = safeText(value, '').toLowerCase();
+  return text === 'true' || text === '1' || text === 'yes' || text === 'completed' || text === 'done';
+}
+
+function normalizeAchievements(rawAchievements) {
+  if (!Array.isArray(rawAchievements)) return [];
+
+  return rawAchievements
+    .map((entry, idx) => {
+      const row = entry && typeof entry === 'object' ? entry : {};
+      const progress = row.progress && typeof row.progress === 'object' ? row.progress : {};
+      const code = safeText(row.code ?? row.id ?? row.name, `achievement-${idx + 1}`);
+      const title = safeText(row.title ?? row.name ?? row.label, code);
+      const progressCurrent = Math.max(
+        0,
+        toNumber(row.current ?? row.value ?? row.count ?? progress.current ?? progress.value, 0)
+      );
+      const progressTotal = Math.max(
+        0,
+        toNumber(row.total ?? row.target ?? row.max ?? progress.total ?? progress.target ?? progress.max, 0)
+      );
+      const pct = Math.max(0, Math.min(100, toNumber(
+        row.pct ?? row.percent ?? row.progressPct ?? progress.pct ?? progress.percent,
+        progressTotal > 0 ? statPct(progressCurrent, progressTotal) : 0
+      )));
+      const completed = toBoolLike(row.completed ?? row.isCompleted ?? row.done)
+        || safeText(row.status, '').toLowerCase() === 'completed'
+        || (progressTotal > 0 && progressCurrent >= progressTotal);
+
+      return {
+        code,
+        title,
+        completed,
+        progressCurrent,
+        progressTotal,
+        pct,
+        searchText: `${code} ${title}`.toLowerCase(),
+      };
+    })
+    .sort((a, b) => Number(b.completed) - Number(a.completed) || b.pct - a.pct || a.code.localeCompare(b.code));
+}
+
+function normalizeAchievementSummary(rawSummary, achievementRows) {
+  const source = rawSummary && typeof rawSummary === 'object'
+    ? (rawSummary.summary && typeof rawSummary.summary === 'object' ? rawSummary.summary : rawSummary)
+    : {};
+
+  const derivedCompleted = achievementRows.filter((row) => row.completed).length;
+  const derivedTotal = achievementRows.length;
+  let total = Math.max(
+    0,
+    toNumber(
+      source.total ?? source.totalCount ?? source.totalAvailable ?? source.available ?? source.achievementsTotal,
+      derivedTotal
+    )
+  );
+  let completed = Math.max(
+    0,
+    toNumber(source.completed ?? source.completedCount ?? source.totalCompleted ?? source.done, derivedCompleted)
+  );
+
+  if (total === 0 && derivedTotal > 0) total = derivedTotal;
+  if (completed > total && total > 0) completed = total;
+
+  return {
+    account: safeText(source.account ?? source.username ?? source.accountName ?? source.name, ''),
+    completed,
+    total,
+  };
+}
+
+function getAchievementFilterValue() {
+  return ACHIEVEMENT_FILTER_LABELS[modalState.achievementFilter] ? modalState.achievementFilter : 'all';
+}
+
+function getAchievementState(row) {
+  if (row.completed) return 'completed';
+  if (row.progressCurrent > 0 || row.pct > 0) return 'in-progress';
+  return 'not-started';
+}
+
+function getAchievementProgressText(row) {
+  if (row.progressTotal > 0) {
+    const pct = row.completed ? 100 : Math.max(0, Math.min(100, Math.round(row.pct)));
+    return `${formatNumberish(row.progressCurrent, '0')} / ${formatNumberish(row.progressTotal, '0')} (${pct}%)`;
+  }
+  if (row.progressCurrent > 0) {
+    return formatNumberish(row.progressCurrent, '0');
+  }
+  return '--';
+}
+
+function filterAchievements(rows) {
+  const filter = getAchievementFilterValue();
+  const needle = `${modalState.achievementSearch ?? ''}`.trim().toLowerCase();
+
+  return rows.filter((row) => {
+    const state = getAchievementState(row);
+    if (filter === 'completed' && state !== 'completed') return false;
+    if (filter === 'in-progress' && state !== 'in-progress') return false;
+    if (needle && !row.searchText.includes(needle)) return false;
+    return true;
+  });
+}
+
+function isModalOpen() {
+  return !!modalState.activeCharacterName && !!modalState.activeKind && modalRefs.host && !modalRefs.host.hidden;
+}
+
+function getModalBannerState() {
+  if (modalState.activeKind === 'achiev') return null;
+
+  const snapshotChar = appState.characters.get(modalState.activeCharacterName);
+  const identity = modalState.detail?.identity || {};
+  const stale = !!snapshotChar?.stale || !!identity?.stale;
+  const status = safeText(identity?.status, snapshotChar?.status);
+  const offline = !!snapshotChar?.offline || (status && status !== 'running');
+
+  if (!offline && !stale) return null;
+  if (offline && stale) {
+    return {
+      tone: 'offline',
+      text: 'OFFLINE / STALE - showing last known detail while runtime updates are delayed.',
+    };
+  }
+  if (offline) {
+    return {
+      tone: 'offline',
+      text: 'OFFLINE - runtime is not actively reporting for this character.',
+    };
+  }
+  return {
+    tone: 'stale',
+    text: 'STALE - detail may lag until the next fresh runtime snapshot.',
+  };
+}
+
+function renderSkillsModal(detail) {
+  const rows = normalizeSkills(detail?.skills);
+  if (rows.length === 0) {
+    return '<div class="modal-empty">No skills available for this character.</div>';
+  }
+
+  const items = rows.map((item) => `
+    <div class="modal-list-item">
+      <span class="modal-list-main">${escapeHtml(item.code)}</span>
+      <span class="modal-list-tag">LV ${formatNumberish(item.level, '0')}</span>
+      <span class="modal-list-tag">${formatNumberish(item.xp, '0')} / ${formatNumberish(item.maxXp, '0')} (${item.pct.toFixed(0)}%)</span>
+    </div>
+  `).join('');
+
+  return `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Skill Breakdown</h3>
+      <div class="modal-list">${items}</div>
+    </section>
+  `;
+}
+
+function renderInventoryModal(detail) {
+  const rows = normalizeInventory(detail?.inventory);
+  if (rows.length === 0) {
+    return '<div class="modal-empty">Inventory is empty.</div>';
+  }
+
+  const items = rows.map((item) => `
+    <div class="modal-list-item">
+      <span class="modal-list-main">${escapeHtml(item.code)}</span>
+      <span class="modal-list-slot">SLOT ${formatNumberish(item.slotIndex, '-')}</span>
+      <span class="modal-list-tag">x${formatNumberish(item.quantity, '0')}</span>
+    </div>
+  `).join('');
+
+  return `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Inventory Slots</h3>
+      <div class="modal-list">${items}</div>
+    </section>
+  `;
+}
+
+function renderEquipmentModal(detail) {
+  const rows = normalizeEquipment(detail?.equipment);
+  if (rows.length === 0) {
+    return '<div class="modal-empty">No equipment data available.</div>';
+  }
+
+  const items = rows.map((item) => `
+    <div class="modal-list-item modal-list-item--two">
+      <span class="modal-list-main">${escapeHtml(item.slot)}: ${escapeHtml(item.code)}</span>
+      <span class="modal-list-tag">${item.quantity > 0 ? `x${formatNumberish(item.quantity, '1')}` : 'EMPTY'}</span>
+    </div>
+  `).join('');
+
+  return `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Equipped Items</h3>
+      <div class="modal-list">${items}</div>
+    </section>
+  `;
+}
+
+function renderStatsModal(detail) {
+  const stats = detail?.stats && typeof detail.stats === 'object' ? detail.stats : {};
+  const identity = detail?.identity && typeof detail.identity === 'object' ? detail.identity : {};
+  const activeChar = appState.characters.get(modalState.activeCharacterName);
+  const taskText = safeText(
+    stats?.task?.label ?? stats?.taskLabel ?? stats?.task?.name ?? activeChar?.taskLabel,
+    '--'
+  );
+  const pos = stats?.position && typeof stats.position === 'object'
+    ? `${stats.position.x ?? '--'}, ${stats.position.y ?? '--'}${stats.position.layer != null ? ` @ ${stats.position.layer}` : ''}`
+    : '--';
+  const cards = [
+    { label: 'Status', value: safeText(identity?.status, safeText(activeChar?.status, '--')) },
+    { label: 'Level', value: formatNumberish(identity?.level ?? stats?.level ?? activeChar?.level, '--') },
+    { label: 'HP', value: `${formatNumberish(stats?.hp ?? activeChar?.hp, '--')} / ${formatNumberish(stats?.maxHp ?? activeChar?.maxHp, '--')}` },
+    { label: 'XP', value: `${formatNumberish(stats?.xp ?? activeChar?.xp, '--')} / ${formatNumberish(stats?.maxXp ?? activeChar?.maxXp, '--')}` },
+    { label: 'Gold', value: formatNumberish(stats?.gold, '--') },
+    { label: 'Position', value: pos },
+    { label: 'Task', value: taskText },
+    { label: 'Updated', value: formatTime(detail?.updatedAtMs) },
+  ];
+  const logs = normalizeLogHistory(detail?.logHistory).slice(0, 12);
+
+  const hasStats = cards.some((card) => hasMeaningfulStatValue(card.value));
+  if (!hasStats && logs.length === 0) {
+    return '<div class="modal-empty">No stats available for this character.</div>';
+  }
+
+  const cardHtml = cards.map((card) => `
+    <article class="modal-stat">
+      <div class="modal-stat-label">${escapeHtml(card.label)}</div>
+      <div class="modal-stat-value">${escapeHtml(card.value)}</div>
+    </article>
+  `).join('');
+
+  const logHtml = logs.length > 0
+    ? `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Recent Log History</h3>
+        <div class="modal-list">
+          ${logs.map((entry) => `
+            <div class="modal-list-item modal-list-item--two">
+              <span class="modal-list-main">${escapeHtml(entry.line)}</span>
+              <span class="modal-list-tag">${escapeHtml(entry.level.toUpperCase())} ${escapeHtml(formatTime(entry.atMs))}</span>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    `
+    : '';
+
+  return `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Runtime Stats</h3>
+      <div class="modal-grid">${cardHtml}</div>
+    </section>
+    ${logHtml}
+  `;
+}
+
+function renderAchievementsModal(detail) {
+  const summary = detail?.summary && typeof detail.summary === 'object' ? detail.summary : {};
+  const completed = Math.max(0, toNumber(summary.completed, 0));
+  const total = Math.max(completed, toNumber(summary.total, 0));
+  const completionPct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const filter = getAchievementFilterValue();
+  const searchValue = `${modalState.achievementSearch ?? ''}`;
+
+  const filterButtons = Object.entries(ACHIEVEMENT_FILTER_LABELS).map(([value, label]) => `
+    <button
+      type="button"
+      class="achievement-filter-btn${value === filter ? ' is-active' : ''}"
+      data-achievement-filter="${value}"
+    >${escapeHtml(label.toUpperCase())}</button>
+  `).join('');
+
+  return `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Account Totals</h3>
+      <div class="modal-grid">
+        <article class="modal-stat">
+          <div class="modal-stat-label">Completed</div>
+          <div class="modal-stat-value">${formatNumberish(completed, '0')}</div>
+        </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Total Available</div>
+          <div class="modal-stat-value">${formatNumberish(total, '0')}</div>
+        </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Completion</div>
+          <div class="modal-stat-value">${formatNumberish(completionPct, '0')}%</div>
+        </article>
+      </div>
+    </section>
+    <section class="modal-section">
+      <h3 class="modal-section-title">Achievements</h3>
+      <div class="achievement-toolbar">
+        <div class="achievement-filter-group" role="tablist" aria-label="Achievement filters">
+          ${filterButtons}
+        </div>
+        <label class="achievement-search">
+          <span class="achievement-search-label">SEARCH</span>
+          <input
+            type="search"
+            class="achievement-search-input"
+            data-achievement-search
+            placeholder="Code or title"
+            value="${escapeHtml(searchValue)}"
+            autocomplete="off"
+          >
+        </label>
+      </div>
+      <div class="achievement-result-count" data-achievement-result-count></div>
+      <div class="modal-list" data-achievement-list></div>
+    </section>
+  `;
+}
+
+function renderAchievementsListInPlace() {
+  if (!modalRefs.content || modalState.activeKind !== 'achiev' || modalState.status !== 'ready' || !modalState.detail) {
+    return;
+  }
+
+  const listHost = modalRefs.content.querySelector('[data-achievement-list]');
+  const countHost = modalRefs.content.querySelector('[data-achievement-result-count]');
+  if (!listHost) return;
+
+  const rows = Array.isArray(modalState.detail.achievements) ? modalState.detail.achievements : [];
+  const visibleRows = filterAchievements(rows);
+  const activeFilter = getAchievementFilterValue();
+
+  modalRefs.content.querySelectorAll('button[data-achievement-filter]').forEach((button) => {
+    const value = safeText(button.dataset.achievementFilter, '');
+    button.classList.toggle('is-active', value === activeFilter);
+  });
+
+  if (countHost) {
+    if (rows.length === 0) {
+      countHost.textContent = 'No achievements available.';
+    } else {
+      countHost.textContent = `Showing ${formatNumberish(visibleRows.length, '0')} of ${formatNumberish(rows.length, '0')} achievements.`;
+    }
+  }
+
+  if (rows.length === 0) {
+    listHost.innerHTML = '<div class="modal-empty">No achievements available for this account.</div>';
+    return;
+  }
+
+  if (visibleRows.length === 0) {
+    listHost.innerHTML = '<div class="modal-empty">No achievements match the selected filter or search.</div>';
+    return;
+  }
+
+  listHost.innerHTML = visibleRows.map((row) => {
+    const state = getAchievementState(row);
+    const statusLabel = state === 'completed'
+      ? 'COMPLETED'
+      : (state === 'in-progress' ? 'IN PROGRESS' : 'NOT STARTED');
+
+    return `
+      <div class="modal-list-item modal-list-item--two">
+        <span class="modal-list-main achievement-list-main">
+          <span class="achievement-code">${escapeHtml(row.code)}</span>
+          <span class="achievement-title">${escapeHtml(row.title)}</span>
+        </span>
+        <span class="achievement-progress">
+          <span class="achievement-status is-${state}">${statusLabel}</span>
+          <span class="modal-list-tag">${escapeHtml(getAchievementProgressText(row))}</span>
+        </span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderModalContent() {
+  if (!modalRefs.content) return;
+
+  const kindLabel = MODAL_KIND_LABELS[modalState.activeKind] || 'Detail';
+  if (modalState.status === 'loading') {
+    modalRefs.content.innerHTML = `<div class="modal-state">Loading ${escapeHtml(kindLabel)}...</div>`;
+    return;
+  }
+
+  if (modalState.status === 'error') {
+    const message = safeText(modalState.errorText, 'Unknown error');
+    modalRefs.content.innerHTML = `
+      <div class="modal-error">
+        Unable to load ${escapeHtml(kindLabel)}.
+        <span class="modal-log-line">${escapeHtml(message)}</span>
+      </div>
+    `;
+    return;
+  }
+
+  if (modalState.status !== 'ready' || !modalState.detail) {
+    modalRefs.content.innerHTML = '<div class="modal-state">Select a detail view.</div>';
+    return;
+  }
+
+  if (modalState.activeKind === 'skills') {
+    modalRefs.content.innerHTML = renderSkillsModal(modalState.detail);
+    return;
+  }
+  if (modalState.activeKind === 'inven') {
+    modalRefs.content.innerHTML = renderInventoryModal(modalState.detail);
+    return;
+  }
+  if (modalState.activeKind === 'equip') {
+    modalRefs.content.innerHTML = renderEquipmentModal(modalState.detail);
+    return;
+  }
+  if (modalState.activeKind === 'achiev') {
+    modalRefs.content.innerHTML = renderAchievementsModal(modalState.detail);
+    renderAchievementsListInPlace();
+    return;
+  }
+  modalRefs.content.innerHTML = renderStatsModal(modalState.detail);
+}
+
+function renderModal() {
+  if (!isModalOpen()) return;
+
+  const label = MODAL_KIND_LABELS[modalState.activeKind] || 'Detail';
+  if (modalRefs.kind) modalRefs.kind.textContent = label.toUpperCase();
+  if (modalRefs.title) {
+    if (modalState.activeKind === 'achiev') {
+      const accountName = safeText(modalState.detail?.summary?.account, 'Account');
+      modalRefs.title.textContent = `${accountName} - ${label}`;
+    } else {
+      modalRefs.title.textContent = `${modalState.activeCharacterName} - ${label}`;
+    }
+  }
+
+  if (modalRefs.banner) {
+    const banner = getModalBannerState();
+    if (!banner) {
+      modalRefs.banner.hidden = true;
+      modalRefs.banner.className = 'modal-banner';
+      modalRefs.banner.textContent = '';
+    } else {
+      modalRefs.banner.hidden = false;
+      modalRefs.banner.className = `modal-banner ${banner.tone}`;
+      modalRefs.banner.textContent = banner.text;
+    }
+  }
+
+  renderModalContent();
+}
+
+function abortModalFetch() {
+  if (modalState.fetchController) {
+    modalState.fetchController.abort();
+    modalState.fetchController = null;
+  }
+}
+
+async function fetchCharacterDetail(name) {
+  if (!isModalOpen() || modalState.activeCharacterName !== name) return;
+
+  abortModalFetch();
+  const controller = new AbortController();
+  const seq = modalState.fetchSeq + 1;
+  modalState.fetchSeq = seq;
+  modalState.fetchController = controller;
+  modalState.status = 'loading';
+  modalState.errorText = '';
+  renderModal();
+
+  try {
+    const res = await fetch(`/api/ui/character/${encodeURIComponent(name)}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      const errText = safeText(payload?.error, `HTTP ${res.status}`);
+      const errDetail = safeText(payload?.detail, '');
+      throw new Error(errDetail ? `${errText}: ${errDetail}` : errText);
+    }
+
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeCharacterName !== name) {
+      return;
+    }
+
+    modalState.detail = payload || {};
+    modalState.status = 'ready';
+    modalState.errorText = '';
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeCharacterName !== name) {
+      return;
+    }
+    modalState.status = 'error';
+    modalState.errorText = safeText(err?.message, 'Failed to fetch character detail');
+  } finally {
+    if (modalState.fetchController === controller) {
+      modalState.fetchController = null;
+    }
+    renderModal();
+  }
+}
+
+function buildApiErrorMessage(response, payload, prefix) {
+  const base = safeText(payload?.error, `HTTP ${response.status}`);
+  const detail = safeText(payload?.detail, '');
+  return detail ? `${prefix}: ${base}: ${detail}` : `${prefix}: ${base}`;
+}
+
+async function fetchAccountAchievementsDetail() {
+  if (!isModalOpen() || modalState.activeKind !== 'achiev') return;
+
+  abortModalFetch();
+  const controller = new AbortController();
+  const seq = modalState.fetchSeq + 1;
+  modalState.fetchSeq = seq;
+  modalState.fetchController = controller;
+  modalState.status = 'loading';
+  modalState.errorText = '';
+  renderModal();
+
+  try {
+    const [summaryRes, achievementsRes] = await Promise.all([
+      fetch('/api/ui/account/summary', {
+        cache: 'no-store',
+        signal: controller.signal,
+      }),
+      fetch('/api/ui/account/achievements', {
+        cache: 'no-store',
+        signal: controller.signal,
+      }),
+    ]);
+
+    const [summaryPayloadRaw, achievementsPayloadRaw] = await Promise.all([
+      summaryRes.json().catch(() => null),
+      achievementsRes.json().catch(() => null),
+    ]);
+
+    if (!summaryRes.ok) {
+      throw new Error(buildApiErrorMessage(summaryRes, summaryPayloadRaw, 'Account summary request failed'));
+    }
+    if (!achievementsRes.ok) {
+      throw new Error(buildApiErrorMessage(achievementsRes, achievementsPayloadRaw, 'Achievements request failed'));
+    }
+
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'achiev') {
+      return;
+    }
+
+    const summaryPayload = extractApiData(summaryPayloadRaw) || {};
+    const achievementsPayload = extractApiData(achievementsPayloadRaw) || {};
+    const achievementRows = normalizeAchievements(
+      Array.isArray(achievementsPayload)
+        ? achievementsPayload
+        : (achievementsPayload?.achievements ?? achievementsPayload?.items ?? achievementsPayload?.rows ?? [])
+    );
+    const summary = normalizeAchievementSummary(summaryPayload, achievementRows);
+
+    modalState.detail = {
+      summary,
+      achievements: achievementRows,
+      updatedAtMs: Math.max(
+        0,
+        toNumber(achievementsPayload?.updatedAtMs ?? summaryPayload?.updatedAtMs ?? summaryPayload?.updatedAt, 0)
+      ),
+    };
+    modalState.status = 'ready';
+    modalState.errorText = '';
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'achiev') {
+      return;
+    }
+    modalState.status = 'error';
+    modalState.errorText = safeText(err?.message, 'Failed to fetch account achievements');
+  } finally {
+    if (modalState.fetchController === controller) {
+      modalState.fetchController = null;
+    }
+    renderModal();
+  }
+}
+
+function openCharacterModal(name, kind) {
+  if (!name || !MODAL_KIND_LABELS[kind] || !modalRefs.host || !modalRefs.dialog) return;
+
+  modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  modalState.activeCharacterName = name;
+  modalState.activeKind = kind;
+  modalState.status = 'loading';
+  modalState.detail = null;
+  modalState.errorText = '';
+  modalState.activeSnapshotUpdatedAtMs = kind === 'achiev'
+    ? 0
+    : (appState.characters.get(name)?.lastUpdatedAtMs || 0);
+  modalState.achievementFilter = 'all';
+  modalState.achievementSearch = '';
+
+  modalRefs.host.hidden = false;
+  document.body.classList.add('modal-open');
+  renderModal();
+
+  requestAnimationFrame(() => {
+    if (modalRefs.closeBtn) modalRefs.closeBtn.focus();
+    else modalRefs.dialog.focus();
+  });
+
+  if (kind === 'achiev') {
+    fetchAccountAchievementsDetail();
+  } else {
+    fetchCharacterDetail(name);
+  }
+}
+
+function closeCharacterModal({ restoreFocus = true } = {}) {
+  if (!modalRefs.host || modalRefs.host.hidden) return;
+
+  abortModalFetch();
+  modalRefs.host.hidden = true;
+  document.body.classList.remove('modal-open');
+
+  const focusEl = modalState.lastFocusedElement;
+  modalState.activeCharacterName = '';
+  modalState.activeKind = '';
+  modalState.status = 'idle';
+  modalState.detail = null;
+  modalState.errorText = '';
+  modalState.activeSnapshotUpdatedAtMs = 0;
+  modalState.lastFocusedElement = null;
+  modalState.achievementFilter = 'all';
+  modalState.achievementSearch = '';
+
+  if (restoreFocus && focusEl && document.contains(focusEl)) {
+    focusEl.focus();
+  }
+}
+
+function trapModalFocus(event) {
+  if (!isModalOpen() || !modalRefs.dialog) return;
+  const focusable = [...modalRefs.dialog.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+  if (focusable.length === 0) {
+    event.preventDefault();
+    modalRefs.dialog.focus();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  const inside = modalRefs.dialog.contains(active);
+
+  if (event.shiftKey) {
+    if (!inside || active === first) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+
+  if (!inside || active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function onDocumentKeydown(event) {
+  if (!isModalOpen()) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeCharacterModal();
+    return;
+  }
+  if (event.key === 'Tab') {
+    trapModalFocus(event);
+  }
+}
+
+function onCardActionClick(event) {
+  const button = event.target.closest('button[data-modal-kind]');
+  if (!button || button.disabled) return;
+  const card = button.closest('.card');
+  const name = card?.dataset?.charName;
+  const kind = safeText(button.dataset.modalKind, '').toLowerCase();
+  if (!name || !MODAL_KIND_LABELS[kind]) return;
+  openCharacterModal(name, kind);
+}
+
+function onModalContentClick(event) {
+  if (!isModalOpen() || modalState.activeKind !== 'achiev' || modalState.status !== 'ready') return;
+  const button = event.target.closest('button[data-achievement-filter]');
+  if (!button || !modalRefs.content || !modalRefs.content.contains(button)) return;
+
+  const nextFilter = safeText(button.dataset.achievementFilter, '').toLowerCase();
+  if (!ACHIEVEMENT_FILTER_LABELS[nextFilter]) return;
+  if (modalState.achievementFilter === nextFilter) return;
+
+  modalState.achievementFilter = nextFilter;
+  renderAchievementsListInPlace();
+}
+
+function onModalContentInput(event) {
+  if (!isModalOpen() || modalState.activeKind !== 'achiev' || modalState.status !== 'ready') return;
+  const input = event.target.closest('input[data-achievement-search]');
+  if (!input || !modalRefs.content || !modalRefs.content.contains(input)) return;
+
+  modalState.achievementSearch = `${input.value ?? ''}`;
+  renderAchievementsListInPlace();
+}
+
+function maybeRefreshActiveModalFromSnapshot() {
+  if (!isModalOpen()) return;
+  if (modalState.activeKind === 'achiev') return;
+
+  const activeChar = appState.characters.get(modalState.activeCharacterName);
+  if (!activeChar) {
+    renderModal();
+    return;
+  }
+
+  const nextUpdatedAtMs = Math.max(0, toNumber(activeChar.lastUpdatedAtMs, 0));
+  if (nextUpdatedAtMs > 0 && nextUpdatedAtMs !== modalState.activeSnapshotUpdatedAtMs) {
+    modalState.activeSnapshotUpdatedAtMs = nextUpdatedAtMs;
+    fetchCharacterDetail(modalState.activeCharacterName);
+    return;
+  }
+
+  renderModal();
+}
+
+function setupModalFramework() {
+  modalRefs.host = document.getElementById('modalHost');
+  modalRefs.scrim = document.getElementById('modalScrim');
+  modalRefs.dialog = document.getElementById('characterModal');
+  modalRefs.kind = document.getElementById('modalKind');
+  modalRefs.title = document.getElementById('modalTitle');
+  modalRefs.banner = document.getElementById('modalBanner');
+  modalRefs.content = document.getElementById('modalContent');
+  modalRefs.closeBtn = document.getElementById('modalCloseBtn');
+
+  const cardsContainer = document.getElementById('cardsContainer');
+  if (cardsContainer) {
+    cardsContainer.addEventListener('click', onCardActionClick);
+  }
+  if (modalRefs.scrim) {
+    modalRefs.scrim.addEventListener('click', () => closeCharacterModal());
+  }
+  if (modalRefs.closeBtn) {
+    modalRefs.closeBtn.addEventListener('click', () => closeCharacterModal());
+  }
+  if (modalRefs.content) {
+    modalRefs.content.addEventListener('click', onModalContentClick);
+    modalRefs.content.addEventListener('input', onModalContentInput);
+  }
+  document.addEventListener('keydown', onDocumentKeydown);
+}
+
 function syncCards() {
   const container = document.getElementById('cardsContainer');
   const nextNames = new Set(appState.order);
@@ -1160,6 +2474,7 @@ function applySnapshot(snapshot) {
       .map(char => [char.name, normalizeCharacter(char)])
   );
   syncCards();
+  maybeRefreshActiveModalFromSnapshot();
 }
 
 async function loadInitialSnapshot() {
@@ -1193,6 +2508,7 @@ function connectLiveEvents() {
    INIT
    ============================================================== */
 async function init() {
+  setupModalFramework();
   createPetals();
 
   try {

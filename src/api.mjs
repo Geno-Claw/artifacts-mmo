@@ -84,6 +84,10 @@ export async function getMyCharacters() {
   return request('GET', '/my/characters');
 }
 
+export async function getMyDetails() {
+  return request('GET', '/my/details');
+}
+
 export async function createCharacter(name, skin = 'men1') {
   return request('POST', '/characters/create', { name, skin });
 }
@@ -194,6 +198,15 @@ export async function getMyGEHistory(params = {}) {
 export async function getAllGEOrders(params = {}) {
   const qs = new URLSearchParams(params).toString();
   return request('GET', `/grandexchange/orders${qs ? '?' + qs : ''}`);
+}
+
+export async function getAccountAchievements(account, params = {}) {
+  const safeAccount = encodeURIComponent(`${account || ''}`.trim());
+  if (!safeAccount) {
+    throw new Error('getAccountAchievements(account) requires a non-empty account');
+  }
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/accounts/${safeAccount}/achievements${qs ? '?' + qs : ''}`);
 }
 
 // --- Bank data ---

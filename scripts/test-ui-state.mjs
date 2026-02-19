@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import {
+import * as uiState from '../src/services/ui-state.mjs';
+
+const {
   _resetUiStateForTests,
   getUiSnapshot,
   initializeUiState,
@@ -8,7 +10,7 @@ import {
   recordCooldown,
   recordLog,
   recordRoutineState,
-} from '../src/services/ui-state.mjs';
+} = uiState;
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -16,6 +18,102 @@ function wait(ms) {
 
 function getChar(snapshot, name) {
   return snapshot.characters.find(c => c.name === name);
+}
+
+function assertHasKeys(obj, keys, label) {
+  assert.ok(obj && typeof obj === 'object', `${label} must be an object`);
+  for (const key of keys) {
+    assert.equal(Object.hasOwn(obj, key), true, `${label} missing key "${key}"`);
+  }
+}
+
+function resolveDetailGetter() {
+  const priorityNames = [
+    'getUiCharacterDetail',
+    'getCharacterDetail',
+    'getUiCharacter',
+    'getUiCharacterState',
+    'getUiCharacterSnapshot',
+  ];
+
+  for (const name of priorityNames) {
+    if (typeof uiState[name] === 'function') return uiState[name];
+  }
+
+  for (const [name, fn] of Object.entries(uiState)) {
+    if (typeof fn !== 'function') continue;
+    if (!name.startsWith('get')) continue;
+    if (!/character/i.test(name)) continue;
+    if (!/(detail|state|snapshot)/i.test(name)) continue;
+    return fn;
+  }
+
+  const exportedGetters = Object.keys(uiState)
+    .filter(key => key.startsWith('get'))
+    .sort()
+    .join(', ');
+
+  assert.fail(`No character detail getter export found in ui-state module. get* exports: [${exportedGetters}]`);
+}
+
+async function getDetailPayload(getter, name) {
+  try {
+    const result = getter(name);
+    return result && typeof result.then === 'function' ? await result : result;
+  } catch (err) {
+    const result = getter({ name });
+    return result && typeof result.then === 'function' ? await result : result;
+  }
+}
+
+function assertDetailShape(detail, expectedName) {
+  assertHasKeys(detail, [
+    'identity',
+    'skills',
+    'inventory',
+    'equipment',
+    'stats',
+    'logHistory',
+    'updatedAtMs',
+  ], 'detail payload');
+
+  assertHasKeys(detail.identity, ['name', 'status', 'stale', 'level'], 'detail.identity');
+  assert.equal(detail.identity.name, expectedName);
+  assert.equal(typeof detail.identity.status, 'string');
+  assert.equal(typeof detail.identity.stale, 'boolean');
+  assert.equal(typeof detail.identity.level, 'number');
+
+  assert.ok(Array.isArray(detail.skills), 'detail.skills must be an array');
+  assert.ok(Array.isArray(detail.inventory), 'detail.inventory must be an array');
+  assert.ok(Array.isArray(detail.equipment), 'detail.equipment must be an array');
+  assert.ok(Array.isArray(detail.logHistory), 'detail.logHistory must be an array');
+
+  for (const [idx, skill] of detail.skills.entries()) {
+    assertHasKeys(skill, ['code', 'level', 'xp', 'maxXp', 'pct'], `detail.skills[${idx}]`);
+    assert.equal(typeof skill.code, 'string');
+    assert.equal(typeof skill.level, 'number');
+    assert.equal(typeof skill.xp, 'number');
+    assert.equal(typeof skill.maxXp, 'number');
+    assert.equal(typeof skill.pct, 'number');
+  }
+
+  for (const [idx, item] of detail.inventory.entries()) {
+    assertHasKeys(item, ['code', 'quantity', 'slotIndex'], `detail.inventory[${idx}]`);
+    assert.equal(typeof item.code, 'string');
+    assert.equal(typeof item.quantity, 'number');
+    assert.equal(typeof item.slotIndex, 'number');
+  }
+
+  for (const [idx, item] of detail.equipment.entries()) {
+    assertHasKeys(item, ['slot', 'code', 'quantity'], `detail.equipment[${idx}]`);
+    assert.equal(typeof item.slot, 'string');
+    assert.equal(typeof item.code, 'string');
+    assert.equal(typeof item.quantity, 'number');
+  }
+
+  assertHasKeys(detail.stats, ['hp', 'maxHp', 'xp', 'maxXp', 'gold', 'position'], 'detail.stats');
+  assertHasKeys(detail.stats.position, ['x', 'y', 'layer'], 'detail.stats.position');
+  assert.equal(typeof detail.updatedAtMs, 'number');
 }
 
 async function run() {
@@ -141,6 +239,73 @@ async function run() {
   const staleSnap = getUiSnapshot();
   const betaStale = getChar(staleSnap, 'Beta');
   assert.equal(betaStale.stale, true);
+
+  // Phase 2 detail normalization checks.
+  _resetUiStateForTests();
+  initializeUiState({
+    characterNames: ['Gamma'],
+    configPath: './config/characters-local.json',
+    startedAt: 999,
+    staleAfterMs: 60_000,
+    logLimit: 120,
+  });
+
+  recordCharacterSnapshot('Gamma', {
+    level: 22,
+    hp: 330,
+    max_hp: 500,
+    xp: 7800,
+    max_xp: 10000,
+    x: 11,
+    y: 27,
+    layer: 'overworld',
+    gold: 12345,
+    task: 'wolf',
+    task_type: 'monsters',
+    task_progress: 4,
+    task_total: 20,
+    mining_level: 12,
+    mining_xp: 640,
+    mining_max_xp: 1000,
+    woodcutting_level: 9,
+    woodcutting_xp: 400,
+    woodcutting_max_xp: 800,
+    fishing_level: 5,
+    fishing_xp: 150,
+    fishing_max_xp: 450,
+    weaponcrafting_level: 3,
+    weaponcrafting_xp: 120,
+    weaponcrafting_max_xp: 300,
+    inventory: [
+      { slot: 1, code: 'copper_ore', quantity: 22 },
+      { slot: 2, code: 'spruce_log', quantity: 8 },
+      { slot: 3, code: null, quantity: 0 },
+    ],
+    weapon_slot: 'copper_sword',
+    weapon_slot_quantity: 1,
+    shield_slot: 'wooden_shield',
+    shield_slot_quantity: 1,
+    ring1_slot: 'topaz_ring',
+    ring1_slot_quantity: 1,
+  });
+
+  for (let i = 0; i < 75; i++) {
+    recordLog('Gamma', {
+      level: 'info',
+      line: `detail-history-${i}`,
+      at: i,
+    });
+  }
+
+  const detailGetter = resolveDetailGetter();
+  const detail = await getDetailPayload(detailGetter, 'Gamma');
+  assertDetailShape(detail, 'Gamma');
+  assert.equal(detail.skills.some(skill => skill.code === 'mining'), true);
+  assert.equal(detail.inventory.some(item => item.code === 'copper_ore'), true);
+  assert.equal(detail.equipment.some(item => item.slot === 'weapon'), true);
+  assert.equal(detail.logHistory.length, 50, 'detail.logHistory should be capped at 50 entries');
+  assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-74'), true);
+  assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-0'), false);
 
   console.log('test-ui-state: PASS');
 }

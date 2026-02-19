@@ -4,7 +4,36 @@
  */
 
 const DEFAULT_STALE_AFTER_MS = 45_000;
+const MAX_LOG_HISTORY = 50;
 const DEFAULT_LOG_LIMIT = 20;
+const KNOWN_SKILL_CODES = Object.freeze([
+  'mining',
+  'woodcutting',
+  'fishing',
+  'cooking',
+  'weaponcrafting',
+  'gearcrafting',
+  'jewelrycrafting',
+  'alchemy',
+]);
+const EQUIPMENT_SLOTS = Object.freeze([
+  'helmet',
+  'body_armor',
+  'leg_armor',
+  'boots',
+  'weapon',
+  'shield',
+  'ring1',
+  'ring2',
+  'amulet',
+  'artifact1',
+  'artifact2',
+  'artifact3',
+  'utility1',
+  'utility2',
+  'bag',
+  'rune',
+]);
 
 let uiMeta = {
   configPath: '',
@@ -23,6 +52,89 @@ function nowMs() {
 function toNumber(value, fallback = 0) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function toTrimmedStringOrNull(value) {
+  if (value == null) return null;
+  const text = `${value}`.trim();
+  return text || null;
+}
+
+function pctOf(xp, maxXp) {
+  if (maxXp <= 0) return 0;
+  const pct = (xp / maxXp) * 100;
+  if (!Number.isFinite(pct)) return 0;
+  return Math.max(0, Math.min(100, pct));
+}
+
+function orderedSkillCodes(charData = {}) {
+  const codes = new Set(KNOWN_SKILL_CODES);
+  for (const key of Object.keys(charData)) {
+    if (!key.endsWith('_level')) continue;
+    const code = key.slice(0, -'_level'.length);
+    if (!code) continue;
+    if (
+      Object.prototype.hasOwnProperty.call(charData, `${code}_xp`) ||
+      Object.prototype.hasOwnProperty.call(charData, `${code}_max_xp`) ||
+      KNOWN_SKILL_CODES.includes(code)
+    ) {
+      codes.add(code);
+    }
+  }
+
+  return [...codes].sort((a, b) => {
+    const aKnown = KNOWN_SKILL_CODES.indexOf(a);
+    const bKnown = KNOWN_SKILL_CODES.indexOf(b);
+    if (aKnown >= 0 && bKnown >= 0) return aKnown - bKnown;
+    if (aKnown >= 0) return -1;
+    if (bKnown >= 0) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function normalizeSkills(charData = {}) {
+  return orderedSkillCodes(charData).map((code) => {
+    const level = Math.max(0, toNumber(charData[`${code}_level`], 0));
+    const xp = Math.max(0, toNumber(charData[`${code}_xp`], 0));
+    const maxXp = Math.max(0, toNumber(charData[`${code}_max_xp`], 0));
+    return {
+      code,
+      level,
+      xp,
+      maxXp,
+      pct: pctOf(xp, maxXp),
+    };
+  });
+}
+
+function normalizeInventory(charData = {}) {
+  if (!Array.isArray(charData.inventory)) return [];
+  const result = [];
+  for (let i = 0; i < charData.inventory.length; i++) {
+    const rawSlot = charData.inventory[i] || {};
+    const code = toTrimmedStringOrNull(rawSlot.code);
+    if (!code) continue;
+
+    const quantity = Math.max(0, toNumber(rawSlot.quantity, 0));
+    if (quantity <= 0) continue;
+
+    const slotNumber = Number(rawSlot.slot);
+    const slotIndex = Number.isFinite(slotNumber) ? Math.max(0, Math.floor(slotNumber)) : i;
+    result.push({ code, quantity, slotIndex });
+  }
+  return result;
+}
+
+function normalizeEquipment(charData = {}) {
+  const result = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const code = toTrimmedStringOrNull(charData[`${slot}_slot`]);
+    if (!code) continue;
+
+    const quantity = Math.max(1, toNumber(charData[`${slot}_slot_quantity`], 1));
+    result.push({ slot, code, quantity });
+  }
+  return result;
 }
 
 function portraitTypeForName(name) {
@@ -48,6 +160,7 @@ function defaultCharacterState(name) {
     maxHp: 0,
     xp: 0,
     maxXp: 0,
+    gold: 0,
     position: { x: null, y: null, layer: null },
     routine: {
       name: null,
@@ -70,11 +183,19 @@ function defaultCharacterState(name) {
     },
     logLatest: 'No activity yet',
     logHistory: [],
+    detailLogHistory: [],
+    skills: [],
+    inventory: [],
+    equipment: [],
   };
 }
 
+function isCharacterStale(char, serverTimeMs = nowMs()) {
+  return char.lastUpdatedAtMs <= 0 || (serverTimeMs - char.lastUpdatedAtMs) > uiMeta.staleAfterMs;
+}
+
 function cloneCharacterState(char, serverTimeMs) {
-  const stale = char.lastUpdatedAtMs <= 0 || (serverTimeMs - char.lastUpdatedAtMs) > uiMeta.staleAfterMs;
+  const stale = isCharacterStale(char, serverTimeMs);
   return {
     name: char.name,
     portraitType: char.portraitType,
@@ -153,11 +274,15 @@ export function recordCharacterSnapshot(name, charData = {}) {
   char.maxHp = toNumber(charData.max_hp, 0);
   char.xp = toNumber(charData.xp, 0);
   char.maxXp = toNumber(charData.max_xp, 0);
+  char.gold = toNumber(charData.gold, 0);
   char.position = {
     x: charData.x ?? null,
     y: charData.y ?? null,
     layer: charData.layer ?? null,
   };
+  char.skills = normalizeSkills(charData);
+  char.inventory = normalizeInventory(charData);
+  char.equipment = normalizeEquipment(charData);
   char.task = {
     name: charData.task || null,
     type: charData.task_type || null,
@@ -227,9 +352,13 @@ export function recordLog(name, { level = 'info', line = '', at = nowMs() } = {}
 
   char.logLatest = entry.line || char.logLatest;
   char.logHistory.push(entry);
+  char.detailLogHistory.push(entry);
 
   if (char.logHistory.length > uiMeta.logLimit) {
     char.logHistory = char.logHistory.slice(char.logHistory.length - uiMeta.logLimit);
+  }
+  if (char.detailLogHistory.length > MAX_LOG_HISTORY) {
+    char.detailLogHistory = char.detailLogHistory.slice(char.detailLogHistory.length - MAX_LOG_HISTORY);
   }
 
   emitChange();
@@ -244,6 +373,36 @@ export function getUiSnapshot() {
     configPath: uiMeta.configPath,
     startedAtMs: uiMeta.startedAtMs,
     characters: list,
+  };
+}
+
+export function getUiCharacterDetail(name) {
+  const charName = `${name || ''}`.trim();
+  if (!charName) return null;
+  const char = characters.get(charName);
+  if (!char) return null;
+
+  return {
+    identity: {
+      name: char.name,
+      status: char.status,
+      stale: isCharacterStale(char),
+      level: char.level,
+    },
+    skills: char.skills.map(skill => ({ ...skill })),
+    inventory: char.inventory.map(item => ({ ...item })),
+    equipment: char.equipment.map(item => ({ ...item })),
+    stats: {
+      hp: char.hp,
+      maxHp: char.maxHp,
+      xp: char.xp,
+      maxXp: char.maxXp,
+      gold: char.gold,
+      position: { ...char.position },
+      task: { ...char.task },
+    },
+    logHistory: char.detailLogHistory.map(entry => ({ ...entry })),
+    updatedAtMs: char.lastUpdatedAtMs,
   };
 }
 

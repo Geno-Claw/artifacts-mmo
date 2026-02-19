@@ -10,6 +10,8 @@
     "test:skill-rotation": "node scripts/test-skill-rotation.mjs",
     "test:ui-state": "node scripts/test-ui-state.mjs",
     "test:dashboard-server": "node scripts/test-dashboard-server.mjs",
+    "test:account-cache": "node scripts/test-account-cache.mjs",
+    "test:phase3": "node scripts/test-account-cache.mjs && node scripts/test-dashboard-server.mjs",
     "test:inventory-manager": "node scripts/test-inventory-manager.mjs",
     "test:bank-ops": "node scripts/test-bank-ops.mjs",
     "test:no-direct-bank-api": "node scripts/test-no-direct-bank-api.mjs",
