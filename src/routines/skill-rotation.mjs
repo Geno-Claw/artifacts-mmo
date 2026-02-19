@@ -681,8 +681,9 @@ export class SkillRotationRoutine extends BaseRoutine {
   }
 
   async _withdrawForItemTask(ctx, itemCode, needed) {
-    const bank = await gameData.getBankItems();
+    const bank = await gameData.getBankItems(true);
     const inBank = bank.get(itemCode) || 0;
+    log.info(`[${ctx.name}] Item Task: bank check for ${itemCode} — ${inBank} in bank, need ${needed}`);
     if (inBank <= 0) return 0;
 
     const space = ctx.inventoryCapacity() - ctx.inventoryCount();
