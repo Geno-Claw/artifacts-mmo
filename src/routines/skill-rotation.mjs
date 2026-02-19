@@ -13,9 +13,6 @@ import { SkillRotation } from '../services/skill-rotation.mjs';
 import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights, equipForGathering } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
-<<<<<<< Updated upstream
-import { withdrawBankItem } from '../services/bank-ops.mjs';
-=======
 import { depositBankItems, withdrawBankItems } from '../services/bank-ops.mjs';
 import {
   claimOrder,
@@ -26,7 +23,6 @@ import {
   renewClaim,
 } from '../services/order-board.mjs';
 import { optimizeForMonster } from '../services/gear-optimizer.mjs';
->>>>>>> Stashed changes
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -979,10 +975,6 @@ export class SkillRotationRoutine extends BaseRoutine {
     if (toWithdraw <= 0) return 0;
 
     try {
-<<<<<<< Updated upstream
-      const result = await withdrawBankItem(ctx, itemCode, toWithdraw, { reason: `item task: ${itemCode}` });
-      const withdrawn = result.withdrawn.reduce((sum, w) => sum + w.quantity, 0);
-=======
       const result = await withdrawBankItems(ctx, [{ code: itemCode, quantity: toWithdraw }], {
         reason: 'item task withdrawal',
         mode: 'partial',
@@ -990,7 +982,6 @@ export class SkillRotationRoutine extends BaseRoutine {
       });
       const row = result.withdrawn.find(entry => entry.code === itemCode);
       const withdrawn = row?.quantity || 0;
->>>>>>> Stashed changes
       if (withdrawn > 0) {
         log.info(`[${ctx.name}] Item Task: withdrew ${itemCode} x${withdrawn} from bank`);
       }
