@@ -13,6 +13,7 @@ import { SkillRotation } from '../services/skill-rotation.mjs';
 import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, withdrawFoodForFights, equipForGathering } from '../helpers.mjs';
 import { TASKS_MASTER, MAX_LOSSES_DEFAULT } from '../data/locations.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
+import { withdrawBankItem } from '../services/bank-ops.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -691,12 +692,12 @@ export class SkillRotationRoutine extends BaseRoutine {
     if (toWithdraw <= 0) return 0;
 
     try {
-      await moveTo(ctx, 4, 1); // bank location
-      const result = await api.withdrawBank({ code: itemCode, quantity: toWithdraw }, ctx.name);
-      await api.waitForCooldown(result);
-      await ctx.refresh();
-      log.info(`[${ctx.name}] Item Task: withdrew ${itemCode} x${toWithdraw} from bank`);
-      return toWithdraw;
+      const result = await withdrawBankItem(ctx, itemCode, toWithdraw, { reason: `item task: ${itemCode}` });
+      const withdrawn = result.withdrawn.reduce((sum, w) => sum + w.quantity, 0);
+      if (withdrawn > 0) {
+        log.info(`[${ctx.name}] Item Task: withdrew ${itemCode} x${withdrawn} from bank`);
+      }
+      return withdrawn;
     } catch (err) {
       log.warn(`[${ctx.name}] Item Task: bank withdraw failed for ${itemCode}: ${err.message}`);
       return 0;
