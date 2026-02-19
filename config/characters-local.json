@@ -42,6 +42,11 @@
             "combat": 25,
             "npc_task": 1
           },
+          "orderBoard": {
+            "enabled": true,
+            "createOrders": true,
+            "fulfillOrders": false
+          },
           "craftCollection": {
             "gearcrafting": true,
             "weaponcrafting": true,
@@ -94,6 +99,9 @@
             "combat": 25,
             "npc_task": 1
           },
+          "orderBoard": {
+            "enabled": true
+          },
           "craftCollection": {
             "gearcrafting": true,
             "weaponcrafting": true,
@@ -130,7 +138,7 @@
             "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
-            "combat": 0,
+            "combat": 1,
             "npc_task": 0,
             "item_task": 1
           },
@@ -145,6 +153,9 @@
             "jewelrycrafting": 5,
             "combat": 25,
             "npc_task": 1
+          },
+          "orderBoard": {
+            "enabled": true
           },
           "craftCollection": {
             "gearcrafting": true,
@@ -197,6 +208,9 @@
             "combat": 25,
             "npc_task": 1
           },
+          "orderBoard": {
+            "enabled": true
+          },
           "craftCollection": {
             "gearcrafting": true,
             "weaponcrafting": true,
@@ -247,6 +261,9 @@
             "jewelrycrafting": 5,
             "combat": 25,
             "npc_task": 1
+          },
+          "orderBoard": {
+            "enabled": true
           },
           "craftCollection": {
             "gearcrafting": true,
