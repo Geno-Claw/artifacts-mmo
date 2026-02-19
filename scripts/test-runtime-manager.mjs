@@ -1,10 +1,28 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   RuntimeOperationConflictError,
   createRuntimeManager,
 } from '../src/runtime-manager.mjs';
+import {
+  _resetOrderBoardForTests,
+  claimOrder,
+  createOrMergeOrder,
+  getOrderBoardSnapshot,
+  initializeOrderBoard,
+} from '../src/services/order-board.mjs';
+import {
+  _resetGearStateForTests,
+  _setDepsForTests as setGearStateDepsForTests,
+  getCharacterGearState,
+  initializeGearState,
+  refreshGearState,
+  registerContext,
+} from '../src/services/gear-state.mjs';
 
 const VALID_LIFECYCLE_STATES = new Set(['stopped', 'starting', 'running', 'stopping', 'error']);
 
@@ -69,6 +87,56 @@ function assertOperation(status, expectedName, label = 'runtime status') {
   assert.ok(status.operation && typeof status.operation === 'object', `${label}.operation must be an object`);
   assert.equal(status.operation.name, expectedName, `${label}.operation.name should be "${expectedName}"`);
   assert.equal(typeof status.operation.startedAtMs, 'number', `${label}.operation.startedAtMs must be a number`);
+}
+
+function mapLoadout(slots = {}) {
+  return new Map(Object.entries(slots).filter(([, code]) => !!code));
+}
+
+function makeGearCtx(name = 'Alpha', level = 10) {
+  const char = {
+    name,
+    level,
+    weapon_slot: 'none',
+    shield_slot: 'none',
+    helmet_slot: 'none',
+    body_armor_slot: 'none',
+    leg_armor_slot: 'none',
+    boots_slot: 'none',
+    ring1_slot: 'none',
+    ring2_slot: 'none',
+    amulet_slot: 'none',
+    utility1_slot: '',
+    utility1_slot_quantity: 0,
+    utility2_slot: '',
+    utility2_slot_quantity: 0,
+    inventory: [],
+  };
+
+  return {
+    name,
+    get() {
+      return char;
+    },
+    inventoryCapacity() {
+      return 30;
+    },
+    itemCount() {
+      return 0;
+    },
+  };
+}
+
+async function withIsolatedCwd(label, fn) {
+  const tempDir = mkdtempSync(join(tmpdir(), `${label}-`));
+  const originalCwd = process.cwd();
+  process.chdir(tempDir);
+  try {
+    await fn(tempDir);
+  } finally {
+    process.chdir(originalCwd);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function installDeterministicRuntimeStubs(manager) {
@@ -283,12 +351,149 @@ async function testOperationLockConflict(manager, controls) {
   assert.equal(manager.getStatus().operation, null, 'operation should clear after locked reload completes');
 }
 
+async function testRolloutHardClearRunsOnce() {
+  await withIsolatedCwd('runtime-rollout-test', async () => {
+    _resetOrderBoardForTests();
+    await initializeOrderBoard({ path: './report/order-board.json' });
+
+    const manager = createRuntimeManager();
+    createOrMergeOrder({
+      requesterName: 'Alpha',
+      recipeCode: 'gear_state:Alpha:iron_sword',
+      itemCode: 'iron_sword',
+      sourceType: 'craft',
+      sourceCode: 'iron_sword',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 10,
+      quantity: 1,
+    });
+    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'fixture should start with one active order');
+
+    manager._runOrderBoardRolloutResetIfNeeded();
+    assert.equal(getOrderBoardSnapshot().orders.length, 0, 'first rollout run should hard-clear board');
+    assert.equal(existsSync('./report/.order-board-v2-rollout'), true, 'rollout marker should be written');
+
+    createOrMergeOrder({
+      requesterName: 'Alpha',
+      recipeCode: 'gear_state:Alpha:iron_shield',
+      itemCode: 'iron_shield',
+      sourceType: 'craft',
+      sourceCode: 'iron_shield',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 10,
+      quantity: 1,
+    });
+    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'fixture should restore one order');
+
+    manager._runOrderBoardRolloutResetIfNeeded();
+    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'marker should prevent repeated hard-clear');
+
+    _resetOrderBoardForTests();
+  });
+}
+
+async function testCleanupFlushesGearStateAndReleasesClaims() {
+  await withIsolatedCwd('runtime-cleanup-test', async () => {
+    _resetOrderBoardForTests();
+    _resetGearStateForTests();
+
+    await initializeOrderBoard({ path: './report/order-board.json' });
+    const order = createOrMergeOrder({
+      requesterName: 'Alpha',
+      recipeCode: 'gear_state:Alpha:rare_blade',
+      itemCode: 'rare_blade',
+      sourceType: 'craft',
+      sourceCode: 'rare_blade',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 15,
+      quantity: 2,
+    });
+    claimOrder(order.id, { charName: 'Alpha', leaseMs: 120_000 });
+    assert.equal(getOrderBoardSnapshot().orders[0]?.status, 'claimed', 'fixture order should be claimed');
+
+    const gearCtx = makeGearCtx('Alpha', 12);
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem() {
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'starter_sword' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 1,
+    });
+
+    await initializeGearState({
+      path: './report/gear-state.json',
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+      }],
+    });
+    registerContext(gearCtx);
+    await refreshGearState({ force: true });
+    assert.ok(getCharacterGearState('Alpha'), 'gear-state fixture should initialize');
+
+    const manager = createRuntimeManager();
+    let unsubActionCalls = 0;
+    let unsubLogCalls = 0;
+
+    await manager._cleanupRun({
+      characterNames: ['Alpha'],
+      schedulerEntries: [{ name: 'Alpha' }],
+      unsubscribeActionEvents() {
+        unsubActionCalls += 1;
+      },
+      unsubscribeLogEvents() {
+        unsubLogCalls += 1;
+      },
+    });
+
+    const snapshot = getOrderBoardSnapshot();
+    assert.equal(snapshot.orders[0]?.status, 'open', 'cleanup should release claimed orders for active chars');
+    assert.equal(snapshot.orders[0]?.claim, null, 'cleanup should clear active claim payload');
+    assert.equal(unsubActionCalls, 1, 'cleanup should run action unsubscribe callback');
+    assert.equal(unsubLogCalls, 1, 'cleanup should run log unsubscribe callback');
+    assert.equal(existsSync('./report/gear-state.json'), true, 'cleanup should flush gear-state file');
+
+    const persisted = JSON.parse(readFileSync('./report/gear-state.json', 'utf-8'));
+    assert.equal(
+      persisted?.characters?.Alpha != null,
+      true,
+      'persisted gear-state should include tracked character payload',
+    );
+
+    _resetOrderBoardForTests();
+    _resetGearStateForTests();
+  });
+}
+
 async function run() {
   const manager = createRuntimeManager({ defaultStopTimeoutMs: 25 });
   const controls = installDeterministicRuntimeStubs(manager);
 
   await testLifecycleTransitions(manager, controls);
   await testOperationLockConflict(manager, controls);
+  await testRolloutHardClearRunsOnce();
+  await testCleanupFlushesGearStateAndReleasesClaims();
 
   console.log('test-runtime-manager: PASS');
 }

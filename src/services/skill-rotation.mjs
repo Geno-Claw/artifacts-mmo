@@ -58,7 +58,6 @@ export class SkillRotation {
       skills,
       goals = {},
       weights,
-      craftCollection = {},
       craftBlacklist = {},
       taskCollection = {},
       orderBoard = {},
@@ -78,7 +77,6 @@ export class SkillRotation {
       this.weights = null;
     }
     this.goals = { ...DEFAULT_GOALS, ...goals };
-    this.craftCollection = craftCollection;       // { skill: bool }
     this.craftBlacklist = craftBlacklist;          // { skill: string[] }
     this.taskCollection = taskCollection;          // { itemCode: targetQty } manual targets
     this.gameData = gameDataSvc;
@@ -103,7 +101,6 @@ export class SkillRotation {
     this._monsterLoc = null;    // { x, y } for combat
     this._combatLoadout = null; // optimal gear loadout for combat target
     this._bankChecked = false;  // whether bank withdrawal happened for current recipe
-    this._isCollection = false; // true when crafting a missing collection item
   }
 
   isGoalComplete() {
@@ -125,7 +122,7 @@ export class SkillRotation {
       const ok = await this._setupSkill(skill, ctx);
       if (ok) {
         this.currentSkill = skill;
-        this.goalTarget = this._isCollection ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+        this.goalTarget = this.goals[skill] || DEFAULT_GOALS[skill] || 50;
         this.goalProgress = 0;
         return skill;
       }
@@ -149,7 +146,7 @@ export class SkillRotation {
       const ok = await this._setupSkill(skill, ctx);
       if (ok) {
         this.currentSkill = skill;
-        this.goalTarget = this._isCollection ? 1 : (this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+        this.goalTarget = this.goals[skill] || DEFAULT_GOALS[skill] || 50;
         this.goalProgress = 0;
         return skill;
       }
@@ -172,7 +169,6 @@ export class SkillRotation {
   get combatLoadout() { return this._combatLoadout; }
   get bankChecked() { return this._bankChecked; }
   set bankChecked(v) { this._bankChecked = v; }
-  get isCollection() { return this._isCollection; }
 
   // --- Internal ---
 
@@ -186,7 +182,6 @@ export class SkillRotation {
     this._monsterLoc = null;
     this._combatLoadout = null;
     this._bankChecked = false;
-    this._isCollection = false;
   }
 
   _weightedShuffle(skills) {
@@ -247,64 +242,8 @@ export class SkillRotation {
 
   async _setupCrafting(skill, ctx) {
     const level = ctx.skillLevel(skill);
-
-    // Tier 1: Collection — craft 1 of each missing item
-    if (this.craftCollection[skill]) {
-      const result = await this._setupCollectionCraft(skill, level, ctx);
-      if (result) return true;
-    }
-
-    // Tier 2: XP grinding
+    // Crafting mode now always targets XP/throughput recipes.
     return this._setupXpGrind(skill, level, ctx);
-  }
-
-  /**
-   * Tier 1: Find a craftable item missing from bank and set up crafting it.
-   * Picks highest craft.level first for maximum XP while filling the collection.
-   * Skips blacklisted items and items with unfulfillable bank-only dependencies.
-   */
-  async _setupCollectionCraft(skill, level, ctx) {
-    const recipes = this.gameData.findItems({ craftSkill: skill, maxLevel: level });
-    if (recipes.length === 0) return false;
-
-    const bank = await this.gameData.getBankItems();
-    const blacklist = new Set(this.craftBlacklist[skill] || []);
-
-    // Items missing from bank, sorted by craft level DESC
-    const missing = recipes
-      .filter(item => {
-        if (blacklist.has(item.code)) return false;
-        return (bank.get(item.code) || 0) === 0;
-      })
-      .sort((a, b) => b.craft.level - a.craft.level);
-
-    const candidates = [];
-    for (const item of missing) {
-      const candidate = this._buildCraftCandidate(item, ctx, bank);
-      if (!candidate) continue;
-      candidates.push(candidate);
-    }
-    if (candidates.length === 0) return false;
-
-    // Verify combat viability for candidates that need monster drops
-    const verified = await this._verifyCombatViability(candidates, ctx);
-    if (verified.length === 0) return false;
-
-    verified.sort((a, b) => b.recipe.craft.level - a.recipe.craft.level);
-
-    const bankOnlyCandidates = verified.filter(c => c.bankOnly);
-    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : verified;
-    const best = pool[0];
-
-    this._recipe = best.recipe;
-    this._isCollection = true;
-    this._productionPlan = best.plan;
-    this._planStepProgress = new Map();
-    this._bankChecked = false;
-
-    const bankFirstTag = bankOnlyCandidates.length > 0 ? ', bank-first' : '';
-    log.info(`[${ctx.name}] Rotation: ${skill} → COLLECT ${best.recipe.code} (lv${best.recipe.craft.level}, ${best.plan.length} steps${bankFirstTag})`);
-    return true;
   }
 
   /**
@@ -344,7 +283,6 @@ export class SkillRotation {
 
     const best = pool[0];
     this._recipe = best.recipe;
-    this._isCollection = false;
     this._productionPlan = best.plan;
     this._planStepProgress = new Map();
     this._bankChecked = false;

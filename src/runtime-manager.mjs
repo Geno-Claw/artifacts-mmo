@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { Scheduler } from './scheduler.mjs';
 import { CharacterContext } from './context.mjs';
 import { buildRoutines } from './routines/factory.mjs';
@@ -7,15 +8,24 @@ import { initialize as initGameData } from './services/game-data.mjs';
 import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
 import {
+  clearOrderBoard,
   flushOrderBoard,
   initializeOrderBoard,
   releaseClaimsForChars,
 } from './services/order-board.mjs';
+import {
+  flushGearState,
+  initializeGearState,
+  refreshGearState,
+  registerContext,
+  unregisterContext,
+} from './services/gear-state.mjs';
 import { createCharacter, subscribeActionEvents } from './api.mjs';
 import { initializeUiState, recordCooldown, recordLog } from './services/ui-state.mjs';
 
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
+const ORDER_BOARD_ROLLOUT_MARKER = './report/.order-board-v2-rollout';
 
 function toPositiveInt(value, fallback) {
   const num = Number(value);
@@ -227,6 +237,7 @@ export class RuntimeManager {
       runId: ++this.runSeq,
       configPath,
       characterNames: configuredNames,
+      characterConfigs: config.characters,
       schedulerEntries: [],
       loopPromises: [],
       unsubscribeLogEvents,
@@ -255,7 +266,23 @@ export class RuntimeManager {
     const char = ctx.get();
     log.info(`[${char.name}] Lv${char.level} | ${char.hp}/${char.max_hp} HP | ${char.gold}g | (${char.x},${char.y})`);
 
-    return new Scheduler(ctx, routines);
+    return {
+      scheduler: new Scheduler(ctx, routines),
+      ctx,
+    };
+  }
+
+  _runOrderBoardRolloutResetIfNeeded() {
+    if (existsSync(ORDER_BOARD_ROLLOUT_MARKER)) return;
+
+    clearOrderBoard('rollout_v2_hard_clear');
+    mkdirSync(dirname(ORDER_BOARD_ROLLOUT_MARKER), { recursive: true });
+    writeFileSync(
+      ORDER_BOARD_ROLLOUT_MARKER,
+      `${JSON.stringify({ clearedAtMs: Date.now() }, null, 2)}\n`,
+      'utf-8',
+    );
+    log.info('[Runtime] Order-board rollout hard-clear completed');
   }
 
   _handleSchedulerFailure(runId, charName, err) {
@@ -282,6 +309,16 @@ export class RuntimeManager {
       await flushOrderBoard();
     } catch (err) {
       log.warn(`[Runtime] Could not flush order board during cleanup: ${err?.message || String(err)}`);
+    }
+
+    try {
+      await flushGearState();
+    } catch (err) {
+      log.warn(`[Runtime] Could not flush gear-state during cleanup: ${err?.message || String(err)}`);
+    }
+
+    for (const entry of run.schedulerEntries) {
+      unregisterContext(entry.name);
     }
 
     if (typeof run.unsubscribeActionEvents === 'function') {
@@ -327,15 +364,21 @@ export class RuntimeManager {
       await initGameData();
       await initInventoryManager();
       await initializeOrderBoard();
+      this._runOrderBoardRolloutResetIfNeeded();
+      await initializeGearState({ characters: config.characters });
       loadSellRules();
 
       for (const charCfg of config.characters) {
-        const scheduler = await this._createScheduler(charCfg);
+        const { scheduler, ctx } = await this._createScheduler(charCfg);
+        registerContext(ctx);
         run.schedulerEntries.push({
           name: charCfg.name,
           scheduler,
+          ctx,
         });
       }
+
+      await refreshGearState({ force: true });
 
       run.loopPromises = run.schedulerEntries.map((entry) => {
         return entry.scheduler.run().catch((err) => {

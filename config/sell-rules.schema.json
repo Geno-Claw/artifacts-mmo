@@ -10,13 +10,7 @@
     "sellDuplicateEquipment": {
       "type": "boolean",
       "default": true,
-      "description": "Recycle surplus equipment at workshops (keeps 'keepPerEquipmentCode' copies of each). Materials returned to bank."
-    },
-    "keepPerEquipmentCode": {
-      "type": "integer",
-      "default": 1,
-      "minimum": 0,
-      "description": "Number of copies to keep per equipment item code before selling extras"
+      "description": "Recycle unclaimed equipment/jewelry at workshops. Claimed gear-state ownership is protected automatically."
     },
 
     "alwaysSell": {

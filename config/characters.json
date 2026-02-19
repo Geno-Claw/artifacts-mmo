@@ -48,12 +48,6 @@
             "createOrders": true,
             "fulfillOrders": false
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {},
           "taskCollection": {}
         }
@@ -126,12 +120,6 @@
           "orderBoard": {
             "enabled": true
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {},
           "taskCollection": {}
         }
@@ -203,12 +191,6 @@
           "orderBoard": {
             "enabled": true
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {}
         }
       ],
@@ -279,12 +261,6 @@
           "orderBoard": {
             "enabled": true
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {}
         }
       ],
@@ -354,12 +330,6 @@
           },
           "orderBoard": {
             "enabled": true
-          },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
           },
           "craftBlacklist": {}
         }

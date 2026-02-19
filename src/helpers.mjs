@@ -16,6 +16,7 @@ import {
   withdrawBankItem,
   withdrawBankItems,
 } from './services/bank-ops.mjs';
+import { getOwnedKeepByCodeForInventory } from './services/gear-state.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
 export async function moveTo(ctx, x, y) {
@@ -458,8 +459,33 @@ export async function withdrawItem(ctx, code, quantity = 1, opts = {}) {
 }
 
 /** Move to bank and deposit all inventory items. */
-export async function depositAll(ctx) {
-  await depositAllInventory(ctx, { reason: 'helper depositAll' });
+export async function depositAll(ctx, opts = {}) {
+  await depositAllInventory(ctx, {
+    reason: opts.reason || 'helper depositAll',
+    keepByCode: opts.keepByCode || {},
+  });
+}
+
+function buildDepositRowsRespectingKeep(ctx, codes, keepByCode = {}) {
+  const keepRemaining = new Map(
+    Object.entries(keepByCode || {})
+      .map(([code, qty]) => [code, Math.max(0, Number(qty) || 0)]),
+  );
+  const uniqueCodes = [...new Set((Array.isArray(codes) ? codes : []).filter(Boolean))];
+  const rows = [];
+
+  for (const code of uniqueCodes) {
+    const qty = Math.max(0, Number(ctx.itemCount(code)) || 0);
+    if (qty <= 0) continue;
+
+    const keep = keepRemaining.get(code) || 0;
+    const depositQty = Math.max(0, qty - keep);
+    keepRemaining.set(code, Math.max(0, keep - qty));
+    if (depositQty <= 0) continue;
+    rows.push({ code, quantity: depositQty });
+  }
+
+  return rows;
 }
 
 // --- Combat gear optimization ---
@@ -532,7 +558,7 @@ export async function equipForCombat(ctx, monsterCode) {
     // Ensure inventory space for swaps
     const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
     if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
-      await depositAll(ctx);
+      await depositAll(ctx, { keepByCode: getOwnedKeepByCodeForInventory(ctx) });
     }
 
     const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
@@ -591,11 +617,14 @@ export async function equipForCombat(ctx, monsterCode) {
       .filter(code => ctx.hasItem(code));
 
     if (unequippedCodes.length > 0) {
-      const items = unequippedCodes.map(code => ({ code, quantity: ctx.itemCount(code) }));
-      try {
-        await depositBankItems(ctx, items, { reason: 'combat gear cleanup deposit' });
-      } catch (err) {
-        log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+      const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+      const items = buildDepositRowsRespectingKeep(ctx, unequippedCodes, keepByCode);
+      if (items.length > 0) {
+        try {
+          await depositBankItems(ctx, items, { reason: 'combat gear cleanup deposit' });
+        } catch (err) {
+          log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+        }
       }
     }
   }
@@ -687,7 +716,7 @@ export async function equipForGathering(ctx, skill) {
   if (bankNeeded.size > 0) {
     const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
     if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
-      await depositAll(ctx);
+      await depositAll(ctx, { keepByCode: getOwnedKeepByCodeForInventory(ctx) });
     }
 
     const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
@@ -744,11 +773,14 @@ export async function equipForGathering(ctx, skill) {
       .filter(code => ctx.hasItem(code));
 
     if (unequippedCodes.length > 0) {
-      const items = unequippedCodes.map(code => ({ code, quantity: ctx.itemCount(code) }));
-      try {
-        await depositBankItems(ctx, items, { reason: 'gathering gear cleanup deposit' });
-      } catch (err) {
-        log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+      const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+      const items = buildDepositRowsRespectingKeep(ctx, unequippedCodes, keepByCode);
+      if (items.length > 0) {
+        try {
+          await depositBankItems(ctx, items, { reason: 'gathering gear cleanup deposit' });
+        } catch (err) {
+          log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+        }
       }
     }
   }

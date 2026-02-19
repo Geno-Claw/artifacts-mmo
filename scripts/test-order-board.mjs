@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   _resetOrderBoardForTests,
   claimOrder,
+  clearOrderBoard,
   createOrMergeOrder,
   flushOrderBoard,
   getOrderBoardSnapshot,
@@ -39,7 +40,7 @@ async function run() {
     assert.equal(first.requestedQty, 3);
     assert.equal(first.remainingQty, 3);
 
-    // Duplicate contribution from same requester+recipe should not inflate demand.
+    // Duplicate contribution from same requester+recipe grows only when quantity increases.
     const duplicate = createOrMergeOrder({
       requesterName: 'CrafterA',
       recipeCode: 'bronze_sword',
@@ -50,8 +51,8 @@ async function run() {
       sourceLevel: 10,
       quantity: 7,
     });
-    assert.equal(duplicate.requestedQty, 3);
-    assert.equal(duplicate.remainingQty, 3);
+    assert.equal(duplicate.requestedQty, 7);
+    assert.equal(duplicate.remainingQty, 7);
 
     const merged = createOrMergeOrder({
       requesterName: 'CrafterB',
@@ -64,8 +65,8 @@ async function run() {
       quantity: 2,
     });
     assert.equal(merged.id, first.id, 'order should merge by source+item key');
-    assert.equal(merged.requestedQty, 5, 'merged order should increase requested qty');
-    assert.equal(merged.remainingQty, 5, 'merged order should increase remaining qty');
+    assert.equal(merged.requestedQty, 9, 'merged order should increase requested qty');
+    assert.equal(merged.remainingQty, 9, 'merged order should increase remaining qty');
 
     const claimableForMiner = listClaimableOrders({
       sourceType: 'gather',
@@ -101,7 +102,7 @@ async function run() {
 
     let snapshot = getOrderBoardSnapshot();
     let order = snapshot.orders.find(row => row.id === first.id);
-    assert.equal(order.remainingQty, 3, 'remaining qty should decrease only by deposited amount');
+    assert.equal(order.remainingQty, 7, 'remaining qty should decrease only by deposited amount');
     assert.equal(order.status, 'claimed');
 
     markCharBlocked(first.id, { charName: 'WorkerA', blockedRetryMs: 2_000 });
@@ -128,6 +129,33 @@ async function run() {
 
     const noneClaimable = listClaimableOrders({ sourceType: 'gather', gatherSkill: 'mining', charName: 'WorkerB' });
     assert.equal(noneClaimable.length, 0, 'fulfilled order should not be claimable');
+
+    const craftOrder = createOrMergeOrder({
+      requesterName: 'GenoClaw1',
+      recipeCode: 'gear_state:GenoClaw1:iron_shield',
+      itemCode: 'iron_shield',
+      sourceType: 'craft',
+      sourceCode: 'iron_shield',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 15,
+      quantity: 2,
+    });
+    assert.ok(craftOrder, 'craft order should be created');
+    const craftClaimable = listClaimableOrders({
+      sourceType: 'craft',
+      craftSkill: 'gearcrafting',
+      charName: 'CrafterX',
+    });
+    assert.equal(craftClaimable.length, 1, 'craft order should be claimable by matching craft skill');
+    assert.equal(craftClaimable[0].craftSkill, 'gearcrafting');
+
+    const claimedCraft = claimOrder(craftOrder.id, { charName: 'CrafterX', leaseMs: 2_000 });
+    assert.ok(claimedCraft, 'craft order should be claimable');
+    const craftProgress = recordDeposits({
+      charName: 'CrafterX',
+      items: [{ code: 'iron_shield', quantity: 1 }],
+    });
+    assert.equal(craftProgress.length, 1, 'craft order should progress from deposits');
 
     await flushOrderBoard();
 
@@ -169,6 +197,10 @@ async function run() {
     assert.ok(staleOrder, 'stale persisted order should load');
     assert.equal(staleOrder.status, 'open', 'expired persisted claim should be reopened');
     assert.equal(staleOrder.claim, null, 'expired persisted claim should be cleared');
+
+    const cleared = clearOrderBoard('test_clear');
+    assert.equal(cleared.cleared >= 1, true, 'clearOrderBoard should clear active rows');
+    assert.equal(getOrderBoardSnapshot().orders.length, 0, 'board should be empty after clear');
 
     console.log('test-order-board: PASS');
   } finally {

@@ -472,6 +472,27 @@ async function run() {
   assert.equal(bankCount('copper_ore'), 3, 'depositAllInventory should deposit copper_ore');
   assert.equal(bankCount('tin_ore'), 1, 'depositAllInventory should deposit tin_ore');
 
+  // 9b) depositAllInventory should respect keepByCode and keep claimed inventory on character.
+  await resetHarness();
+  setBank([]);
+  await getBankItems(true);
+  const ctx8b = makeCtx('H2', {
+    startX: BANK.x,
+    startY: BANK.y,
+    inventory: [
+      { code: 'iron_sword', quantity: 1 },
+      { code: 'copper_ore', quantity: 4 },
+    ],
+  });
+  await depositAllInventory(ctx8b, {
+    reason: 'test deposit all with keep',
+    keepByCode: { iron_sword: 1, copper_ore: 1 },
+  });
+  assert.equal(bankCount('iron_sword'), 0, 'kept owned gear should remain on character');
+  assert.equal(bankCount('copper_ore'), 3, 'deposit should keep configured carry quantity');
+  assert.equal(state.inventorySlotsByChar.H2.find(row => row.code === 'iron_sword')?.quantity || 0, 1, 'kept gear should stay in inventory');
+  assert.equal(state.inventorySlotsByChar.H2.find(row => row.code === 'copper_ore')?.quantity || 0, 1, 'kept quantity should remain in inventory');
+
   // 10) Off-bank gold withdraw/deposit auto-moves to bank.
   await resetHarness();
   setBank([]);

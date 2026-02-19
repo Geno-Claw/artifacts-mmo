@@ -1,170 +1,239 @@
 {
   "version": 1,
-  "updatedAtMs": 1771529259983,
+  "updatedAtMs": 1771533920217,
   "orders": [
     {
-      "id": "d690dc39-3eeb-4cf3-bd0e-19ba41463a21",
-      "mergeKey": "gather:gold_rocks:gold_ore",
-      "itemCode": "gold_ore",
+      "id": "b5c004e3-e5e5-4fb7-91ae-11ae5619a1c2",
+      "mergeKey": "gather:shrimp_spot:shrimp",
+      "itemCode": "shrimp",
       "sourceType": "gather",
-      "sourceCode": "gold_rocks",
-      "gatherSkill": "mining",
-      "sourceLevel": 30,
-      "requestedQty": 8,
-      "remainingQty": 8,
+      "sourceCode": "shrimp_spot",
+      "gatherSkill": "fishing",
+      "craftSkill": null,
+      "sourceLevel": 10,
+      "requestedQty": 2,
+      "remainingQty": 2,
       "status": "open",
       "requesters": [
-        "GenoClaw2"
+        "GenoDev2",
+        "GenoDev3"
       ],
       "recipes": [
-        "antidote"
+        "cooked_shrimp"
       ],
       "contributions": {
-        "GenoClaw2::antidote": 8
+        "GenoDev2::cooked_shrimp": 1,
+        "GenoDev3::cooked_shrimp": 1
       },
       "claim": null,
       "blockedByChar": {
-        "GenoClaw5": 1771529283727,
-        "GenoClaw4": 1771529423860
+        "GenoDev3": 1771533967751
       },
-      "createdAtMs": 1771528628973,
-      "updatedAtMs": 1771528823860,
+      "createdAtMs": 1771533004795,
+      "updatedAtMs": 1771533841277,
       "fulfilledAtMs": null
     },
     {
-      "id": "688db73c-573d-4b13-b5da-9936d203586b",
-      "mergeKey": "gather:glowstem:glowstem_leaf",
-      "itemCode": "glowstem_leaf",
-      "sourceType": "gather",
-      "sourceCode": "glowstem",
-      "gatherSkill": "alchemy",
-      "sourceLevel": 40,
-      "requestedQty": 1,
-      "remainingQty": 1,
-      "status": "open",
-      "requesters": [
-        "GenoClaw2"
-      ],
-      "recipes": [
-        "antidote"
-      ],
-      "contributions": {
-        "GenoClaw2::antidote": 1
-      },
-      "claim": null,
-      "blockedByChar": {},
-      "createdAtMs": 1771528628974,
-      "updatedAtMs": 1771528696173,
-      "fulfilledAtMs": null
-    },
-    {
-      "id": "b2a1c17a-1321-4e02-88d6-1bb8735a6846",
-      "mergeKey": "gather:maple_tree:maple_sap",
-      "itemCode": "maple_sap",
-      "sourceType": "gather",
-      "sourceCode": "maple_tree",
-      "gatherSkill": "woodcutting",
-      "sourceLevel": 40,
-      "requestedQty": 1,
-      "remainingQty": 1,
-      "status": "open",
-      "requesters": [
-        "GenoClaw2"
-      ],
-      "recipes": [
-        "antidote"
-      ],
-      "contributions": {
-        "GenoClaw2::antidote": 1
-      },
-      "claim": null,
-      "blockedByChar": {},
-      "createdAtMs": 1771528628974,
-      "updatedAtMs": 1771528696173,
-      "fulfilledAtMs": null
-    },
-    {
-      "id": "c8dadb1b-fc1e-468c-85d5-8b5790d92342",
-      "mergeKey": "gather:strange_rocks:strange_ore",
-      "itemCode": "strange_ore",
-      "sourceType": "gather",
-      "sourceCode": "strange_rocks",
-      "gatherSkill": "mining",
-      "sourceLevel": 35,
-      "requestedQty": 12,
-      "remainingQty": 12,
-      "status": "open",
-      "requesters": [
-        "GenoClaw2"
-      ],
-      "recipes": [
-        "antidote"
-      ],
-      "contributions": {
-        "GenoClaw2::antidote": 12
-      },
-      "claim": null,
-      "blockedByChar": {},
-      "createdAtMs": 1771528628974,
-      "updatedAtMs": 1771529259983,
-      "fulfilledAtMs": null
-    },
-    {
-      "id": "18296543-9712-4829-9dd4-45b933282125",
-      "mergeKey": "fight:mushmush:mushroom",
-      "itemCode": "mushroom",
+      "id": "8a91c0c5-cd74-4f0b-9239-c986d04d885a",
+      "mergeKey": "fight:cow:milk_bucket",
+      "itemCode": "milk_bucket",
       "sourceType": "fight",
-      "sourceCode": "mushmush",
+      "sourceCode": "cow",
       "gatherSkill": null,
-      "sourceLevel": 10,
-      "requestedQty": 4,
-      "remainingQty": 4,
+      "craftSkill": null,
+      "sourceLevel": 8,
+      "requestedQty": 2,
+      "remainingQty": 2,
       "status": "open",
       "requesters": [
-        "GenoClaw5"
+        "GenoDev2",
+        "GenoDev3"
       ],
       "recipes": [
-        "adventurer_helmet"
+        "cheese"
       ],
       "contributions": {
-        "GenoClaw5::adventurer_helmet": 4
+        "GenoDev2::cheese": 1,
+        "GenoDev3::cheese": 1
       },
       "claim": null,
       "blockedByChar": {},
-      "createdAtMs": 1771528655348,
-      "updatedAtMs": 1771528655348,
+      "createdAtMs": 1771533004796,
+      "updatedAtMs": 1771533841278,
       "fulfilledAtMs": null
     },
     {
-      "id": "c8795ca9-f1ba-4c5f-b63c-a5e0dc96abc5",
+      "id": "e1c365ce-ebb3-41ae-96eb-92f3a2559e01",
+      "mergeKey": "fight:cow:raw_beef",
+      "itemCode": "raw_beef",
+      "sourceType": "fight",
+      "sourceCode": "cow",
+      "gatherSkill": null,
+      "craftSkill": null,
+      "sourceLevel": 8,
+      "requestedQty": 2,
+      "remainingQty": 2,
+      "status": "open",
+      "requesters": [
+        "GenoDev2",
+        "GenoDev3"
+      ],
+      "recipes": [
+        "cooked_beef"
+      ],
+      "contributions": {
+        "GenoDev2::cooked_beef": 1,
+        "GenoDev3::cooked_beef": 1
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771533004796,
+      "updatedAtMs": 1771533841278,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "f9f1f436-759d-43e0-87c5-d3459b05ff27",
       "mergeKey": "fight:sheep:wool",
       "itemCode": "wool",
       "sourceType": "fight",
       "sourceCode": "sheep",
       "gatherSkill": null,
+      "craftSkill": null,
       "sourceLevel": 5,
-      "requestedQty": 10,
-      "remainingQty": 10,
+      "requestedQty": 2,
+      "remainingQty": 2,
       "status": "open",
       "requesters": [
-        "GenoClaw5"
+        "GenoDev5"
       ],
       "recipes": [
-        "adventurer_vest",
-        "iron_helm",
-        "iron_shield",
         "copper_armor"
       ],
       "contributions": {
-        "GenoClaw5::adventurer_vest": 2,
-        "GenoClaw5::iron_helm": 3,
-        "GenoClaw5::iron_shield": 3,
-        "GenoClaw5::copper_armor": 2
+        "GenoDev5::copper_armor": 2
       },
       "claim": null,
       "blockedByChar": {},
-      "createdAtMs": 1771528655350,
-      "updatedAtMs": 1771528655353,
+      "createdAtMs": 1771533017925,
+      "updatedAtMs": 1771533920217,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "18d86e81-be58-4572-a356-9efe2b44aab0",
+      "mergeKey": "fight:red_slime:red_slimeball",
+      "itemCode": "red_slimeball",
+      "sourceType": "fight",
+      "sourceCode": "red_slime",
+      "gatherSkill": null,
+      "craftSkill": null,
+      "sourceLevel": 7,
+      "requestedQty": 3,
+      "remainingQty": 3,
+      "status": "open",
+      "requesters": [
+        "GenoDev4",
+        "GenoDev"
+      ],
+      "recipes": [
+        "fire_staff",
+        "fire_boost_potion"
+      ],
+      "contributions": {
+        "GenoDev4::fire_staff": 2,
+        "GenoDev::fire_boost_potion": 1
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771533071198,
+      "updatedAtMs": 1771533907575,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "094e4101-5734-433b-b03c-09018704d19d",
+      "mergeKey": "fight:blue_slime:blue_slimeball",
+      "itemCode": "blue_slimeball",
+      "sourceType": "fight",
+      "sourceCode": "blue_slime",
+      "gatherSkill": null,
+      "craftSkill": null,
+      "sourceLevel": 6,
+      "requestedQty": 3,
+      "remainingQty": 3,
+      "status": "open",
+      "requesters": [
+        "GenoDev4",
+        "GenoDev"
+      ],
+      "recipes": [
+        "water_bow",
+        "water_boost_potion"
+      ],
+      "contributions": {
+        "GenoDev4::water_bow": 2,
+        "GenoDev::water_boost_potion": 1
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771533071199,
+      "updatedAtMs": 1771533907576,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "7a009d6d-be4c-4294-8b8f-f60064290383",
+      "mergeKey": "fight:yellow_slime:yellow_slimeball",
+      "itemCode": "yellow_slimeball",
+      "sourceType": "fight",
+      "sourceCode": "yellow_slime",
+      "gatherSkill": null,
+      "craftSkill": null,
+      "sourceLevel": 2,
+      "requestedQty": 2,
+      "remainingQty": 2,
+      "status": "open",
+      "requesters": [
+        "GenoDev4"
+      ],
+      "recipes": [
+        "sticky_sword"
+      ],
+      "contributions": {
+        "GenoDev4::sticky_sword": 2
+      },
+      "claim": null,
+      "blockedByChar": {
+        "GenoDev2": 1771534507142
+      },
+      "createdAtMs": 1771533071199,
+      "updatedAtMs": 1771533907142,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "81320ae4-d170-41a7-bebd-49f9fd5cffc8",
+      "mergeKey": "fight:green_slime:green_slimeball",
+      "itemCode": "green_slimeball",
+      "sourceType": "fight",
+      "sourceCode": "green_slime",
+      "gatherSkill": null,
+      "craftSkill": null,
+      "sourceLevel": 4,
+      "requestedQty": 2,
+      "remainingQty": 2,
+      "status": "open",
+      "requesters": [
+        "GenoDev4"
+      ],
+      "recipes": [
+        "sticky_dagger"
+      ],
+      "contributions": {
+        "GenoDev4::sticky_dagger": 2
+      },
+      "claim": null,
+      "blockedByChar": {
+        "GenoDev2": 1771534519108
+      },
+      "createdAtMs": 1771533071199,
+      "updatedAtMs": 1771533919108,
       "fulfilledAtMs": null
     }
   ]

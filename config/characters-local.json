@@ -11,7 +11,7 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0,
+          "threshold": 0.9,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -47,12 +47,6 @@
             "createOrders": true,
             "fulfillOrders": false
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {},
           "taskCollection": {}
         }
@@ -78,12 +72,12 @@
             "mining": 0,
             "woodcutting": 0,
             "fishing": 0,
-            "cooking": 2,
+            "cooking": 0,
             "alchemy": 0,
             "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
-            "combat": 0,
+            "combat": 1,
             "npc_task": 0,
             "item_task": 0
           },
@@ -102,12 +96,6 @@
           "orderBoard": {
             "enabled": true
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {},
           "taskCollection": {}
         }
@@ -123,7 +111,7 @@
         },
         {
           "type": "depositBank",
-          "threshold": 0,
+          "threshold": 0.9,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -156,12 +144,6 @@
           },
           "orderBoard": {
             "enabled": true
-          },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
           },
           "craftBlacklist": {}
         }
@@ -211,12 +193,6 @@
           "orderBoard": {
             "enabled": true
           },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
-          },
           "craftBlacklist": {}
         }
       ]
@@ -264,12 +240,6 @@
           },
           "orderBoard": {
             "enabled": true
-          },
-          "craftCollection": {
-            "gearcrafting": true,
-            "weaponcrafting": true,
-            "jewelrycrafting": true,
-            "alchemy": true
           },
           "craftBlacklist": {}
         }

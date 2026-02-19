@@ -77,6 +77,19 @@ function normalizeRequests(requests = []) {
   return order.map(code => ({ code, requested: totals.get(code) }));
 }
 
+function normalizeKeepByCode(keepByCode = {}) {
+  if (!keepByCode || typeof keepByCode !== 'object') return new Map();
+  const out = new Map();
+
+  for (const [code, rawQty] of Object.entries(keepByCode)) {
+    const qty = toPositiveInt(rawQty);
+    if (!code || qty <= 0) continue;
+    out.set(code, qty);
+  }
+
+  return out;
+}
+
 function buildPlan(ctx, normalized, mode) {
   const plan = [];
   const skipped = [];
@@ -543,9 +556,23 @@ export async function depositBankItems(ctx, items, opts = {}) {
  * Returns normalized deposited rows.
  */
 export async function depositAllInventory(ctx, opts = {}) {
-  const items = ctx.get().inventory
-    .filter(slot => slot.code)
-    .map(slot => ({ code: slot.code, quantity: slot.quantity }));
+  const keep = normalizeKeepByCode(opts.keepByCode);
+  const keepRemainder = new Map(keep);
+
+  const items = [];
+  for (const slot of ctx.get().inventory) {
+    const code = slot?.code;
+    const quantity = toPositiveInt(slot?.quantity);
+    if (!code || quantity <= 0) continue;
+
+    const keepQty = keepRemainder.get(code) || 0;
+    const depositQty = Math.max(0, quantity - keepQty);
+    const nextKeep = Math.max(0, keepQty - quantity);
+    keepRemainder.set(code, nextKeep);
+
+    if (depositQty > 0) items.push({ code, quantity: depositQty });
+  }
+
   if (items.length === 0) return [];
 
   log.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`);

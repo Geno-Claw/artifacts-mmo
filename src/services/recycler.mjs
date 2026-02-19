@@ -7,6 +7,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { bankCount, globalCount } from './inventory-manager.mjs';
+import { getClaimedTotal } from './gear-state.mjs';
 import {
   depositBankItems,
   withdrawBankItems,
@@ -14,44 +15,59 @@ import {
 import { getSellRules } from './ge-seller.mjs';
 import { moveTo } from '../helpers.mjs';
 
+const TARGET_BANK_UNIQUE_SLOTS = 45;
+const MAX_RECYCLE_PASSES = 6;
+
+let _deps = {
+  gameDataSvc: gameData,
+  getSellRulesFn: getSellRules,
+  getClaimedTotalFn: getClaimedTotal,
+  globalCountFn: globalCount,
+  bankCountFn: bankCount,
+  withdrawBankItemsFn: withdrawBankItems,
+  depositBankItemsFn: depositBankItems,
+  moveToFn: moveTo,
+  recycleFn: (code, qty, name) => api.recycle(code, qty, name),
+  waitForCooldownFn: (result) => api.waitForCooldown(result),
+};
+
 // --- Analysis ---
 
 /**
  * Determine which equipment to recycle from bank contents.
  * Only considers equipment with a craft skill (recyclable at a workshop).
- * Respects neverSell, keepPerEquipmentCode, and ring x2 multiplier.
+ * Respects neverSell and per-character owned item claims.
  *
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {Map<string, number>} bankItems - code -> quantity
  * @returns {Array<{ code: string, quantity: number, reason: string, craftSkill: string }>}
  */
 export function analyzeRecycleCandidates(ctx, bankItems) {
-  const sellRules = getSellRules();
+  const sellRules = _deps.getSellRulesFn();
   if (!sellRules?.sellDuplicateEquipment) return [];
 
   const candidates = [];
   const neverSellSet = new Set(sellRules.neverSell || []);
-  const baseKeep = sellRules.keepPerEquipmentCode ?? 1;
 
   for (const [code, bankQty] of bankItems.entries()) {
     if (neverSellSet.has(code)) continue;
 
-    const item = gameData.getItem(code);
-    if (!item || !gameData.isEquipmentType(item)) continue;
+    const item = _deps.gameDataSvc.getItem(code);
+    if (!item || !_deps.gameDataSvc.isEquipmentType(item)) continue;
 
     // Must have craft property to be recyclable
     if (!item.craft?.skill) continue;
 
-    const keep = item.type === 'ring' ? baseKeep * 2 : baseKeep;
-    const totalOwned = globalCount(code);
+    const keep = _deps.getClaimedTotalFn(code);
+    const totalOwned = _deps.globalCountFn(code);
     const surplus = totalOwned - keep;
-    const qty = Math.min(Math.max(surplus, 0), bankCount(code));
+    const qty = Math.min(Math.max(surplus, 0), _deps.bankCountFn(code));
     if (qty <= 0) continue;
 
     candidates.push({
       code,
       quantity: qty,
-      reason: `duplicate equipment (owned: ${totalOwned}, bank: ${bankQty}, keeping ${keep}${item.type === 'ring' ? ' (ring x2)' : ''})`,
+      reason: `unclaimed equipment/jewelry (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${keep})`,
       craftSkill: item.craft.skill,
     });
   }
@@ -69,36 +85,48 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
  * @returns {Promise<number>} Number of item types successfully recycled
  */
 export async function executeRecycleFlow(ctx) {
-  const workshops = await gameData.getWorkshops();
-
-  // Force-refresh bank before evaluating recycler candidates.
-  const bankItems = await gameData.getBankItems(true);
-
-  const candidates = analyzeRecycleCandidates(ctx, bankItems);
-  if (candidates.length === 0) {
-    log.info(`[${ctx.name}] Recycle: no equipment to recycle`);
-    return 0;
-  }
-
-  log.info(`[${ctx.name}] Recycle: ${candidates.length} item(s) to recycle: ${candidates.map(c => `${c.code} x${c.quantity}`).join(', ')}`);
-
-  // Group by craft skill for efficient workshop travel
-  const groups = new Map();
-  for (const candidate of candidates) {
-    const skill = candidate.craftSkill;
-    if (!workshops[skill]) {
-      log.warn(`[${ctx.name}] Recycle: no workshop found for ${skill}, skipping ${candidate.code}`);
-      continue;
-    }
-    if (!groups.has(skill)) groups.set(skill, []);
-    groups.get(skill).push(candidate);
-  }
-
+  const workshops = await _deps.gameDataSvc.getWorkshops();
   let totalRecycled = 0;
 
-  for (const [skill, items] of groups) {
-    const workshop = workshops[skill];
-    totalRecycled += await _recycleGroup(ctx, skill, workshop, items);
+  for (let pass = 1; pass <= MAX_RECYCLE_PASSES; pass++) {
+    const bankItems = await _deps.gameDataSvc.getBankItems(true);
+    const bankUniqueCount = bankItems.size;
+    const pressure = bankUniqueCount > TARGET_BANK_UNIQUE_SLOTS;
+    const candidates = analyzeRecycleCandidates(ctx, bankItems);
+
+    if (candidates.length === 0) {
+      if (pass === 1) {
+        log.info(`[${ctx.name}] Recycle: no unclaimed equipment/jewelry to recycle`);
+      }
+      break;
+    }
+
+    log.info(
+      `[${ctx.name}] Recycle pass ${pass}: ${candidates.length} item(s)` +
+      ` (bank unique: ${bankUniqueCount}${pressure ? ` > ${TARGET_BANK_UNIQUE_SLOTS}` : ''})`,
+    );
+
+    // Group by craft skill for efficient workshop travel
+    const groups = new Map();
+    for (const candidate of candidates) {
+      const skill = candidate.craftSkill;
+      if (!workshops[skill]) {
+        log.warn(`[${ctx.name}] Recycle: no workshop found for ${skill}, skipping ${candidate.code}`);
+        continue;
+      }
+      if (!groups.has(skill)) groups.set(skill, []);
+      groups.get(skill).push(candidate);
+    }
+
+    let recycledThisPass = 0;
+    for (const [skill, items] of groups) {
+      const workshop = workshops[skill];
+      recycledThisPass += await _recycleGroup(ctx, skill, workshop, items);
+    }
+    totalRecycled += recycledThisPass;
+
+    if (!pressure) break;
+    if (recycledThisPass <= 0) break;
   }
 
   log.info(`[${ctx.name}] Recycle: completed, ${totalRecycled} item type(s) recycled`);
@@ -111,7 +139,7 @@ async function _recycleGroup(ctx, skill, workshop, items) {
   let recycled = 0;
 
   // Step 1: Withdraw items from bank
-  const withdrawResult = await withdrawBankItems(
+  const withdrawResult = await _deps.withdrawBankItemsFn(
     ctx,
     items.map(candidate => ({ code: candidate.code, quantity: candidate.quantity })),
     {
@@ -133,7 +161,7 @@ async function _recycleGroup(ctx, skill, workshop, items) {
   if (withdrawn.length === 0) return 0;
 
   // Step 2: Move to workshop
-  await moveTo(ctx, workshop.x, workshop.y);
+  await _deps.moveToFn(ctx, workshop.x, workshop.y);
 
   // Step 3: Recycle each item
   for (const item of withdrawn) {
@@ -144,8 +172,8 @@ async function _recycleGroup(ctx, skill, workshop, items) {
 
     try {
       log.info(`[${ctx.name}] Recycle: recycling ${item.code} x${qty} at ${skill} workshop`);
-      const result = await api.recycle(item.code, qty, ctx.name);
-      await api.waitForCooldown(result);
+      const result = await _deps.recycleFn(item.code, qty, ctx.name);
+      await _deps.waitForCooldownFn(result);
       await ctx.refresh();
       recycled++;
       log.info(`[${ctx.name}] Recycle: successfully recycled ${item.code} x${qty}`);
@@ -161,7 +189,7 @@ async function _recycleGroup(ctx, skill, workshop, items) {
     if (ctx.inventoryCount() >= ctx.inventoryCapacity() * 0.9) {
       log.info(`[${ctx.name}] Recycle: inventory nearly full, depositing materials`);
       await _depositInventory(ctx);
-      await moveTo(ctx, workshop.x, workshop.y);
+      await _deps.moveToFn(ctx, workshop.x, workshop.y);
     }
   }
 
@@ -179,8 +207,31 @@ async function _depositInventory(ctx) {
 
   log.info(`[${ctx.name}] Recycle: depositing ${items.length} item(s) to bank`);
   try {
-    await depositBankItems(ctx, items, { reason: 'recycler deposit' });
+    await _deps.depositBankItemsFn(ctx, items, { reason: 'recycler deposit' });
   } catch (err) {
     log.warn(`[${ctx.name}] Recycle: could not deposit items: ${err.message}`);
   }
+}
+
+export function _setDepsForTests(overrides = {}) {
+  const input = overrides && typeof overrides === 'object' ? overrides : {};
+  _deps = {
+    ..._deps,
+    ...input,
+  };
+}
+
+export function _resetForTests() {
+  _deps = {
+    gameDataSvc: gameData,
+    getSellRulesFn: getSellRules,
+    getClaimedTotalFn: getClaimedTotal,
+    globalCountFn: globalCount,
+    bankCountFn: bankCount,
+    withdrawBankItemsFn: withdrawBankItems,
+    depositBankItemsFn: depositBankItems,
+    moveToFn: moveTo,
+    recycleFn: (code, qty, name) => api.recycle(code, qty, name),
+    waitForCooldownFn: (result) => api.waitForCooldown(result),
+  };
 }

@@ -90,7 +90,7 @@ async function testAlchemyFallbackToGatherAtLevel1() {
   assert.deepEqual(rotation.resourceLoc, { x: 2, y: 2 });
 }
 
-async function testAlchemyCraftingCollectionIsPreservedWhenViable() {
+async function testAlchemyCraftingSelectsViableRecipe() {
   const recipe = makeAlchemyRecipe();
   const plan = [
     {
@@ -109,14 +109,12 @@ async function testAlchemyCraftingCollectionIsPreservedWhenViable() {
   });
 
   const rotation = new SkillRotation(
-    { weights: { alchemy: 1 }, craftCollection: { alchemy: true } },
+    { weights: { alchemy: 1 } },
     { gameDataSvc: stub, findBestCombatTargetFn: async () => null },
   );
 
   const chosen = await rotation.pickNext(makeCtx({ alchemyLevel: 5 }));
   assert.equal(chosen, 'alchemy');
-  assert.equal(rotation.isCollection, true);
-  assert.equal(rotation.goalTarget, 1);
   assert.equal(rotation.recipe?.code, 'small_health_potion');
   assert.ok(Array.isArray(rotation.productionPlan));
   assert.equal(rotation.resource, null);
@@ -188,7 +186,6 @@ async function testCraftingXpPrefersBankOnlyRecipe() {
   const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
   assert.equal(chosen, 'cooking');
   assert.equal(rotation.recipe?.code, 'cooked_shrimp');
-  assert.equal(rotation.isCollection, false);
 }
 
 async function testCraftingXpFallsBackToHighestLevelWhenNoBankOnly() {
@@ -229,47 +226,6 @@ async function testCraftingXpFallsBackToHighestLevelWhenNoBankOnly() {
   const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
   assert.equal(chosen, 'cooking');
   assert.equal(rotation.recipe?.code, 'cooked_bass');
-  assert.equal(rotation.isCollection, false);
-}
-
-async function testCraftingCollectionPrefersBankOnlyMissingItem() {
-  const lowBankRecipe = makeRecipe('seasoned_egg', 'cooking', 5);
-  const highGatherRecipe = makeRecipe('royal_stew', 'cooking', 25);
-  const planByRecipe = new Map([
-    [lowBankRecipe.code, [
-      { type: 'bank', itemCode: 'egg', quantity: 1 },
-    ]],
-    [highGatherRecipe.code, [
-      {
-        type: 'gather',
-        itemCode: 'raw_venison',
-        resource: { code: 'venison_hunt', skill: 'hunting', level: 1 },
-        quantity: 2,
-      },
-    ]],
-  ]);
-
-  const stub = makeGameDataStub({
-    findItems: ({ craftSkill, maxLevel }) =>
-      craftSkill === 'cooking' && maxLevel >= 25 ? [highGatherRecipe, lowBankRecipe] : [],
-    getBankItems: async () => new Map([['egg', 10]]),
-    resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
-    canFulfillPlan: () => true,
-  });
-
-  const rotation = new SkillRotation(
-    {
-      weights: { cooking: 1 },
-      craftCollection: { cooking: true },
-    },
-    { gameDataSvc: stub, findBestCombatTargetFn: async () => null },
-  );
-
-  const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
-  assert.equal(chosen, 'cooking');
-  assert.equal(rotation.recipe?.code, 'seasoned_egg');
-  assert.equal(rotation.isCollection, true);
-  assert.equal(rotation.goalTarget, 1);
 }
 
 async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
@@ -397,6 +353,61 @@ async function testRoutineCanDisableOrderFulfillment() {
 
   const claim = await routine._ensureOrderClaim({ name: 'Tester' }, 'gather');
   assert.equal(claim, null, 'routine should not claim orders when fulfillOrders is false');
+}
+
+async function testRoutineRoutesCraftClaimsBySkill() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: true,
+    },
+  });
+
+  let called = 0;
+  routine._syncActiveClaimFromBoard = () => null;
+  routine._acquireCraftOrderClaim = async (_ctx, skill) => {
+    called += 1;
+    return { sourceType: 'craft', craftSkill: skill };
+  };
+
+  const claim = await routine._ensureOrderClaim(
+    { name: 'Tester' },
+    'craft',
+    { craftSkill: 'gearcrafting' },
+  );
+  assert.equal(called, 1, 'craft source should use craft-claim acquisition path');
+  assert.equal(claim?.craftSkill, 'gearcrafting');
+}
+
+async function testRoutineCraftingFallsBackWhenNoCraftClaim() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: true,
+    },
+  });
+
+  let craftingCalls = 0;
+  routine._executeCrafting = async () => {
+    craftingCalls += 1;
+    return true;
+  };
+  routine.rotation = {
+    currentSkill: 'gearcrafting',
+    goalTarget: 5,
+    goalProgress: 0,
+    recipe: { code: 'training_blade' },
+    productionPlan: [{ type: 'craft', itemCode: 'training_blade', quantity: 1 }],
+    isGoalComplete: () => false,
+    pickNext: async () => null,
+    forceRotate: async () => null,
+  };
+
+  await routine.execute({
+    name: 'Tester',
+    inventoryFull: () => false,
+  });
+  assert.equal(craftingCalls, 1, 'crafting mode should continue even when no craft order claim is available');
 }
 
 async function testRoutineSkipsGoalProgressWhileOrderClaimIsActive() {
@@ -538,7 +549,7 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
       refresh: async () => {},
     };
 
-    await routine._withdrawFromBank(ctx, 1);
+    await routine._withdrawFromBank(ctx, routine.rotation.productionPlan, routine.rotation.recipe.code, 1);
 
     assert.equal(state.withdrawCalls.some(row => row.code === 'fire_bow'), false);
     assert.deepEqual(
@@ -553,15 +564,16 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
 
 async function run() {
   await testAlchemyFallbackToGatherAtLevel1();
-  await testAlchemyCraftingCollectionIsPreservedWhenViable();
+  await testAlchemyCraftingSelectsViableRecipe();
   await testAlchemyCraftingNonViableFallsBackToGathering();
   await testCraftingXpPrefersBankOnlyRecipe();
   await testCraftingXpFallsBackToHighestLevelWhenNoBankOnly();
-  await testCraftingCollectionPrefersBankOnlyMissingItem();
   await testOrderBoardCreatesGatherOrderForUnmetGatherSkill();
   await testOrderBoardCanDisableOrderCreation();
   await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();
   await testRoutineCanDisableOrderFulfillment();
+  await testRoutineRoutesCraftClaimsBySkill();
+  await testRoutineCraftingFallsBackWhenNoCraftClaim();
   await testRoutineSkipsGoalProgressWhileOrderClaimIsActive();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();

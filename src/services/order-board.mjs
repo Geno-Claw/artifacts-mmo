@@ -32,6 +32,13 @@ function mergeKeyFor(sourceType, sourceCode, itemCode) {
   return `${sourceType}:${sourceCode}:${itemCode}`;
 }
 
+function normalizeSourceType(value) {
+  if (value === 'fight') return 'fight';
+  if (value === 'gather') return 'gather';
+  if (value === 'craft') return 'craft';
+  return '';
+}
+
 function ensureStatus(order, atMs) {
   if (!order) return;
 
@@ -148,7 +155,7 @@ function normalizeLoadedOrder(raw, atMs) {
   if (!raw || typeof raw !== 'object') return null;
 
   const itemCode = `${raw.itemCode || ''}`.trim();
-  const sourceType = raw.sourceType === 'fight' ? 'fight' : (raw.sourceType === 'gather' ? 'gather' : '');
+  const sourceType = normalizeSourceType(raw.sourceType);
   const sourceCode = `${raw.sourceCode || ''}`.trim();
   if (!itemCode || !sourceType || !sourceCode) return null;
 
@@ -163,6 +170,7 @@ function normalizeLoadedOrder(raw, atMs) {
     sourceType,
     sourceCode,
     gatherSkill: sourceType === 'gather' ? `${raw.gatherSkill || ''}`.trim() || null : null,
+    craftSkill: sourceType === 'craft' ? `${raw.craftSkill || ''}`.trim() || null : null,
     sourceLevel: Math.max(0, Math.floor(Number(raw.sourceLevel) || 0)),
     requestedQty,
     remainingQty,
@@ -264,7 +272,7 @@ export async function initializeOrderBoard(opts = {}) {
 export function createOrMergeOrder(request = {}) {
   if (!initialized) return null;
 
-  const sourceType = request.sourceType === 'fight' ? 'fight' : (request.sourceType === 'gather' ? 'gather' : '');
+  const sourceType = normalizeSourceType(request.sourceType);
   const sourceCode = `${request.sourceCode || ''}`.trim();
   const itemCode = `${request.itemCode || ''}`.trim();
   const requesterName = `${request.requesterName || request.charName || ''}`.trim();
@@ -288,6 +296,7 @@ export function createOrMergeOrder(request = {}) {
       sourceType,
       sourceCode,
       gatherSkill: sourceType === 'gather' ? `${request.gatherSkill || ''}`.trim() || null : null,
+      craftSkill: sourceType === 'craft' ? `${request.craftSkill || ''}`.trim() || null : null,
       sourceLevel: Math.max(0, Math.floor(Number(request.sourceLevel) || 0)),
       requestedQty: 0,
       remainingQty: 0,
@@ -315,6 +324,11 @@ export function createOrMergeOrder(request = {}) {
     order.contributions[contributionKey] = quantity;
     order.requestedQty += quantity;
     order.remainingQty += quantity;
+  } else if (quantity > existingContribution) {
+    const delta = quantity - existingContribution;
+    order.contributions[contributionKey] = quantity;
+    order.requestedQty += delta;
+    order.remainingQty += delta;
   }
 
   if (!order.requesters.includes(requesterName)) {
@@ -337,8 +351,9 @@ export function listClaimableOrders(query = {}) {
   if (!initialized) return [];
 
   const atMs = nowMs();
-  const sourceType = query.sourceType === 'fight' ? 'fight' : (query.sourceType === 'gather' ? 'gather' : null);
+  const sourceType = normalizeSourceType(query.sourceType) || null;
   const gatherSkill = query.gatherSkill ? `${query.gatherSkill}`.trim() : '';
+  const craftSkill = query.craftSkill ? `${query.craftSkill}`.trim() : '';
   const charName = query.charName ? `${query.charName}`.trim() : '';
 
   const rows = [];
@@ -346,6 +361,7 @@ export function listClaimableOrders(query = {}) {
     if (order.status !== 'open') continue;
     if (sourceType && order.sourceType !== sourceType) continue;
     if (gatherSkill && order.gatherSkill !== gatherSkill) continue;
+    if (craftSkill && order.craftSkill !== craftSkill) continue;
 
     if (charName) {
       const blockedUntil = Number(order.blockedByChar?.[charName]) || 0;
@@ -548,6 +564,20 @@ export async function flushOrderBoard() {
     persistTimer = null;
   }
   await queuePersistWrite();
+}
+
+export function clearOrderBoard(reason = 'manual_clear') {
+  if (!initialized) return { cleared: 0 };
+
+  const cleared = orders.size;
+  orders = new Map();
+
+  const atMs = nowMs();
+  markUpdated(atMs);
+  schedulePersist();
+  emitChange();
+  log.info(`[OrderBoard] Cleared ${cleared} order(s): ${reason}`);
+  return { cleared };
 }
 
 export function releaseClaimsForChars(charNames = [], reason = 'runtime_cleanup') {

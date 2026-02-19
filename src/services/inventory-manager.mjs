@@ -19,6 +19,7 @@ let reservationSeq = 0;
 let lastBankFetch = 0;
 let bankInvalidated = true;
 let bankFetchPromise = null;
+let bankRevision = 0;
 
 function toItemMap(slots = []) {
   const map = new Map();
@@ -147,6 +148,7 @@ async function _fetchBankItems() {
   bank = newMap;
   lastBankFetch = Date.now();
   bankInvalidated = false;
+  bankRevision += 1;
   log.info(`[InventoryManager] Bank refreshed: ${bank.size} unique items`);
   return bank;
 }
@@ -182,6 +184,7 @@ export function applyBankDelta(items, op, meta = {}) {
 
   lastBankFetch = Date.now();
   bankInvalidated = false;
+  bankRevision += 1;
 
   if (meta?.reason) {
     const by = meta?.charName ? ` by ${meta.charName}` : '';
@@ -191,6 +194,10 @@ export function applyBankDelta(items, op, meta = {}) {
 
 export function bankCount(code) {
   return bank.get(code) || 0;
+}
+
+export function getBankRevision() {
+  return bankRevision;
 }
 
 export function availableBankCount(code, opts = {}) {
@@ -311,6 +318,7 @@ export function snapshot() {
 
   return {
     bank: mapToObject(bank),
+    bankRevision,
     charInventory: nestedMapToObject(charInventory),
     charEquipment: nestedMapToObject(charEquipment),
     reservations: reservationRows,
@@ -331,5 +339,6 @@ export function _resetForTests() {
   lastBankFetch = 0;
   bankInvalidated = true;
   bankFetchPromise = null;
+  bankRevision = 0;
   _api = api;
 }

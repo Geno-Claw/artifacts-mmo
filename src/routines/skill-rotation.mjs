@@ -92,10 +92,15 @@ export class SkillRotationRoutine extends BaseRoutine {
       const hasGatherTarget = !!(this.rotation.resource && this.rotation.resourceLoc);
 
       if (hasCraftPlan) {
-        await this._clearActiveOrderClaim(ctx, { reason: 'alchemy_crafting_mode' });
         return this._executeCrafting(ctx);
       }
-      if (hasGatherTarget) return this._executeGathering(ctx);
+      if (hasGatherTarget) {
+        if (this._canFulfillOrders()) {
+          const craftClaim = await this._ensureOrderClaim(ctx, 'craft', { craftSkill: 'alchemy' });
+          if (craftClaim) return this._executeCrafting(ctx);
+        }
+        return this._executeGathering(ctx);
+      }
 
       log.warn(`[${ctx.name}] Rotation: alchemy state invalid (missing craft plan and gather target), rotating`);
       await this.rotation.forceRotate(ctx);
@@ -106,7 +111,6 @@ export class SkillRotationRoutine extends BaseRoutine {
       return this._executeGathering(ctx);
     }
     if (CRAFTING_SKILLS.has(skill)) {
-      await this._clearActiveOrderClaim(ctx, { reason: 'crafting_mode' });
       return this._executeCrafting(ctx);
     }
     if (skill === 'combat') {
@@ -178,6 +182,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       sourceType: order.sourceType,
       sourceCode: order.sourceCode,
       gatherSkill: order.gatherSkill || null,
+      craftSkill: order.craftSkill || null,
       sourceLevel: order.sourceLevel || 0,
       remainingQty: order.remainingQty,
       claim: order.claim,
@@ -201,6 +206,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       sourceType: claimed.sourceType,
       sourceCode: claimed.sourceCode,
       gatherSkill: claimed.gatherSkill || null,
+      craftSkill: claimed.craftSkill || null,
       sourceLevel: claimed.sourceLevel || 0,
       remainingQty: claimed.remainingQty,
       claim: claimed.claim,
@@ -240,12 +246,37 @@ export class SkillRotationRoutine extends BaseRoutine {
     return null;
   }
 
-  async _ensureOrderClaim(ctx, sourceType) {
+  async _acquireCraftOrderClaim(ctx, craftSkill) {
+    const orders = listClaimableOrders({
+      sourceType: 'craft',
+      craftSkill,
+      charName: ctx.name,
+    });
+
+    for (const order of orders) {
+      const item = gameData.getItem(order.itemCode || order.sourceCode);
+      if (!item?.craft?.skill) continue;
+      if (item.craft.skill !== craftSkill) continue;
+      if (item.craft.level > ctx.skillLevel(craftSkill)) continue;
+
+      const active = this._claimOrderForChar(ctx, order);
+      if (active) return active;
+    }
+
+    return null;
+  }
+
+  async _ensureOrderClaim(ctx, sourceType, opts = {}) {
     if (!this._canFulfillOrders()) return null;
+    const craftSkill = opts.craftSkill ? `${opts.craftSkill}`.trim() : '';
 
     const active = this._syncActiveClaimFromBoard();
     if (active && active.sourceType !== sourceType) {
       await this._clearActiveOrderClaim(ctx, { reason: 'source_type_changed' });
+      return null;
+    }
+    if (active && sourceType === 'craft' && craftSkill && active.craftSkill && active.craftSkill !== craftSkill) {
+      await this._clearActiveOrderClaim(ctx, { reason: 'craft_skill_changed' });
       return null;
     }
 
@@ -267,17 +298,20 @@ export class SkillRotationRoutine extends BaseRoutine {
     if (sourceType === 'fight') {
       return this._acquireCombatOrderClaim(ctx);
     }
+    if (sourceType === 'craft' && craftSkill) {
+      return this._acquireCraftOrderClaim(ctx, craftSkill);
+    }
     return null;
   }
 
-  async _depositClaimItemsIfNeeded(ctx) {
+  async _depositClaimItemsIfNeeded(ctx, { force = false } = {}) {
     const claim = this._syncActiveClaimFromBoard();
     if (!claim) return false;
 
     const carried = ctx.itemCount(claim.itemCode);
     if (carried <= 0) return false;
 
-    const shouldDeposit = carried >= claim.remainingQty || ctx.inventoryFull();
+    const shouldDeposit = force || carried >= claim.remainingQty || ctx.inventoryFull();
     if (!shouldDeposit) return false;
 
     await depositBankItems(ctx, [{ code: claim.itemCode, quantity: carried }], {
@@ -492,15 +526,50 @@ export class SkillRotationRoutine extends BaseRoutine {
   // --- Crafting ---
 
   async _executeCrafting(ctx) {
-    const plan = this.rotation.productionPlan;
-    const recipe = this.rotation.recipe;
+    const craftSkill = this.rotation.currentSkill;
+    const claim = await this._ensureOrderClaim(ctx, 'craft', { craftSkill });
+
+    let recipe = this.rotation.recipe;
+    let plan = this.rotation.productionPlan;
+    let claimMode = false;
+    let claimGoal = 0;
+
+    if (claim) {
+      const claimItem = gameData.getItem(claim.itemCode || claim.sourceCode);
+      if (!claimItem?.craft?.skill) {
+        await this._blockAndReleaseClaim(ctx, 'invalid_craft_order');
+        return true;
+      }
+      if (claimItem.craft.skill !== craftSkill) {
+        await this._blockAndReleaseClaim(ctx, 'wrong_craft_skill');
+        return true;
+      }
+      if (ctx.skillLevel(craftSkill) < claimItem.craft.level) {
+        await this._blockAndReleaseClaim(ctx, 'insufficient_craft_level');
+        return true;
+      }
+
+      const claimPlan = gameData.resolveRecipeChain(claimItem.craft);
+      if (!claimPlan) {
+        await this._blockAndReleaseClaim(ctx, 'unresolvable_recipe_chain');
+        return true;
+      }
+
+      recipe = claimItem;
+      plan = claimPlan;
+      claimMode = true;
+      claimGoal = Math.max(1, Number(claim.remainingQty) || 1);
+    }
+
     if (!plan || !recipe) {
       await this.rotation.forceRotate(ctx);
       return true;
     }
 
-    // Append final craft step if not already in the plan
-    // (resolveRecipeChain only returns dependency steps, not the final recipe)
+    // Work on a local copy so claim-mode planning doesn't mutate rotation state.
+    plan = [...plan];
+
+    // Append final craft step if not already in the plan.
     if (plan.length === 0 || plan[plan.length - 1].itemCode !== recipe.code) {
       plan.push({ type: 'craft', itemCode: recipe.code, recipe: recipe.craft, quantity: 1 });
     }
@@ -513,8 +582,8 @@ export class SkillRotationRoutine extends BaseRoutine {
     // Withdraw matching ingredients from bank (scaled for batch)
     if (!this.rotation.bankChecked) {
       this.rotation.bankChecked = true;
-      this._currentBatch = this._batchSize(ctx);
-      await this._withdrawFromBank(ctx, this._currentBatch);
+      this._currentBatch = claimMode ? 1 : this._batchSize(ctx);
+      await this._withdrawFromBank(ctx, plan, recipe.code, this._currentBatch);
     }
 
     // Walk through production plan steps
@@ -525,9 +594,12 @@ export class SkillRotationRoutine extends BaseRoutine {
         // Must come from bank (event items, etc.) — already withdrawn above
         const have = ctx.itemCount(step.itemCode);
         if (have >= step.quantity) continue; // have enough for at least 1 craft
-        // Don't have enough and can't gather it — skip this recipe
-        log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`);
-        await this.rotation.forceRotate(ctx);
+        if (claimMode) {
+          await this._blockAndReleaseClaim(ctx, 'missing_bank_dependency');
+        } else {
+          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`);
+          await this.rotation.forceRotate(ctx);
+        }
         return true;
       }
 
@@ -539,8 +611,12 @@ export class SkillRotationRoutine extends BaseRoutine {
         // Gather one batch from the resource
         const loc = await gameData.getResourceLocation(step.resource.code);
         if (!loc) {
-          log.warn(`[${ctx.name}] Cannot find location for ${step.resource.code}, skipping recipe`);
-          await this.rotation.forceRotate(ctx);
+          if (claimMode) {
+            await this._blockAndReleaseClaim(ctx, 'missing_gather_location');
+          } else {
+            log.warn(`[${ctx.name}] Cannot find location for ${step.resource.code}, skipping recipe`);
+            await this.rotation.forceRotate(ctx);
+          }
           return true;
         }
 
@@ -563,8 +639,12 @@ export class SkillRotationRoutine extends BaseRoutine {
         const monsterCode = step.monster.code;
         const monsterLoc = await gameData.getMonsterLocation(monsterCode);
         if (!monsterLoc) {
-          log.warn(`[${ctx.name}] Cannot find location for monster ${monsterCode}, skipping recipe`);
-          await this.rotation.forceRotate(ctx);
+          if (claimMode) {
+            await this._blockAndReleaseClaim(ctx, 'missing_fight_location');
+          } else {
+            log.warn(`[${ctx.name}] Cannot find location for monster ${monsterCode}, skipping recipe`);
+            await this.rotation.forceRotate(ctx);
+          }
           return true;
         }
 
@@ -591,8 +671,12 @@ export class SkillRotationRoutine extends BaseRoutine {
           const losses = ctx.consecutiveLosses(monsterCode);
           log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: farming ${monsterCode} for ${step.itemCode} — LOSS (${losses} losses)`);
           if (losses >= this.maxLosses) {
-            log.info(`[${ctx.name}] Too many losses farming ${monsterCode}, rotating`);
-            await this.rotation.forceRotate(ctx);
+            if (claimMode) {
+              await this._blockAndReleaseClaim(ctx, 'combat_losses');
+            } else {
+              log.info(`[${ctx.name}] Too many losses farming ${monsterCode}, rotating`);
+              await this.rotation.forceRotate(ctx);
+            }
           }
         }
         return !ctx.inventoryFull();
@@ -608,9 +692,12 @@ export class SkillRotationRoutine extends BaseRoutine {
 
         let craftQty;
         if (i === plan.length - 1) {
-          // Final step: craft as many as materials allow, up to remaining goal
+          // Final step: craft as many as materials allow, up to remaining goal/claim.
+          const finalGoal = claimMode
+            ? claimGoal
+            : Math.max(0, this.rotation.goalTarget - this.rotation.goalProgress);
           craftQty = Math.min(
-            this.rotation.goalTarget - this.rotation.goalProgress,
+            finalGoal,
             ...craftItem.craft.items.map(mat =>
               Math.floor(ctx.itemCount(mat.code) / mat.quantity)
             )
@@ -645,8 +732,18 @@ export class SkillRotationRoutine extends BaseRoutine {
 
         // If this is the final step, record progress
         if (i === plan.length - 1) {
-          this.rotation.recordProgress(craftQty);
-          log.info(`[${ctx.name}] ${this.rotation.currentSkill}: ${recipe.code} x${craftQty} complete (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+          const progressed = this._recordProgress(craftQty);
+          if (progressed) {
+            log.info(`[${ctx.name}] ${this.rotation.currentSkill}: ${recipe.code} x${craftQty} complete (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
+          } else {
+            await this._depositClaimItemsIfNeeded(ctx, { force: true });
+            const active = this._syncActiveClaimFromBoard();
+            if (active) {
+              log.info(`[${ctx.name}] Craft order progress: ${active.itemCode} remaining ${active.remainingQty}`);
+            } else {
+              log.info(`[${ctx.name}] Craft order fulfilled: ${recipe.code}`);
+            }
+          }
 
           // Allow re-withdrawal from bank for next batch
           this.rotation.bankChecked = false;
@@ -689,11 +786,10 @@ export class SkillRotationRoutine extends BaseRoutine {
 
   // --- Bank withdrawal for crafting ---
 
-  async _withdrawFromBank(ctx, batchSize = 1) {
-    const plan = this.rotation.productionPlan;
+  async _withdrawFromBank(ctx, plan, finalRecipeCode, batchSize = 1) {
     if (!plan) return;
 
-    const excludeCodes = this.rotation.recipe?.code ? [this.rotation.recipe.code] : [];
+    const excludeCodes = finalRecipeCode ? [finalRecipeCode] : [];
     const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSize, { excludeCodes });
     if (withdrawn.length > 0) {
       log.info(`[${ctx.name}] Rotation crafting: withdrew from bank: ${withdrawn.join(', ')}`);

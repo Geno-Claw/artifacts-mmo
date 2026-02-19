@@ -166,7 +166,7 @@ Combat utility automation service:
 
 ### Recycler (`services/recycler.mjs`)
 Equipment recycling at workshops. Surplus equipment is broken down into crafting materials instead of being sold on the GE:
-- Identify recycle candidates (duplicate equipment above `keepPerEquipmentCode` threshold)
+- Identify recycle candidates from unclaimed equipment/jewelry only (gear-state ownership is protected)
 - Group by `craft.skill` to minimize workshop travel (e.g., weaponcrafting, gearcrafting, jewelrycrafting)
 - Withdraw → move to workshop → recycle → deposit materials flow
 - Mid-batch inventory management: deposits materials to bank when inventory hits 90% capacity
@@ -190,7 +190,7 @@ Bank contents are fetched via paginated API (100 items/page) and cached with a 6
 
 ### Skill Rotation (`services/skill-rotation.mjs`)
 State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
-- Alchemy is hybrid in rotation: try crafting first (collection/XP), and if no viable alchemy recipe exists, fall back to alchemy gathering to bootstrap progression.
+- Alchemy is hybrid in rotation: try crafting first, and if no viable alchemy recipe exists, fall back to alchemy gathering to bootstrap progression.
 
 ## Configuration
 
@@ -220,7 +220,7 @@ Character `settings` can optionally include potion automation controls (`setting
 ### `config/sell-rules.json`
 
 Controls equipment recycling and GE selling:
-- `sellDuplicateEquipment` — recycle surplus equipment at workshops (keeps `keepPerEquipmentCode` copies per item)
+- `sellDuplicateEquipment` — recycle surplus unclaimed equipment/jewelry at workshops
 - `alwaysSell` — whitelist of items to sell on the GE (the only items that go to GE)
 - `neverSell` — item codes exempt from both recycling and GE selling
 - `pricingStrategy` — "undercut" with configurable `undercutPercent` (for GE listings)

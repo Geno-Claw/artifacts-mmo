@@ -4,9 +4,15 @@ import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
 import * as recycler from '../services/recycler.mjs';
 import {
-  depositBankItems,
   depositGoldToBank,
+  withdrawBankItems,
 } from '../services/bank-ops.mjs';
+import {
+  getOwnedDeficitRequests,
+  getOwnedKeepByCodeForInventory,
+  publishDesiredOrdersForCharacter,
+  refreshGearState,
+} from '../services/gear-state.mjs';
 
 export class DepositBankRoutine extends BaseRoutine {
   constructor({
@@ -24,16 +30,34 @@ export class DepositBankRoutine extends BaseRoutine {
   }
 
   canRun(ctx) {
-    const count = ctx.inventoryCount();
     const cap = ctx.inventoryCapacity();
     if (cap <= 0) return false;
-    if (this.threshold <= 0) return count > 0;
-    return (count / cap) >= this.threshold;
+
+    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+    const depositableCount = this._countDepositableInventory(ctx, keepByCode);
+    if (this.threshold <= 0) return depositableCount > 0;
+    return (depositableCount / cap) >= this.threshold;
   }
 
   async execute(ctx) {
-    // Step 1: Deposit all inventory items to bank
-    await depositAll(ctx);
+    let keepByCode = {};
+    try {
+      await refreshGearState();
+      keepByCode = getOwnedKeepByCodeForInventory(ctx);
+      await this._withdrawOwnedGearDeficits(ctx);
+      keepByCode = getOwnedKeepByCodeForInventory(ctx);
+      publishDesiredOrdersForCharacter(ctx.name);
+    } catch (err) {
+      log.warn(`[${ctx.name}] Gear-state sync failed: ${err.message}`);
+    }
+
+    // Step 1: Deposit all non-owned inventory items to bank
+    if (this._countDepositableInventory(ctx, keepByCode) > 0) {
+      await depositAll(ctx, {
+        reason: 'deposit routine keep-owned pass',
+        keepByCode,
+      });
+    }
 
     // Step 2: Recycle surplus equipment at workshops
     if (this.recycleEquipment && geSeller.getSellRules()) {
@@ -59,12 +83,15 @@ export class DepositBankRoutine extends BaseRoutine {
     }
 
     // Re-deposit any leftover inventory (failed recycles, etc.)
-    const leftover = ctx.get().inventory.filter(s => s.code);
-    if (leftover.length > 0) {
-      log.info(`[${ctx.name}] Re-depositing ${leftover.length} unrecycled item(s)`);
+    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+    const depositableCount = this._countDepositableInventory(ctx, keepByCode);
+    if (depositableCount > 0) {
+      log.info(`[${ctx.name}] Re-depositing unrecycled inventory`);
       try {
-        const items = leftover.map(s => ({ code: s.code, quantity: s.quantity }));
-        await depositBankItems(ctx, items, { reason: 'deposit routine recycle cleanup' });
+        await depositAll(ctx, {
+          reason: 'deposit routine recycle cleanup',
+          keepByCode,
+        });
       } catch (err) {
         log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
       }
@@ -91,12 +118,15 @@ export class DepositBankRoutine extends BaseRoutine {
     }
 
     // Always re-deposit any leftover inventory items + gold
-    const leftover = ctx.get().inventory.filter(s => s.code);
-    if (leftover.length > 0) {
-      log.info(`[${ctx.name}] Re-depositing ${leftover.length} unsold item(s)`);
+    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+    const depositableCount = this._countDepositableInventory(ctx, keepByCode);
+    if (depositableCount > 0) {
+      log.info(`[${ctx.name}] Re-depositing unsold inventory`);
       try {
-        const items = leftover.map(s => ({ code: s.code, quantity: s.quantity }));
-        await depositBankItems(ctx, items, { reason: 'deposit routine GE cleanup' });
+        await depositAll(ctx, {
+          reason: 'deposit routine GE cleanup',
+          keepByCode,
+        });
       } catch (err) {
         log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
       }
@@ -111,5 +141,51 @@ export class DepositBankRoutine extends BaseRoutine {
         log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
       }
     }
+  }
+
+  async _withdrawOwnedGearDeficits(ctx) {
+    const requests = getOwnedDeficitRequests(ctx);
+    if (requests.length === 0) return;
+
+    const result = await withdrawBankItems(ctx, requests, {
+      reason: 'deposit routine owned gear refill',
+      mode: 'partial',
+      retryStaleOnce: true,
+    });
+
+    if (result.withdrawn.length > 0) {
+      log.info(`[${ctx.name}] Refilled owned gear: ${result.withdrawn.map(row => `${row.code} x${row.quantity}`).join(', ')}`);
+    }
+    for (const row of result.failed) {
+      log.warn(`[${ctx.name}] Could not refill owned ${row.code}: ${row.error}`);
+    }
+    for (const row of result.skipped) {
+      if (!row.reason.startsWith('partial fill')) {
+        log.warn(`[${ctx.name}] Could not refill owned ${row.code}: ${row.reason}`);
+      }
+    }
+  }
+
+  _countDepositableInventory(ctx, keepByCode = {}) {
+    const keepRemainder = new Map();
+    for (const [code, qty] of Object.entries(keepByCode || {})) {
+      const n = Math.max(0, Number(qty) || 0);
+      if (!code || n <= 0) continue;
+      keepRemainder.set(code, n);
+    }
+
+    let count = 0;
+    for (const slot of ctx.get().inventory || []) {
+      const code = slot?.code;
+      const qty = Math.max(0, Number(slot?.quantity) || 0);
+      if (!code || qty <= 0) continue;
+
+      const keep = keepRemainder.get(code) || 0;
+      const depositQty = Math.max(0, qty - keep);
+      keepRemainder.set(code, Math.max(0, keep - qty));
+      count += depositQty;
+    }
+
+    return count;
   }
 }

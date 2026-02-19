@@ -1,7 +1,6 @@
 {
   "$schema": "./sell-rules.schema.json",
   "sellDuplicateEquipment": true,
-  "keepPerEquipmentCode": 5,
   "alwaysSell": [],
   "neverSell": [
     "tasks_coin"

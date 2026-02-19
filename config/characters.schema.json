@@ -158,16 +158,9 @@
             "combat": 10, "npc_task": 1
           }
         },
-        "craftCollection": {
-          "type": "object",
-          "description": "Per-skill collection mode. When true for a skill, crafting will first try to craft 1 of each missing item (not yet in bank) before XP grinding.",
-          "propertyNames": { "$ref": "#/$defs/skillName" },
-          "additionalProperties": { "type": "boolean" },
-          "default": {}
-        },
         "craftBlacklist": {
           "type": "object",
-          "description": "Per-skill item blacklists. Item codes to never craft for collection or XP grinding (upgrades are unaffected).",
+          "description": "Per-skill item blacklists. Item codes to never craft for XP grinding (upgrades are unaffected).",
           "propertyNames": { "$ref": "#/$defs/skillName" },
           "additionalProperties": {
             "type": "array",

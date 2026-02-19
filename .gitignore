@@ -5,3 +5,5 @@ node_modules/
 report/history/
 report/map-cache.json
 report/order-board.json
+report/gear-state.json
+report/.order-board-v2-rollout
