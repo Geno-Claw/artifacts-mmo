@@ -5,7 +5,7 @@
  */
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { findBestCombatTarget } from './gear-optimizer.mjs';
+import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -242,10 +242,14 @@ export class SkillRotation {
     }
     if (candidates.length === 0) return false;
 
-    candidates.sort((a, b) => b.recipe.craft.level - a.recipe.craft.level);
+    // Verify combat viability for candidates that need monster drops
+    const verified = await this._verifyCombatViability(candidates, ctx);
+    if (verified.length === 0) return false;
 
-    const bankOnlyCandidates = candidates.filter(c => c.bankOnly);
-    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : candidates;
+    verified.sort((a, b) => b.recipe.craft.level - a.recipe.craft.level);
+
+    const bankOnlyCandidates = verified.filter(c => c.bankOnly);
+    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : verified;
     const best = pool[0];
 
     this._recipe = best.recipe;
@@ -281,8 +285,12 @@ export class SkillRotation {
     }
     if (scored.length === 0) return false;
 
-    const bankOnlyCandidates = scored.filter(c => c.bankOnly);
-    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : scored;
+    // Verify combat viability for candidates that need monster drops
+    const verified = await this._verifyCombatViability(scored, ctx);
+    if (verified.length === 0) return false;
+
+    const bankOnlyCandidates = verified.filter(c => c.bankOnly);
+    const pool = bankOnlyCandidates.length > 0 ? bankOnlyCandidates : verified;
 
     // Primary: craft.level DESC (XP proxy), tiebreaker: availability DESC
     pool.sort((a, b) =>
@@ -332,7 +340,7 @@ export class SkillRotation {
     if (!plan || plan.length === 0) return null;
     if (!this.gameData.canFulfillPlan(plan, ctx)) return null;
 
-    // Skip recipes with unmet bank-only dependencies
+    // Skip recipes with unmet bank-only dependencies (true bank items — not monster drops)
     const bankSteps = plan.filter(s => s.type === 'bank');
     if (bankSteps.length > 0) {
       const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
@@ -342,12 +350,64 @@ export class SkillRotation {
       }
     }
 
+    // For fight steps: check if bank already has enough (shortcut) or if we need combat viability
+    const fightSteps = plan.filter(s => s.type === 'fight');
+    let needsCombat = false;
+    for (const step of fightSteps) {
+      const inBank = bank.get(step.itemCode) || 0;
+      const inInventory = ctx.itemCount(step.itemCode);
+      if (inBank + inInventory < step.quantity) {
+        needsCombat = true;
+        break;
+      }
+    }
+    // Combat viability is checked async in _buildCraftCandidateAsync — mark it here
+    // (the caller will verify combat viability for candidates that need it)
+
     return {
       recipe,
       plan,
       availability: this._scoreRecipeAvailability(plan, ctx, bank),
       bankOnly: this._isPlanBankOnly(plan, ctx, bank),
+      needsCombat,
+      fightSteps: needsCombat ? fightSteps : [],
     };
+  }
+
+  /**
+   * Filter candidates by combat viability — for candidates with fight steps
+   * where bank doesn't already cover the requirement, simulate the fight.
+   * Candidates that don't need combat pass through unchanged.
+   */
+  async _verifyCombatViability(candidates, ctx) {
+    const verified = [];
+    // Cache sim results per monster to avoid redundant sims
+    const simCache = new Map();
+
+    for (const candidate of candidates) {
+      if (!candidate.needsCombat) {
+        verified.push(candidate);
+        continue;
+      }
+
+      let viable = true;
+      for (const step of candidate.fightSteps) {
+        const monsterCode = step.monster.code;
+        if (!simCache.has(monsterCode)) {
+          const result = await optimizeForMonster(ctx, monsterCode);
+          simCache.set(monsterCode, result);
+        }
+        const simResult = simCache.get(monsterCode);
+        if (!simResult || !simResult.simResult.win || simResult.simResult.hpLostPercent > 90) {
+          viable = false;
+          log.info(`[${ctx.name}] Rotation: ${candidate.recipe.code} needs ${step.itemCode} from ${monsterCode} — can't win fight, skipping`);
+          break;
+        }
+      }
+      if (viable) verified.push(candidate);
+    }
+
+    return verified;
   }
 
   /**
@@ -356,7 +416,7 @@ export class SkillRotation {
    */
   _isPlanBankOnly(plan, ctx, bank) {
     for (const step of plan) {
-      if (step.type !== 'gather' && step.type !== 'bank') continue;
+      if (step.type !== 'gather' && step.type !== 'bank' && step.type !== 'fight') continue;
       const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
       if (have < step.quantity) return false;
     }

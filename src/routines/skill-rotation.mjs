@@ -238,7 +238,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       const step = plan[i];
 
       if (step.type === 'bank') {
-        // Must come from bank (monster drops, etc.) — already withdrawn above
+        // Must come from bank (event items, etc.) — already withdrawn above
         const have = ctx.itemCount(step.itemCode);
         if (have >= step.quantity) continue; // have enough for at least 1 craft
         // Don't have enough and can't gather it — skip this recipe
@@ -267,6 +267,50 @@ export class SkillRotationRoutine extends BaseRoutine {
         const result = await gatherOnce(ctx);
         const items = result.details?.items || [];
         log.info(`[${ctx.name}] ${this.rotation.currentSkill}: gathering ${step.itemCode} for ${recipe.code} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'}`);
+        return !ctx.inventoryFull();
+      }
+
+      if (step.type === 'fight') {
+        // Check if we already have enough from bank withdrawal or prior fights
+        const needed = step.quantity * this._currentBatch;
+        if (ctx.itemCount(step.itemCode) >= needed) continue;
+
+        // Find monster location
+        const monsterCode = step.monster.code;
+        const monsterLoc = await gameData.getMonsterLocation(monsterCode);
+        if (!monsterLoc) {
+          log.warn(`[${ctx.name}] Cannot find location for monster ${monsterCode}, skipping recipe`);
+          await this.rotation.forceRotate(ctx);
+          return true;
+        }
+
+        // Equip for combat against this monster
+        await equipForCombat(ctx, monsterCode);
+        await prepareCombatPotions(ctx, monsterCode);
+
+        // Rest before fighting if needed
+        if (!(await restBeforeFight(ctx, monsterCode))) {
+          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: can't rest before fighting ${monsterCode} for ${step.itemCode}, skipping recipe`);
+          await this.rotation.forceRotate(ctx);
+          return true;
+        }
+
+        await moveTo(ctx, monsterLoc.x, monsterLoc.y);
+        const result = await fightOnce(ctx);
+        const r = parseFightResult(result, ctx);
+
+        if (r.win) {
+          ctx.clearLosses(monsterCode);
+          log.info(`[${ctx.name}] ${this.rotation.currentSkill}: farming ${step.itemCode} from ${monsterCode} for ${recipe.code} — WIN ${r.turns}t${r.drops ? ' | ' + r.drops : ''} (have ${ctx.itemCount(step.itemCode)}/${needed})`);
+        } else {
+          ctx.recordLoss(monsterCode);
+          const losses = ctx.consecutiveLosses(monsterCode);
+          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: farming ${monsterCode} for ${step.itemCode} — LOSS (${losses} losses)`);
+          if (losses >= this.maxLosses) {
+            log.info(`[${ctx.name}] Too many losses farming ${monsterCode}, rotating`);
+            await this.rotation.forceRotate(ctx);
+          }
+        }
         return !ctx.inventoryFull();
       }
 
@@ -346,7 +390,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     // Sum material quantities per single craft (bank + gather steps)
     let materialsPerCraft = 0;
     for (const step of plan) {
-      if (step.type === 'bank' || step.type === 'gather') {
+      if (step.type === 'bank' || step.type === 'gather' || step.type === 'fight') {
         materialsPerCraft += step.quantity;
       }
     }

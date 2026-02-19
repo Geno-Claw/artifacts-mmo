@@ -15,6 +15,7 @@ let itemsCache = null;          // Map<code, item>
 let monstersCache = null;       // Map<code, monster>
 let resourcesCache = null;      // Map<code, resource>
 let dropToResourceCache = null; // Map<itemCode, resourceCode> (reverse lookup)
+let dropToMonsterCache = null;  // Map<itemCode, { monster, drop }> (reverse lookup for monster drops)
 let resourceLocationCache = {}; // { resourceCode: { x, y } }
 let workshopCache = null;       // { skill: { x, y } }
 let geLocationCache = null;     // { x, y } or null
@@ -58,6 +59,7 @@ async function loadAllItems() {
 
 async function loadAllMonsters() {
   monstersCache = new Map();
+  dropToMonsterCache = new Map();
   let page = 1;
   while (true) {
     const result = await api.getMonsters({ page, size: 100 });
@@ -65,6 +67,13 @@ async function loadAllMonsters() {
     if (monsters.length === 0) break;
     for (const m of monsters) {
       monstersCache.set(m.code, m);
+      // Build reverse lookup: item code → lowest-level monster that drops it
+      for (const drop of m.drops || []) {
+        const existing = dropToMonsterCache.get(drop.code);
+        if (!existing || m.level < existing.monster.level) {
+          dropToMonsterCache.set(drop.code, { monster: m, drop });
+        }
+      }
     }
     if (monsters.length < 100) break;
     page++;
@@ -129,6 +138,15 @@ export function getResource(code) {
 export function getResourceForDrop(itemCode) {
   const resourceCode = dropToResourceCache?.get(itemCode);
   return resourceCode ? resourcesCache.get(resourceCode) : null;
+}
+
+/**
+ * Find which monster drops a given item.
+ * Returns { monster, drop } where drop has { code, rate, min_quantity, max_quantity }, or null.
+ * Prefers the lowest-level monster.
+ */
+export function getMonsterForDrop(itemCode) {
+  return dropToMonsterCache?.get(itemCode) || null;
 }
 
 /** Returns true if the item code is obtainable from task coin exchange. */
@@ -320,7 +338,19 @@ export function resolveRecipeChain(recipe) {
         continue;
       }
 
-      // 3. Must come from bank (monster drops, event items, etc.)
+      // 3. Monster drop? → fight step
+      const monsterDrop = getMonsterForDrop(mat.code);
+      if (monsterDrop) {
+        const existing = steps.find(s => s.itemCode === mat.code && s.type === 'fight');
+        if (existing) {
+          existing.quantity += needed;
+        } else {
+          steps.push({ type: 'fight', itemCode: mat.code, monster: monsterDrop.monster, drop: monsterDrop.drop, quantity: needed });
+        }
+        continue;
+      }
+
+      // 4. Must come from bank (event items, etc.)
       const existing = steps.find(s => s.itemCode === mat.code && s.type === 'bank');
       if (existing) {
         existing.quantity += needed;
