@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "updatedAtMs": 1771529259983,
+  "orders": [
+    {
+      "id": "d690dc39-3eeb-4cf3-bd0e-19ba41463a21",
+      "mergeKey": "gather:gold_rocks:gold_ore",
+      "itemCode": "gold_ore",
+      "sourceType": "gather",
+      "sourceCode": "gold_rocks",
+      "gatherSkill": "mining",
+      "sourceLevel": 30,
+      "requestedQty": 8,
+      "remainingQty": 8,
+      "status": "open",
+      "requesters": [
+        "GenoClaw2"
+      ],
+      "recipes": [
+        "antidote"
+      ],
+      "contributions": {
+        "GenoClaw2::antidote": 8
+      },
+      "claim": null,
+      "blockedByChar": {
+        "GenoClaw5": 1771529283727,
+        "GenoClaw4": 1771529423860
+      },
+      "createdAtMs": 1771528628973,
+      "updatedAtMs": 1771528823860,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "688db73c-573d-4b13-b5da-9936d203586b",
+      "mergeKey": "gather:glowstem:glowstem_leaf",
+      "itemCode": "glowstem_leaf",
+      "sourceType": "gather",
+      "sourceCode": "glowstem",
+      "gatherSkill": "alchemy",
+      "sourceLevel": 40,
+      "requestedQty": 1,
+      "remainingQty": 1,
+      "status": "open",
+      "requesters": [
+        "GenoClaw2"
+      ],
+      "recipes": [
+        "antidote"
+      ],
+      "contributions": {
+        "GenoClaw2::antidote": 1
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771528628974,
+      "updatedAtMs": 1771528696173,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "b2a1c17a-1321-4e02-88d6-1bb8735a6846",
+      "mergeKey": "gather:maple_tree:maple_sap",
+      "itemCode": "maple_sap",
+      "sourceType": "gather",
+      "sourceCode": "maple_tree",
+      "gatherSkill": "woodcutting",
+      "sourceLevel": 40,
+      "requestedQty": 1,
+      "remainingQty": 1,
+      "status": "open",
+      "requesters": [
+        "GenoClaw2"
+      ],
+      "recipes": [
+        "antidote"
+      ],
+      "contributions": {
+        "GenoClaw2::antidote": 1
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771528628974,
+      "updatedAtMs": 1771528696173,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "c8dadb1b-fc1e-468c-85d5-8b5790d92342",
+      "mergeKey": "gather:strange_rocks:strange_ore",
+      "itemCode": "strange_ore",
+      "sourceType": "gather",
+      "sourceCode": "strange_rocks",
+      "gatherSkill": "mining",
+      "sourceLevel": 35,
+      "requestedQty": 12,
+      "remainingQty": 12,
+      "status": "open",
+      "requesters": [
+        "GenoClaw2"
+      ],
+      "recipes": [
+        "antidote"
+      ],
+      "contributions": {
+        "GenoClaw2::antidote": 12
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771528628974,
+      "updatedAtMs": 1771529259983,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "18296543-9712-4829-9dd4-45b933282125",
+      "mergeKey": "fight:mushmush:mushroom",
+      "itemCode": "mushroom",
+      "sourceType": "fight",
+      "sourceCode": "mushmush",
+      "gatherSkill": null,
+      "sourceLevel": 10,
+      "requestedQty": 4,
+      "remainingQty": 4,
+      "status": "open",
+      "requesters": [
+        "GenoClaw5"
+      ],
+      "recipes": [
+        "adventurer_helmet"
+      ],
+      "contributions": {
+        "GenoClaw5::adventurer_helmet": 4
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771528655348,
+      "updatedAtMs": 1771528655348,
+      "fulfilledAtMs": null
+    },
+    {
+      "id": "c8795ca9-f1ba-4c5f-b63c-a5e0dc96abc5",
+      "mergeKey": "fight:sheep:wool",
+      "itemCode": "wool",
+      "sourceType": "fight",
+      "sourceCode": "sheep",
+      "gatherSkill": null,
+      "sourceLevel": 5,
+      "requestedQty": 10,
+      "remainingQty": 10,
+      "status": "open",
+      "requesters": [
+        "GenoClaw5"
+      ],
+      "recipes": [
+        "adventurer_vest",
+        "iron_helm",
+        "iron_shield",
+        "copper_armor"
+      ],
+      "contributions": {
+        "GenoClaw5::adventurer_vest": 2,
+        "GenoClaw5::iron_helm": 3,
+        "GenoClaw5::iron_shield": 3,
+        "GenoClaw5::copper_armor": 2
+      },
+      "claim": null,
+      "blockedByChar": {},
+      "createdAtMs": 1771528655350,
+      "updatedAtMs": 1771528655353,
+      "fulfilledAtMs": null
+    }
+  ]
+}

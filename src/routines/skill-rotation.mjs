@@ -925,19 +925,42 @@ export class SkillRotationRoutine extends BaseRoutine {
       const plan = gameData.resolveRecipeChain(item.craft);
       if (!plan) {
         log.warn(`[${ctx.name}] Item Task: can't resolve recipe for ${itemCode}, cancelling`);
-        await this._cancelItemTask(ctx, ITEMS_MASTER);
+        await this._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
         return true;
       }
+
+      // Check if character can execute all steps
+      let canExecute = true;
       for (const step of plan) {
         if (step.type === 'gather' && step.resource) {
           if (ctx.skillLevel(step.resource.skill) < step.resource.level) {
-            log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${step.resource.skill} lv${step.resource.level}, cancelling`);
-            await this._cancelItemTask(ctx, ITEMS_MASTER);
-            return true;
+            log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${step.resource.skill} lv${step.resource.level} (have lv${ctx.skillLevel(step.resource.skill)})`);
+            canExecute = false;
+            break;
+          }
+        }
+        if (step.type === 'craft' && step.recipe) {
+          if (ctx.skillLevel(step.recipe.skill) < step.recipe.level) {
+            log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${step.recipe.skill} lv${step.recipe.level} for crafting (have lv${ctx.skillLevel(step.recipe.skill)})`);
+            canExecute = false;
+            break;
           }
         }
       }
-      // TODO: implement crafting for item tasks — for now just gather
+
+      if (!canExecute) {
+        await this._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
+        return true;
+      }
+
+      // Check craft skill level for the final item itself
+      if (ctx.skillLevel(item.craft.skill) < item.craft.level) {
+        log.warn(`[${ctx.name}] Item Task: need ${item.craft.skill} lv${item.craft.level} to craft ${itemCode} (have lv${ctx.skillLevel(item.craft.skill)})`);
+        await this._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
+        return true;
+      }
+
+      return this._craftForItemTask(ctx, itemCode, item, plan, needed);
     }
 
     // Fallback gather
@@ -945,10 +968,164 @@ export class SkillRotationRoutine extends BaseRoutine {
       return this._gatherForItemTask(ctx, itemCode, resource, needed);
     }
 
-    // Shouldn't reach here
-    log.warn(`[${ctx.name}] Item Task: no path to obtain ${itemCode}, cancelling`);
-    await this._cancelItemTask(ctx, ITEMS_MASTER);
+    // Can't obtain this item — place order and cancel
+    log.warn(`[${ctx.name}] Item Task: no path to obtain ${itemCode}`);
+    await this._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
     return true;
+  }
+
+  async _craftForItemTask(ctx, itemCode, item, plan, needed) {
+    // How many of the final item do we need to craft?
+    // Each craft produces item.craft.quantity units
+    const craftYield = item.craft.quantity || 1;
+    const haveItem = ctx.itemCount(itemCode);
+    const craftRounds = Math.ceil((needed - haveItem) / craftYield);
+    if (craftRounds <= 0) {
+      // Already have enough — trade them
+      return this._tradeItemTask(ctx, itemCode, Math.min(haveItem, needed));
+    }
+
+    // Process each step in the recipe chain
+    for (const step of plan) {
+      const stepNeeded = step.quantity * craftRounds;
+      const stepHave = ctx.itemCount(step.itemCode);
+
+      if (stepHave >= stepNeeded) continue; // already have enough
+
+      const deficit = stepNeeded - stepHave;
+
+      if (step.type === 'gather') {
+        // Try bank first
+        if (!ctx.inventoryFull()) {
+          const bankResult = await this._withdrawForItemTask(ctx, step.itemCode, deficit);
+          if (ctx.itemCount(step.itemCode) >= stepNeeded) continue;
+        }
+
+        // Gather the rest
+        const loc = await gameData.getResourceLocation(step.resource.code);
+        if (!loc) {
+          log.warn(`[${ctx.name}] Item Task craft: can't find location for ${step.resource.code}`);
+          return true;
+        }
+
+        await equipForGathering(ctx, step.resource.skill);
+        await moveTo(ctx, loc.x, loc.y);
+        const result = await gatherOnce(ctx);
+        const items = result.details?.items || [];
+        log.info(`[${ctx.name}] Item Task craft: gathering ${step.itemCode} for ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${ctx.itemCount(step.itemCode)}/${stepNeeded})`);
+        // Return to let the loop call us again — we'll accumulate materials over multiple ticks
+        return true;
+      }
+
+      if (step.type === 'craft') {
+        // Check if we have the materials for this intermediate craft
+        const craftItem = gameData.getItem(step.itemCode);
+        if (!craftItem?.craft) continue;
+
+        const canCraft = Math.min(
+          ...craftItem.craft.items.map(mat =>
+            Math.floor(ctx.itemCount(mat.code) / mat.quantity)
+          )
+        );
+        if (canCraft <= 0) continue; // need to gather more, earlier steps will handle it
+
+        const toCraft = Math.min(canCraft, Math.ceil(deficit / (craftItem.craft.quantity || 1)));
+        const workshops = await gameData.getWorkshops();
+        const ws = workshops[craftItem.craft.skill];
+        if (!ws) {
+          log.warn(`[${ctx.name}] Item Task craft: no workshop for ${craftItem.craft.skill}`);
+          return true;
+        }
+
+        await moveTo(ctx, ws.x, ws.y);
+        const result = await api.craft(step.itemCode, toCraft, ctx.name);
+        await api.waitForCooldown(result);
+        await ctx.refresh();
+        log.info(`[${ctx.name}] Item Task craft: crafted ${step.itemCode} x${toCraft} (${ctx.itemCount(step.itemCode)}/${stepNeeded})`);
+        return true;
+      }
+
+      if (step.type === 'fight') {
+        // Need to fight a monster for a drop — skip for now if we can't
+        log.warn(`[${ctx.name}] Item Task craft: need ${step.itemCode} from ${step.monster?.code || 'unknown'} — fight drops not yet supported in item tasks`);
+        return true;
+      }
+    }
+
+    // All materials ready — craft the final item
+    const canCraftFinal = Math.min(
+      ...item.craft.items.map(mat =>
+        Math.floor(ctx.itemCount(mat.code) / mat.quantity)
+      )
+    );
+    if (canCraftFinal <= 0) {
+      // Shouldn't happen if steps above ran correctly, but safety check
+      log.warn(`[${ctx.name}] Item Task craft: have all steps but can't craft ${itemCode}?`);
+      return true;
+    }
+
+    const toCraft = Math.min(canCraftFinal, craftRounds);
+    const workshops = await gameData.getWorkshops();
+    const ws = workshops[item.craft.skill];
+    if (!ws) {
+      log.warn(`[${ctx.name}] Item Task craft: no workshop for ${item.craft.skill}`);
+      return true;
+    }
+
+    await moveTo(ctx, ws.x, ws.y);
+    const result = await api.craft(itemCode, toCraft, ctx.name);
+    await api.waitForCooldown(result);
+    await ctx.refresh();
+    const produced = toCraft * craftYield;
+    log.info(`[${ctx.name}] Item Task craft: crafted ${itemCode} x${produced}`);
+
+    // Trade what we have
+    const tradeQty = Math.min(ctx.itemCount(itemCode), needed);
+    if (tradeQty > 0) {
+      return this._tradeItemTask(ctx, itemCode, tradeQty);
+    }
+    return true;
+  }
+
+  async _placeOrderAndCancel(ctx, itemCode, needed, masterLoc) {
+    // Try to place an order on the orderboard
+    const item = gameData.getItem(itemCode);
+    const resource = gameData.getResourceForDrop(itemCode);
+
+    if (resource) {
+      this.rotation._enqueueOrder({
+        sourceType: 'gather',
+        sourceCode: resource.code,
+        gatherSkill: resource.skill,
+        sourceLevel: resource.level,
+        itemCode,
+        requesterName: ctx.name,
+        quantity: needed,
+      });
+      log.info(`[${ctx.name}] Item Task: placed orderboard request for ${itemCode} x${needed} (gather ${resource.code})`);
+    } else if (item?.craft) {
+      // For crafted items, place order for the raw materials
+      const plan = gameData.resolveRecipeChain(item.craft);
+      if (plan) {
+        for (const step of plan) {
+          if (step.type === 'gather' && step.resource) {
+            this.rotation._enqueueOrder({
+              sourceType: 'gather',
+              sourceCode: step.resource.code,
+              gatherSkill: step.resource.skill,
+              sourceLevel: step.resource.level,
+              itemCode: step.itemCode,
+              requesterName: ctx.name,
+              recipeCode: itemCode,
+              quantity: step.quantity * needed,
+            });
+            log.info(`[${ctx.name}] Item Task: placed orderboard request for ${step.itemCode} x${step.quantity * needed} (for ${itemCode})`);
+          }
+        }
+      }
+    }
+
+    await this._cancelItemTask(ctx, masterLoc);
   }
 
   async _cancelItemTask(ctx, masterLoc) {
