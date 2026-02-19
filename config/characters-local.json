@@ -174,7 +174,7 @@
             "weaponcrafting": 1,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
-            "combat": 0,
+            "combat": 1,
             "npc_task": 0,
             "item_task": 0
           },
@@ -222,7 +222,7 @@
             "weaponcrafting": 0,
             "gearcrafting": 1,
             "jewelrycrafting": 0,
-            "combat": 0,
+            "combat": 1,
             "npc_task": 0,
             "item_task": 0
           },

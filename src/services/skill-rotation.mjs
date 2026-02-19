@@ -32,6 +32,7 @@ const DEFAULT_ORDER_BOARD = Object.freeze({
   leaseMs: 120_000,
   blockedRetryMs: 600_000,
 });
+const DEFAULT_RECIPE_BLOCK_MS = 120_000;
 
 function normalizeOrderBoardConfig(cfg = {}) {
   const raw = cfg && typeof cfg === 'object' ? cfg : {};
@@ -61,6 +62,7 @@ export class SkillRotation {
       craftBlacklist = {},
       taskCollection = {},
       orderBoard = {},
+      recipeBlockMs = DEFAULT_RECIPE_BLOCK_MS,
     } = {},
     {
       gameDataSvc = gameData,
@@ -84,7 +86,12 @@ export class SkillRotation {
     this.optimizeForMonster = optimizeForMonsterFn;
     this.createOrMergeOrder = createOrMergeOrderFn;
     this.orderBoard = normalizeOrderBoardConfig(orderBoard);
+    const parsedRecipeBlockMs = Number(recipeBlockMs);
+    this.recipeBlockMs = Number.isFinite(parsedRecipeBlockMs) && parsedRecipeBlockMs > 0
+      ? Math.floor(parsedRecipeBlockMs)
+      : DEFAULT_RECIPE_BLOCK_MS;
     this._exchangeNeeds = new Map();              // { itemCode → qty } dynamic targets from crafting
+    this._recipeBlocks = new Map();               // { "skill:recipeCode" → expiresAtMs }
 
     // Current rotation state
     this.currentSkill = null;
@@ -113,6 +120,7 @@ export class SkillRotation {
 
   /** Pick the next random skill and set up its state. */
   async pickNext(ctx) {
+    this._pruneRecipeBlocks();
     this._resetState();
     this._exchangeNeeds.clear(); // rebuild dynamic targets from crafting setup
 
@@ -137,6 +145,7 @@ export class SkillRotation {
   /** Force rotation to a different skill (e.g., after combat loss). */
   async forceRotate(ctx) {
     const prev = this.currentSkill;
+    this._pruneRecipeBlocks();
     this._resetState();
 
     const others = this.skills.filter(s => s !== prev);
@@ -192,6 +201,52 @@ export class SkillRotation {
       .map(s => ({ skill: s, score: -Math.log(Math.random()) / (this.weights[s] || 1) }))
       .sort((a, b) => a.score - b.score)
       .map(e => e.skill);
+  }
+
+  _recipeBlockKey(skill, recipeCode) {
+    return `${skill}:${recipeCode}`;
+  }
+
+  _pruneRecipeBlocks(now = Date.now()) {
+    for (const [key, expiresAt] of this._recipeBlocks) {
+      if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+        this._recipeBlocks.delete(key);
+      }
+    }
+  }
+
+  _isRecipeBlocked(skill, recipeCode, now = Date.now()) {
+    const key = this._recipeBlockKey(skill, recipeCode);
+    const expiresAt = this._recipeBlocks.get(key);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      this._recipeBlocks.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  blockRecipe(skill, recipeCode, { reason = 'temporarily unavailable', durationMs = this.recipeBlockMs, ctx = null } = {}) {
+    if (!skill || !recipeCode) return false;
+    const ms = Number(durationMs);
+    const ttlMs = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : this.recipeBlockMs;
+    const key = this._recipeBlockKey(skill, recipeCode);
+    const now = Date.now();
+    const prev = this._recipeBlocks.get(key) || 0;
+    const next = Math.max(prev, now + ttlMs);
+
+    this._recipeBlocks.set(key, next);
+    if (next > prev) {
+      const seconds = Math.max(1, Math.ceil((next - now) / 1000));
+      const who = ctx?.name ? `[${ctx.name}] ` : '';
+      log.info(`${who}Rotation: temporarily blocking ${skill} recipe ${recipeCode} for ${seconds}s (${reason})`);
+    }
+
+    return true;
+  }
+
+  blockCurrentRecipe({ reason = 'temporarily unavailable', durationMs = this.recipeBlockMs, ctx = null } = {}) {
+    if (!this.currentSkill || !this._recipe?.code) return false;
+    return this.blockRecipe(this.currentSkill, this._recipe.code, { reason, durationMs, ctx });
   }
 
   async _setupSkill(skill, ctx) {
@@ -257,10 +312,12 @@ export class SkillRotation {
 
     const bank = await this.gameData.getBankItems();
     const blacklist = new Set(this.craftBlacklist[skill] || []);
+    this._pruneRecipeBlocks();
 
     const scored = [];
     for (const recipe of recipes) {
       if (blacklist.has(recipe.code)) continue;
+      if (this._isRecipeBlocked(skill, recipe.code)) continue;
 
       const candidate = this._buildCraftCandidate(recipe, ctx, bank);
       if (!candidate) continue;
@@ -269,7 +326,7 @@ export class SkillRotation {
     if (scored.length === 0) return false;
 
     // Verify combat viability for candidates that need monster drops
-    const verified = await this._verifyCombatViability(scored, ctx);
+    const verified = await this._verifyCombatViability(scored, ctx, skill);
     if (verified.length === 0) return false;
 
     const bankOnlyCandidates = verified.filter(c => c.bankOnly);
@@ -366,7 +423,7 @@ export class SkillRotation {
    * where bank doesn't already cover the requirement, simulate the fight.
    * Candidates that don't need combat pass through unchanged.
    */
-  async _verifyCombatViability(candidates, ctx) {
+  async _verifyCombatViability(candidates, ctx, skill = this.currentSkill) {
     const verified = [];
     // Cache sim results per monster to avoid redundant sims
     const simCache = new Map();
@@ -389,6 +446,12 @@ export class SkillRotation {
           viable = false;
           this._queueFightOrder(step, candidate.recipe, ctx);
           log.info(`[${ctx.name}] Rotation: ${candidate.recipe.code} needs ${step.itemCode} from ${monsterCode} — can't win fight, skipping`);
+          if (skill && candidate.recipe?.code) {
+            this.blockRecipe(skill, candidate.recipe.code, {
+              reason: `combat not viable vs ${monsterCode}`,
+              ctx,
+            });
+          }
           break;
         }
       }

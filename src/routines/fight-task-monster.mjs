@@ -45,7 +45,9 @@ export class FightTaskMonsterRoutine extends BaseRoutine {
 
     await prepareCombatPotions(ctx, monster);
     await moveTo(ctx, loc.x, loc.y);
-    if (!(await restBeforeFight(ctx, monster))) return false;
+    if (!(await restBeforeFight(ctx, monster))) {
+      log.warn(`[${ctx.name}] NPC Task: can't rest before fighting ${monster}, attempting fight anyway`);
+    }
 
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);

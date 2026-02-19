@@ -228,6 +228,86 @@ async function testCraftingXpFallsBackToHighestLevelWhenNoBankOnly() {
   assert.equal(rotation.recipe?.code, 'cooked_bass');
 }
 
+async function testCraftingSkipsTemporarilyBlockedRecipe() {
+  const lowRecipe = makeRecipe('cooked_shrimp', 'cooking', 5);
+  const highRecipe = makeRecipe('cooked_bass', 'cooking', 25);
+  const planByRecipe = new Map([
+    [lowRecipe.code, [
+      {
+        type: 'gather',
+        itemCode: 'raw_shrimp',
+        resource: { code: 'shrimp_fishing_spot', skill: 'fishing', level: 1 },
+        quantity: 2,
+      },
+    ]],
+    [highRecipe.code, [
+      {
+        type: 'gather',
+        itemCode: 'raw_bass',
+        resource: { code: 'bass_fishing_spot', skill: 'fishing', level: 1 },
+        quantity: 2,
+      },
+    ]],
+  ]);
+
+  const stub = makeGameDataStub({
+    findItems: ({ craftSkill, maxLevel }) =>
+      craftSkill === 'cooking' && maxLevel >= 25 ? [lowRecipe, highRecipe] : [],
+    getBankItems: async () => new Map(),
+    resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
+    canFulfillPlan: () => true,
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { cooking: 1 } },
+    { gameDataSvc: stub, findBestCombatTargetFn: async () => null },
+  );
+
+  rotation.blockRecipe('cooking', 'cooked_bass', { durationMs: 60_000 });
+  const chosen = await rotation.pickNext(makeCtx({ skillLevels: { cooking: 25 } }));
+  assert.equal(chosen, 'cooking');
+  assert.equal(rotation.recipe?.code, 'cooked_shrimp');
+}
+
+async function testUnwinnableCombatRecipeIsTemporarilyBlocked() {
+  const recipe = makeRecipe('wolf_hat', 'gearcrafting', 20);
+  const plan = [{
+    type: 'fight',
+    itemCode: 'wolf_pelt',
+    quantity: 1,
+    monster: { code: 'wolf', level: 20 },
+  }];
+  let optimizeCalls = 0;
+
+  const stub = makeGameDataStub({
+    findItems: ({ craftSkill, maxLevel }) =>
+      craftSkill === 'gearcrafting' && maxLevel >= 20 ? [recipe] : [],
+    getBankItems: async () => new Map(),
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => true,
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { gearcrafting: 1 } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      optimizeForMonsterFn: async () => {
+        optimizeCalls += 1;
+        return { simResult: { win: false, hpLostPercent: 100 } };
+      },
+    },
+  );
+
+  const ctx = makeCtx({ skillLevels: { gearcrafting: 20 } });
+  const first = await rotation.pickNext(ctx);
+  const second = await rotation.pickNext(ctx);
+
+  assert.equal(first, null, 'first pass should reject the unwinnable recipe');
+  assert.equal(second, null, 'second pass should skip the blocked recipe');
+  assert.equal(optimizeCalls, 1, 'unwinnable recipe should be blocked and not re-simulated immediately');
+}
+
 async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
   const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
   const plan = [
@@ -568,6 +648,8 @@ async function run() {
   await testAlchemyCraftingNonViableFallsBackToGathering();
   await testCraftingXpPrefersBankOnlyRecipe();
   await testCraftingXpFallsBackToHighestLevelWhenNoBankOnly();
+  await testCraftingSkipsTemporarilyBlockedRecipe();
+  await testUnwinnableCombatRecipeIsTemporarilyBlocked();
   await testOrderBoardCreatesGatherOrderForUnmetGatherSkill();
   await testOrderBoardCanDisableOrderCreation();
   await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();

@@ -481,12 +481,8 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     await moveTo(ctx, loc.x, loc.y);
     if (!(await restBeforeFight(ctx, monsterCode))) {
-      if (claim) {
-        await this._blockAndReleaseClaim(ctx, 'rest_failed');
-        return true;
-      }
-      await this.rotation.forceRotate(ctx);
-      return true;
+      const context = claim ? 'order fight' : 'combat';
+      log.warn(`[${ctx.name}] ${context}: can't rest before fighting ${monsterCode}, attempting fight anyway`);
     }
 
     const result = await fightOnce(ctx);
@@ -652,11 +648,10 @@ export class SkillRotationRoutine extends BaseRoutine {
         await equipForCombat(ctx, monsterCode);
         await prepareCombatPotions(ctx, monsterCode);
 
-        // Rest before fighting if needed
+        // Try to rest first, but don't skip crafting if rest is unavailable.
+        // Dedicated crafters may still need to attempt low-HP fights for drops.
         if (!(await restBeforeFight(ctx, monsterCode))) {
-          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: can't rest before fighting ${monsterCode} for ${step.itemCode}, skipping recipe`);
-          await this.rotation.forceRotate(ctx);
-          return true;
+          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: can't rest before fighting ${monsterCode} for ${step.itemCode}, attempting fight anyway`);
         }
 
         await moveTo(ctx, monsterLoc.x, monsterLoc.y);
@@ -914,8 +909,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     await moveTo(ctx, monsterLoc.x, monsterLoc.y);
     if (!(await restBeforeFight(ctx, monster))) {
-      await this.rotation.forceRotate(ctx);
-      return true;
+      log.warn(`[${ctx.name}] NPC Task: can't rest before fighting ${monster}, attempting fight anyway`);
     }
 
     const result = await fightOnce(ctx);

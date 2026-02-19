@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAtMs": 1771533920217,
+  "updatedAtMs": 1771536099486,
   "orders": [
     {
       "id": "b5c004e3-e5e5-4fb7-91ae-11ae5619a1c2",
@@ -27,10 +27,10 @@
       },
       "claim": null,
       "blockedByChar": {
-        "GenoDev3": 1771533967751
+        "GenoDev3": 1771536624183
       },
       "createdAtMs": 1771533004795,
-      "updatedAtMs": 1771533841277,
+      "updatedAtMs": 1771536024183,
       "fulfilledAtMs": null
     },
     {
@@ -59,7 +59,7 @@
       "claim": null,
       "blockedByChar": {},
       "createdAtMs": 1771533004796,
-      "updatedAtMs": 1771533841278,
+      "updatedAtMs": 1771536021965,
       "fulfilledAtMs": null
     },
     {
@@ -88,7 +88,7 @@
       "claim": null,
       "blockedByChar": {},
       "createdAtMs": 1771533004796,
-      "updatedAtMs": 1771533841278,
+      "updatedAtMs": 1771536021965,
       "fulfilledAtMs": null
     },
     {
@@ -115,7 +115,7 @@
       "claim": null,
       "blockedByChar": {},
       "createdAtMs": 1771533017925,
-      "updatedAtMs": 1771533920217,
+      "updatedAtMs": 1771536021965,
       "fulfilledAtMs": null
     },
     {
@@ -145,7 +145,7 @@
       "claim": null,
       "blockedByChar": {},
       "createdAtMs": 1771533071198,
-      "updatedAtMs": 1771533907575,
+      "updatedAtMs": 1771536099486,
       "fulfilledAtMs": null
     },
     {
@@ -175,7 +175,7 @@
       "claim": null,
       "blockedByChar": {},
       "createdAtMs": 1771533071199,
-      "updatedAtMs": 1771533907576,
+      "updatedAtMs": 1771536099486,
       "fulfilledAtMs": null
     },
     {
@@ -188,8 +188,8 @@
       "craftSkill": null,
       "sourceLevel": 2,
       "requestedQty": 2,
-      "remainingQty": 2,
-      "status": "open",
+      "remainingQty": 0,
+      "status": "fulfilled",
       "requesters": [
         "GenoDev4"
       ],
@@ -200,12 +200,10 @@
         "GenoDev4::sticky_sword": 2
       },
       "claim": null,
-      "blockedByChar": {
-        "GenoDev2": 1771534507142
-      },
+      "blockedByChar": {},
       "createdAtMs": 1771533071199,
-      "updatedAtMs": 1771533907142,
-      "fulfilledAtMs": null
+      "updatedAtMs": 1771536021965,
+      "fulfilledAtMs": 1771535824884
     },
     {
       "id": "81320ae4-d170-41a7-bebd-49f9fd5cffc8",
@@ -217,8 +215,8 @@
       "craftSkill": null,
       "sourceLevel": 4,
       "requestedQty": 2,
-      "remainingQty": 2,
-      "status": "open",
+      "remainingQty": 0,
+      "status": "fulfilled",
       "requesters": [
         "GenoDev4"
       ],
@@ -229,12 +227,10 @@
         "GenoDev4::sticky_dagger": 2
       },
       "claim": null,
-      "blockedByChar": {
-        "GenoDev2": 1771534519108
-      },
+      "blockedByChar": {},
       "createdAtMs": 1771533071199,
-      "updatedAtMs": 1771533919108,
-      "fulfilledAtMs": null
+      "updatedAtMs": 1771536021965,
+      "fulfilledAtMs": 1771535772963
     }
   ]
 }
