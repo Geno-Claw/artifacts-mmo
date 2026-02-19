@@ -10,6 +10,7 @@ import { canUseItem } from './services/item-conditions.mjs';
 import { EQUIPMENT_SLOTS } from './services/game-data.mjs';
 import { hpNeededForFight, simulateCombat } from './services/combat-simulator.mjs';
 import { optimizeForMonster, optimizeForGathering } from './services/gear-optimizer.mjs';
+import { ensureMissingGatherToolOrder } from './services/tool-policy.mjs';
 import {
   depositAllInventory,
   depositBankItems,
@@ -679,7 +680,14 @@ export async function equipForGathering(ctx, skill) {
   }
 
   const result = await optimizeForGathering(ctx, skill);
-  if (!result) return { changed: false };
+  if (!result) {
+    const order = ensureMissingGatherToolOrder(ctx, skill);
+    return {
+      changed: false,
+      missingToolCode: order?.toolCode || null,
+      orderQueued: order?.queued === true,
+    };
+  }
 
   const { loadout } = result;
 

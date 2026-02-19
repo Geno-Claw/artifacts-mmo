@@ -483,41 +483,15 @@ async function computeCharacterRequirements(name, ctx) {
   };
 }
 
-function resolveDesiredOrderSource(itemCode) {
+function resolveCraftDesiredOrder(itemCode) {
   const item = _deps.gameDataSvc.getItem(itemCode);
-
   if (item?.craft?.skill) {
     return {
-      sourceType: 'craft',
       sourceCode: itemCode,
       sourceLevel: toPositiveInt(item.craft.level || item.level),
-      gatherSkill: null,
       craftSkill: item.craft.skill,
     };
   }
-
-  const resource = _deps.gameDataSvc.getResourceForDrop(itemCode);
-  if (resource) {
-    return {
-      sourceType: 'gather',
-      sourceCode: resource.code,
-      sourceLevel: toPositiveInt(resource.level),
-      gatherSkill: resource.skill,
-      craftSkill: null,
-    };
-  }
-
-  const monsterDrop = _deps.gameDataSvc.getMonsterForDrop(itemCode);
-  if (monsterDrop?.monster?.code) {
-    return {
-      sourceType: 'fight',
-      sourceCode: monsterDrop.monster.code,
-      sourceLevel: toPositiveInt(monsterDrop.monster.level),
-      gatherSkill: null,
-      craftSkill: null,
-    };
-  }
-
   return null;
 }
 
@@ -778,7 +752,10 @@ export function publishDesiredOrdersForCharacter(name) {
   let created = 0;
 
   for (const [itemCode, qty] of row.desired.entries()) {
-    const source = resolveDesiredOrderSource(itemCode);
+    const missingQty = toPositiveInt(qty);
+    if (missingQty <= 0) continue;
+
+    const source = resolveCraftDesiredOrder(itemCode);
     if (!source) continue;
 
     try {
@@ -786,12 +763,11 @@ export function publishDesiredOrdersForCharacter(name) {
         requesterName: name,
         recipeCode: `gear_state:${name}:${itemCode}`,
         itemCode,
-        sourceType: source.sourceType,
+        sourceType: 'craft',
         sourceCode: source.sourceCode,
-        gatherSkill: source.gatherSkill,
         craftSkill: source.craftSkill,
         sourceLevel: source.sourceLevel,
-        quantity: qty,
+        quantity: missingQty,
       });
       created += 1;
     } catch (err) {

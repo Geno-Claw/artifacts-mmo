@@ -13,6 +13,7 @@ const {
   cleanupExpiredReservations,
   equippedCount,
   getBankItems,
+  getCharacterLevelsSnapshot,
   globalCount,
   initialize,
   invalidateBank,
@@ -72,6 +73,11 @@ async function run() {
   assert.equal(inventoryCount('wooden_shield'), 3, 'inventory shield total from startup');
   assert.equal(equippedCount('wooden_shield'), 2, 'equipped shield total from startup');
   assert.equal(globalCount('wooden_shield'), 13, 'global shield total from startup');
+  assert.deepEqual(
+    getCharacterLevelsSnapshot(),
+    {},
+    'unknown levels should not be tracked',
+  );
 
   // Reservation accounting: available should exclude reservations from other chars.
   const r1 = reserve('wooden_shield', 2, 'A', 200);
@@ -116,10 +122,11 @@ async function run() {
   // Character map rebuild should replace old values, not merge.
   updateCharacter('A', makeChar('A', {
     inventory: [{ code: 'wooden_shield', quantity: 4 }],
-    slots: { shield_slot: null, ring1_slot: null, ring2_slot: 'copper_ring' },
+    slots: { shield_slot: null, ring1_slot: null, ring2_slot: 'copper_ring', level: 12 },
   }));
   assert.equal(inventoryCount('wooden_shield'), 6, 'inventory rebuild replaced char A data');
   assert.equal(equippedCount('wooden_shield'), 1, 'equipment rebuild replaced char A slots');
+  assert.equal(getCharacterLevelsSnapshot().A, 12, 'character level snapshot should refresh with updateCharacter');
 
   // Bank deltas should update immediately and clamp at zero.
   applyBankDelta([{ code: 'wooden_shield', quantity: 2 }], 'withdraw', { reason: 'test withdraw' });

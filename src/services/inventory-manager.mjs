@@ -13,6 +13,7 @@ let _api = api;
 let bank = new Map();             // code -> quantity
 let charInventory = new Map();    // charName -> Map<code, quantity>
 let charEquipment = new Map();    // charName -> Map<code, quantity>
+let charLevels = new Map();       // charName -> level
 let reservations = new Map();     // reservationId -> { code, qty, charName, expiresAt }
 let reservationSeq = 0;
 
@@ -90,6 +91,12 @@ export function updateCharacter(name, charData) {
   if (!name || !charData) return;
   charInventory.set(name, toItemMap(charData.inventory || []));
   charEquipment.set(name, toEquipmentMap(charData));
+  const level = Number(charData.level);
+  if (Number.isFinite(level) && level > 0) {
+    charLevels.set(name, Math.floor(level));
+  } else {
+    charLevels.delete(name);
+  }
 }
 
 export function invalidateBank(reason = '') {
@@ -231,6 +238,14 @@ export function globalCount(code) {
   return bankCount(code) + inventoryCount(code) + equippedCount(code);
 }
 
+export function getCharacterLevelsSnapshot() {
+  const out = {};
+  for (const [name, level] of charLevels.entries()) {
+    out[name] = level;
+  }
+  return out;
+}
+
 export function charHasEquipped(name, code) {
   return (charEquipment.get(name)?.get(code) || 0) > 0;
 }
@@ -321,6 +336,7 @@ export function snapshot() {
     bankRevision,
     charInventory: nestedMapToObject(charInventory),
     charEquipment: nestedMapToObject(charEquipment),
+    charLevels: mapToObject(charLevels),
     reservations: reservationRows,
   };
 }
@@ -334,6 +350,7 @@ export function _resetForTests() {
   bank = new Map();
   charInventory = new Map();
   charEquipment = new Map();
+  charLevels = new Map();
   reservations = new Map();
   reservationSeq = 0;
   lastBankFetch = 0;

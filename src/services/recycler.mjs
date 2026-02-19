@@ -6,17 +6,23 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { bankCount, globalCount } from './inventory-manager.mjs';
+import { bankCount, globalCount, getCharacterLevelsSnapshot } from './inventory-manager.mjs';
 import { getClaimedTotal } from './gear-state.mjs';
 import {
   depositBankItems,
   withdrawBankItems,
 } from './bank-ops.mjs';
 import { getSellRules } from './ge-seller.mjs';
+import {
+  computeLatestToolBySkill,
+  computeToolNeedsByCode,
+  computeToolTargetsByCode,
+} from './tool-policy.mjs';
 import { moveTo } from '../helpers.mjs';
 
 const TARGET_BANK_UNIQUE_SLOTS = 45;
 const MAX_RECYCLE_PASSES = 6;
+const LATEST_TOOL_BANK_RESERVE = 5;
 
 let _deps = {
   gameDataSvc: gameData,
@@ -24,6 +30,10 @@ let _deps = {
   getClaimedTotalFn: getClaimedTotal,
   globalCountFn: globalCount,
   bankCountFn: bankCount,
+  getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+  computeToolNeedsByCodeFn: computeToolNeedsByCode,
+  computeLatestToolBySkillFn: computeLatestToolBySkill,
+  computeToolTargetsByCodeFn: computeToolTargetsByCode,
   withdrawBankItemsFn: withdrawBankItems,
   depositBankItemsFn: depositBankItems,
   moveToFn: moveTo,
@@ -48,6 +58,14 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
 
   const candidates = [];
   const neverSellSet = new Set(sellRules.neverSell || []);
+  const levelsByChar = _deps.getCharacterLevelsSnapshotFn();
+  const needsByCode = _deps.computeToolNeedsByCodeFn(levelsByChar);
+  const latestBySkill = _deps.computeLatestToolBySkillFn(levelsByChar);
+  const targetsByCode = _deps.computeToolTargetsByCodeFn(levelsByChar);
+  const latestToolCodes = new Set();
+  for (const tool of latestBySkill.values()) {
+    if (tool?.code) latestToolCodes.add(tool.code);
+  }
 
   for (const [code, bankQty] of bankItems.entries()) {
     if (neverSellSet.has(code)) continue;
@@ -58,16 +76,35 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
     // Must have craft property to be recyclable
     if (!item.craft?.skill) continue;
 
-    const keep = _deps.getClaimedTotalFn(code);
+    const claimed = _deps.getClaimedTotalFn(code);
     const totalOwned = _deps.globalCountFn(code);
-    const surplus = totalOwned - keep;
-    const qty = Math.min(Math.max(surplus, 0), _deps.bankCountFn(code));
+    const liveBankQty = _deps.bankCountFn(code);
+    const isTool = item.type === 'weapon' && item.subtype === 'tool';
+
+    let qty = 0;
+    let reason = '';
+
+    if (isTool) {
+      const needKeep = needsByCode.get(code) || 0;
+      const keepTotal = Math.max(claimed, needKeep);
+      const maxByGlobal = Math.max(0, totalOwned - keepTotal);
+      const bankFloor = latestToolCodes.has(code) ? LATEST_TOOL_BANK_RESERVE : 0;
+      const maxByBankFloor = bankFloor > 0 ? Math.max(0, liveBankQty - bankFloor) : liveBankQty;
+      qty = Math.min(maxByGlobal, maxByBankFloor, liveBankQty);
+      const target = targetsByCode.get(code) || needKeep;
+      reason = `tool surplus (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${claimed}, needs: ${needKeep}, target: ${target}, floor: ${bankFloor})`;
+    } else {
+      const surplus = totalOwned - claimed;
+      qty = Math.min(Math.max(surplus, 0), liveBankQty);
+      reason = `unclaimed equipment/jewelry (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${claimed})`;
+    }
+
     if (qty <= 0) continue;
 
     candidates.push({
       code,
       quantity: qty,
-      reason: `unclaimed equipment/jewelry (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${keep})`,
+      reason,
       craftSkill: item.craft.skill,
     });
   }
@@ -228,6 +265,10 @@ export function _resetForTests() {
     getClaimedTotalFn: getClaimedTotal,
     globalCountFn: globalCount,
     bankCountFn: bankCount,
+    getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+    computeToolNeedsByCodeFn: computeToolNeedsByCode,
+    computeLatestToolBySkillFn: computeLatestToolBySkill,
+    computeToolTargetsByCodeFn: computeToolTargetsByCode,
     withdrawBankItemsFn: withdrawBankItems,
     depositBankItemsFn: depositBankItems,
     moveToFn: moveTo,

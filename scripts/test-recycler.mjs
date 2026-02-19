@@ -51,7 +51,17 @@ function makeCtx(name = 'Recycler', capacity = 100) {
   };
 }
 
-function installAnalyzeDeps({ sellRules, itemsByCode, claimedByCode, globalByCode, bankByCode }) {
+function installAnalyzeDeps({
+  sellRules,
+  itemsByCode,
+  claimedByCode,
+  globalByCode,
+  bankByCode,
+  levelsByChar = {},
+  needsByCode = new Map(),
+  latestBySkill = new Map(),
+  targetsByCode = new Map(),
+}) {
   _setDepsForTests({
     getSellRulesFn: () => sellRules,
     gameDataSvc: {
@@ -65,6 +75,10 @@ function installAnalyzeDeps({ sellRules, itemsByCode, claimedByCode, globalByCod
     getClaimedTotalFn: (code) => claimedByCode.get(code) || 0,
     globalCountFn: (code) => globalByCode.get(code) || 0,
     bankCountFn: (code) => bankByCode.get(code) || 0,
+    getCharacterLevelsSnapshotFn: () => levelsByChar,
+    computeToolNeedsByCodeFn: () => needsByCode,
+    computeLatestToolBySkillFn: () => latestBySkill,
+    computeToolTargetsByCodeFn: () => targetsByCode,
   });
 }
 
@@ -114,6 +128,101 @@ async function testAnalyzeUsesClaimBasedProtection() {
     ],
     'candidates should exclude never-sell and keep claimed quantities',
   );
+}
+
+async function testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['stone_pick', 4],
+    ['iron_pick', 9],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['stone_pick', { code: 'stone_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+      ['iron_pick', { code: 'iron_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['stone_pick', 0],
+      ['iron_pick', 0],
+    ]),
+    globalByCode: new Map([
+      ['stone_pick', 4],
+      ['iron_pick', 9],
+    ]),
+    bankByCode: bankItems,
+    levelsByChar: {
+      Low: 5,
+      High: 25,
+    },
+    needsByCode: new Map([
+      ['stone_pick', 1],
+      ['iron_pick', 2],
+    ]),
+    latestBySkill: new Map([
+      ['mining', { code: 'iron_pick', level: 10 }],
+    ]),
+    targetsByCode: new Map([
+      ['stone_pick', 1],
+      ['iron_pick', 5],
+    ]),
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  rows.sort((a, b) => a.code.localeCompare(b.code));
+
+  assert.deepEqual(
+    rows.map(row => ({ code: row.code, quantity: row.quantity })),
+    [
+      { code: 'iron_pick', quantity: 4 },
+      { code: 'stone_pick', quantity: 3 },
+    ],
+    'tool candidates should keep lower-tier needs and reserve 5 latest-tier copies in bank',
+  );
+}
+
+async function testAnalyzeToolSurplusStillHonorsClaimedProtection() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['iron_pick', 7],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['iron_pick', { code: 'iron_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['iron_pick', 6],
+    ]),
+    globalByCode: new Map([
+      ['iron_pick', 7],
+    ]),
+    bankByCode: bankItems,
+    needsByCode: new Map([
+      ['iron_pick', 2],
+    ]),
+    latestBySkill: new Map([
+      ['mining', { code: 'iron_pick', level: 10 }],
+    ]),
+    targetsByCode: new Map([
+      ['iron_pick', 5],
+    ]),
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  assert.equal(rows.length, 1, 'tool should still be recyclable when above claimed quantity');
+  assert.equal(rows[0].code, 'iron_pick');
+  assert.equal(rows[0].quantity, 1, 'claimed tool quantities must be protected before recycling');
 }
 
 async function testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget() {
@@ -267,6 +376,8 @@ async function testClaimedEquipmentIsProtectedFromRecycle() {
 
 async function run() {
   await testAnalyzeUsesClaimBasedProtection();
+  await testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds();
+  await testAnalyzeToolSurplusStillHonorsClaimedProtection();
   await testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget();
   await testClaimedEquipmentIsProtectedFromRecycle();
   _resetForTests();

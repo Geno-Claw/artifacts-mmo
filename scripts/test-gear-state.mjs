@@ -339,7 +339,7 @@ async function testRecomputeTriggersOnRevisionAndLevel(basePath) {
   await flushGearState();
 }
 
-async function testPublishDesiredOrdersByAcquisitionType(basePath) {
+async function testPublishDesiredOrdersCraftOnlyForGloballyMissing(basePath) {
   _resetGearStateForTests();
 
   const ctx = makeCtx({ name: 'CrafterOne', level: 20, capacity: 30 });
@@ -349,7 +349,7 @@ async function testPublishDesiredOrdersByAcquisitionType(basePath) {
     gameDataSvc: {
       ...createBaseGameData([{ code: 'target', level: 20 }]),
       getItem(code) {
-        if (code === 'craft_item') {
+        if (code === 'craft_missing' || code === 'craft_in_bank') {
           return {
             code,
             level: 12,
@@ -361,24 +361,12 @@ async function testPublishDesiredOrdersByAcquisitionType(basePath) {
         }
         return { code, level: 5 };
       },
-      getResourceForDrop(code) {
-        if (code === 'gather_item') {
-          return { code: 'oak_node', skill: 'woodcutting', level: 8 };
-        }
-        return null;
-      },
-      getMonsterForDrop(code) {
-        if (code === 'fight_item') {
-          return { monster: { code: 'goblin', level: 6 } };
-        }
-        return null;
-      },
     },
     optimizeForMonsterFn: async () => ({
       loadout: mapLoadout({
-        weapon: 'craft_item',
-        shield: 'gather_item',
-        helmet: 'fight_item',
+        weapon: 'craft_missing',
+        shield: 'craft_in_bank',
+        helmet: 'noncraft_missing',
       }),
       simResult: {
         win: true,
@@ -388,7 +376,12 @@ async function testPublishDesiredOrdersByAcquisitionType(basePath) {
       },
     }),
     getBankRevisionFn: () => 5,
-    globalCountFn: () => 0,
+    globalCountFn: (code) => {
+      if (code === 'craft_missing') return 0;
+      if (code === 'craft_in_bank') return 2; // exists already; should not create order
+      if (code === 'noncraft_missing') return 0;
+      return 0;
+    },
     createOrMergeOrderFn: (request) => {
       created.push(request);
       return {
@@ -415,20 +408,97 @@ async function testPublishDesiredOrdersByAcquisitionType(basePath) {
   await refreshGearState({ force: true });
 
   const added = publishDesiredOrdersForCharacter('CrafterOne');
-  assert.equal(added, 3, 'three desired deficits should create three source orders');
+  assert.equal(added, 1, 'only globally-missing craftable item should create an order');
 
   const byItem = new Map(created.map(order => [order.itemCode, order]));
-  assert.equal(byItem.get('craft_item')?.sourceType, 'craft');
-  assert.equal(byItem.get('craft_item')?.sourceCode, 'craft_item');
-  assert.equal(byItem.get('craft_item')?.craftSkill, 'gearcrafting');
-  assert.equal(byItem.get('craft_item')?.recipeCode, 'gear_state:CrafterOne:craft_item');
+  assert.equal(byItem.get('craft_missing')?.sourceType, 'craft');
+  assert.equal(byItem.get('craft_missing')?.sourceCode, 'craft_missing');
+  assert.equal(byItem.get('craft_missing')?.craftSkill, 'gearcrafting');
+  assert.equal(byItem.get('craft_missing')?.recipeCode, 'gear_state:CrafterOne:craft_missing');
+  assert.equal(byItem.has('craft_in_bank'), false, 'existing account stock should not create craft order');
+  assert.equal(byItem.has('noncraft_missing'), false, 'non-craftable deficits should not create craft order');
 
-  assert.equal(byItem.get('gather_item')?.sourceType, 'gather');
-  assert.equal(byItem.get('gather_item')?.sourceCode, 'oak_node');
-  assert.equal(byItem.get('gather_item')?.gatherSkill, 'woodcutting');
+  await flushGearState();
+}
 
-  assert.equal(byItem.get('fight_item')?.sourceType, 'fight');
-  assert.equal(byItem.get('fight_item')?.sourceCode, 'goblin');
+async function testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(basePath) {
+  _resetGearStateForTests();
+
+  const alpha = makeCtx({ name: 'Alpha', level: 20, capacity: 30 });
+  const beta = makeCtx({ name: 'Beta', level: 20, capacity: 30 });
+  const created = [];
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'target', level: 20 }]),
+      getItem(code) {
+        if (code === 'shared_craft_item') {
+          return {
+            code,
+            level: 15,
+            craft: {
+              skill: 'gearcrafting',
+              level: 15,
+            },
+          };
+        }
+        return { code, level: 1 };
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'shared_craft_item',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 30,
+        turns: 5,
+        remainingHp: 70,
+      },
+    }),
+    getBankRevisionFn: () => 9,
+    // Exactly one copy exists account-wide, but both characters need one.
+    globalCountFn: (code) => (code === 'shared_craft_item' ? 1 : 0),
+    createOrMergeOrderFn: (request) => {
+      created.push(request);
+      return { id: `${request.requesterName}:${request.itemCode}` };
+    },
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-orders-shared-copy.json'),
+    characters: [
+      {
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      },
+      {
+        name: 'Beta',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      },
+    ],
+  });
+
+  registerContext(alpha);
+  registerContext(beta);
+  await refreshGearState({ force: true });
+
+  const alphaCreated = publishDesiredOrdersForCharacter('Alpha');
+  const betaCreated = publishDesiredOrdersForCharacter('Beta');
+  assert.equal(alphaCreated, 0, 'first character should be assigned the scarce copy');
+  assert.equal(
+    betaCreated,
+    1,
+    'second character should still create craft order even though account already has one copy',
+  );
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].requesterName, 'Beta');
+  assert.equal(created[0].itemCode, 'shared_craft_item');
+  assert.equal(created[0].sourceType, 'craft');
+  assert.equal(created[0].craftSkill, 'gearcrafting');
 
   await flushGearState();
 }
@@ -440,7 +510,8 @@ async function run() {
     await testTrimToFitReservesTenSlots(tempDir);
     await testScarcityAssignmentUsesCharacterOrder(tempDir);
     await testRecomputeTriggersOnRevisionAndLevel(tempDir);
-    await testPublishDesiredOrdersByAcquisitionType(tempDir);
+    await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);
+    await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
     console.log('test-gear-state: PASS');
   } finally {
     await flushGearState().catch(() => {});
