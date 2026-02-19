@@ -276,7 +276,7 @@ export async function optimizeForMonster(ctx, monsterCode) {
   }
 
   if (changes.length > 0) {
-    log.info(`[${ctx.name}] Gear optimizer vs ${monsterCode}: ${finalResult.win ? 'WIN' : 'LOSS'} ${finalResult.turns}t ${Math.round(finalResult.remainingHp)}hp | changes: ${changes.join(', ')}`);
+    log.debug(`[${ctx.name}] Gear optimizer vs ${monsterCode}: ${finalResult.win ? 'WIN' : 'LOSS'} ${finalResult.turns}t ${Math.round(finalResult.remainingHp)}hp | changes: ${changes.join(', ')}`);
   }
 
   return { loadout: codeLoadout, simResult: finalResult };
