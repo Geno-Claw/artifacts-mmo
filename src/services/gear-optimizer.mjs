@@ -276,7 +276,7 @@ export async function optimizeForMonster(ctx, monsterCode) {
   }
 
   if (changes.length > 0) {
-    log.debug(`[${ctx.name}] Gear optimizer vs ${monsterCode}: ${finalResult.win ? 'WIN' : 'LOSS'} ${finalResult.turns}t ${Math.round(finalResult.remainingHp)}hp | changes: ${changes.join(', ')}`);
+    // Simulation-only — only log at info level when actually equipping (see helpers.mjs)
   }
 
   return { loadout: codeLoadout, simResult: finalResult };
