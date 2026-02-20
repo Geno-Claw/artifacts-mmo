@@ -130,6 +130,35 @@ async function testAnalyzeUsesClaimBasedProtection() {
   );
 }
 
+async function testAnalyzeTreatsFallbackClaimsAsProtected() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['sticky_sword', 1],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['sticky_sword', { code: 'sticky_sword', type: 'weapon', craft: { skill: 'gearcrafting' } }],
+    ]),
+    // Simulates transition-safe "available" claim while upgrade is still desired.
+    claimedByCode: new Map([
+      ['sticky_sword', 1],
+    ]),
+    globalByCode: new Map([
+      ['sticky_sword', 1],
+    ]),
+    bankByCode: bankItems,
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  assert.equal(rows.length, 0, 'fully-claimed fallback gear should not be selected for recycle');
+}
+
 async function testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds() {
   _resetForTests();
 
@@ -376,6 +405,7 @@ async function testClaimedEquipmentIsProtectedFromRecycle() {
 
 async function run() {
   await testAnalyzeUsesClaimBasedProtection();
+  await testAnalyzeTreatsFallbackClaimsAsProtected();
   await testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds();
   await testAnalyzeToolSurplusStillHonorsClaimedProtection();
   await testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget();

@@ -501,7 +501,7 @@ const _gearCache = new Map();
  *
  * @param {import('./context.mjs').CharacterContext} ctx
  * @param {string} monsterCode
- * @returns {Promise<{ changed: boolean, simResult: object | null }>}
+ * @returns {Promise<{ changed: boolean, simResult: object | null, ready: boolean }>}
  */
 export async function equipForCombat(ctx, monsterCode) {
   const cacheKey = `${ctx.name}:${monsterCode}`;
@@ -516,12 +516,12 @@ export async function equipForCombat(ctx, monsterCode) {
       if (current !== expected) { gearMatches = false; break; }
     }
     if (gearMatches) {
-      return { changed: false, simResult: cached.simResult };
+      return { changed: false, simResult: cached.simResult, ready: true };
     }
   }
 
   const result = await optimizeForMonster(ctx, monsterCode);
-  if (!result) return { changed: false, simResult: null };
+  if (!result) return { changed: false, simResult: null, ready: false };
 
   const { loadout, simResult } = result;
 
@@ -537,7 +537,7 @@ export async function equipForCombat(ctx, monsterCode) {
 
   if (changes.length === 0) {
     _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
-    return { changed: false, simResult };
+    return { changed: false, simResult, ready: true };
   }
 
   log.info(`[${ctx.name}] Gear optimizer: ${changes.length} slot(s) to change for ${monsterCode}`);
@@ -576,6 +576,19 @@ export async function equipForCombat(ctx, monsterCode) {
         log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
       }
     }
+  }
+
+  const missingSlots = [];
+  for (const { slot, targetCode } of changes) {
+    if (!targetCode) continue;
+    if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
+      missingSlots.push(`${slot}:${targetCode}`);
+    }
+  }
+  if (missingSlots.length > 0) {
+    _gearCache.delete(cacheKey);
+    log.error(`[${ctx.name}] Combat gear not ready for ${monsterCode}; missing ${missingSlots.join(', ')}`);
+    return { changed: false, simResult, ready: false };
   }
 
   // Perform equipment swaps
@@ -635,7 +648,7 @@ export async function equipForCombat(ctx, monsterCode) {
   } else {
     _gearCache.delete(cacheKey);
   }
-  return { changed: true, simResult };
+  return { changed: true, simResult, ready: !swapsFailed };
 }
 
 /** Clear the gear cache for a character (e.g., on level-up). */

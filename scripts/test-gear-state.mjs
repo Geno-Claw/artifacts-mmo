@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,9 @@ const {
   _resetGearStateForTests,
   _setDepsForTests,
   flushGearState,
+  getAssignedMap,
+  getAvailableMap,
+  getClaimedTotal,
   getCharacterGearState,
   getOwnedDeficitRequests,
   getOwnedKeepByCodeForInventory,
@@ -73,6 +76,16 @@ function makeCtx({
 
 function sumObjectValues(obj = {}) {
   return Object.values(obj).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
+}
+
+function assertOwnedMirrorsAvailable(state, label = 'state') {
+  const owned = state?.owned || {};
+  const available = state?.available || {};
+  assert.deepEqual(
+    available,
+    owned,
+    `${label}: compatibility field owned should mirror available`,
+  );
 }
 
 function createBaseGameData(monsters = []) {
@@ -162,8 +175,10 @@ async function testRequiredMultiplicityDesiredAndPotionCarryAccounting(basePath)
 
   const state = getCharacterGearState('Alpha');
   assert.ok(state, 'character state should exist');
+  assertOwnedMirrorsAvailable(state, 'Alpha');
   assert.equal(state.required.ruby_ring, 2, 'ring slot multiplicity should be preserved');
-  assert.equal(state.owned.minor_health_potion, 4, 'owned should include target potion quantity');
+  assert.equal(state.available.minor_health_potion, 4, 'available should include target potion quantity');
+  assert.equal(state.assigned.minor_health_potion, 4, 'assigned should include target potion quantity');
   assert.equal(state.desired.ruby_ring, 1, 'desired should include ring deficit');
   assert.equal(state.desired.minor_health_potion, undefined, 'no potion deficit expected');
 
@@ -226,8 +241,9 @@ async function testBagIncludedInOwnedDeficitRequests(basePath) {
 
   const state = getCharacterGearState('Bagger');
   assert.ok(state, 'character state should exist');
+  assertOwnedMirrorsAvailable(state, 'Bagger');
   assert.equal(state.required.adventurer_bag, 1, 'required should include bag slot item');
-  assert.equal(state.owned.adventurer_bag, 1, 'owned should claim available bag slot item');
+  assert.equal(state.available.adventurer_bag, 1, 'available should claim bag slot item');
 
   const deficits = getOwnedDeficitRequests(ctx);
   assert.deepEqual(
@@ -290,9 +306,10 @@ async function testTrimToFitReservesTenSlots(basePath) {
 
   const state = getCharacterGearState('Trimmer');
   assert.ok(state, 'character state should exist');
-  assert.equal(sumObjectValues(state.owned), 3, 'owned carry set should be trimmed to capacity-10 budget');
+  assertOwnedMirrorsAvailable(state, 'Trimmer');
+  assert.equal(sumObjectValues(state.available), 3, 'available carry set should be trimmed to capacity-10 budget');
   assert.deepEqual(
-    Object.keys(state.owned).sort(),
+    Object.keys(state.available).sort(),
     ['helmet_1', 'shield_1', 'weapon_1'],
     'trim should keep highest slot-priority items from best target first',
   );
@@ -337,10 +354,269 @@ async function testScarcityAssignmentUsesCharacterOrder(basePath) {
   const alphaState = getCharacterGearState('Alpha');
   const betaState = getCharacterGearState('Beta');
 
-  assert.equal(alphaState.owned.rare_blade, 1, 'first character in config order should get scarce item');
+  assertOwnedMirrorsAvailable(alphaState, 'Alpha scarcity');
+  assertOwnedMirrorsAvailable(betaState, 'Beta scarcity');
+  assert.equal(alphaState.available.rare_blade, 1, 'first character in config order should get scarce item');
   assert.equal(alphaState.desired.rare_blade, undefined);
-  assert.equal(betaState.owned.rare_blade, undefined);
+  assert.equal(betaState.available.rare_blade, undefined);
   assert.equal(betaState.desired.rare_blade, 1, 'later character should receive desired deficit');
+
+  await flushGearState();
+}
+
+async function testCraftableDisplacementKeepsFallbackAvailable(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'Fallback',
+    level: 18,
+    capacity: 30,
+    equipped: {
+      weapon: 'sticky_sword',
+    },
+  });
+
+  let bankRevision = 20;
+  const counts = new Map([
+    ['sticky_sword', 1],
+    ['mushstaff', 0],
+  ]);
+  const itemsByCode = new Map([
+    ['sticky_sword', { code: 'sticky_sword', type: 'weapon', level: 8 }],
+    ['mushstaff', { code: 'mushstaff', type: 'weapon', level: 20, craft: { skill: 'weaponcrafting', level: 20 } }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'cow', level: 8 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'mushstaff',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: 4,
+        remainingHp: 120,
+      },
+    }),
+    getBankRevisionFn: () => bankRevision,
+    globalCountFn: (code) => counts.get(code) || 0,
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-fallback-displacement.json'),
+    characters: [{
+      name: 'Fallback',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Fallback');
+  assert.ok(state, 'character state should exist');
+  assertOwnedMirrorsAvailable(state, 'Fallback');
+  assert.equal(state.desired.mushstaff, 1, 'desired should include missing craftable upgrade');
+  assert.equal(state.available.sticky_sword, 1, 'fallback weapon should remain claimed while upgrade is missing');
+  assert.equal(getAvailableMap('Fallback').get('sticky_sword') || 0, 1, 'available map getter should include fallback claim');
+  assert.equal(getClaimedTotal('sticky_sword'), 1, 'claimed totals should protect fallback gear from recycler');
+
+  bankRevision += 1;
+  await refreshGearState();
+  await flushGearState();
+}
+
+async function testTransitionCompletionDropsFallbackClaim(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'Transitioner',
+    level: 18,
+    capacity: 30,
+    equipped: {
+      weapon: 'sticky_sword',
+    },
+  });
+
+  let bankRevision = 30;
+  const counts = new Map([
+    ['sticky_sword', 1],
+    ['mushstaff', 0],
+  ]);
+  const itemsByCode = new Map([
+    ['sticky_sword', { code: 'sticky_sword', type: 'weapon', level: 8 }],
+    ['mushstaff', { code: 'mushstaff', type: 'weapon', level: 20, craft: { skill: 'weaponcrafting', level: 20 } }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'cow', level: 8 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'mushstaff',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: 4,
+        remainingHp: 120,
+      },
+    }),
+    getBankRevisionFn: () => bankRevision,
+    globalCountFn: (code) => counts.get(code) || 0,
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-fallback-transition.json'),
+    characters: [{
+      name: 'Transitioner',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  let state = getCharacterGearState('Transitioner');
+  assert.equal(state.available.sticky_sword, 1, 'initial fallback claim should keep current weapon');
+  assert.equal(state.desired.mushstaff, 1, 'desired should initially request missing upgrade');
+
+  counts.set('mushstaff', 1);
+  bankRevision += 1;
+  await refreshGearState();
+
+  state = getCharacterGearState('Transitioner');
+  assert.equal(state.desired.mushstaff, undefined, 'desired should clear once upgrade is available');
+  assert.equal(state.assigned.mushstaff, 1, 'assigned should capture the new upgrade');
+  assert.equal(getAssignedMap('Transitioner').get('mushstaff') || 0, 1, 'assigned getter should expose upgrade assignment');
+  assert.equal(state.available.sticky_sword, undefined, 'fallback claim should drop after transition completes');
+  assert.equal(state.available.mushstaff, 1, 'available should mirror assigned once no fallback is needed');
+
+  await flushGearState();
+}
+
+async function testKeepMapProtectsInventoryFallbackWhenUpgradeMissing(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'KeepFallback',
+    level: 18,
+    capacity: 30,
+    equipped: {
+      weapon: 'copper_pick',
+    },
+    inventory: [
+      { code: 'sticky_sword', quantity: 1 },
+    ],
+  });
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'cow', level: 8 }]),
+      getItem(code) {
+        if (code === 'copper_pick') return { code, type: 'weapon', subtype: 'tool', level: 5 };
+        if (code === 'sticky_sword') return { code, type: 'weapon', level: 8 };
+        if (code === 'mushstaff') return { code, type: 'weapon', level: 20, craft: { skill: 'weaponcrafting', level: 20 } };
+        return null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'mushstaff',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 35,
+        turns: 5,
+        remainingHp: 70,
+      },
+    }),
+    getBankRevisionFn: () => 4,
+    globalCountFn: (code) => {
+      if (code === 'copper_pick') return 1;
+      if (code === 'sticky_sword') return 1;
+      return 0;
+    },
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-fallback-keep-map.json'),
+    characters: [{
+      name: 'KeepFallback',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('KeepFallback');
+  assert.equal(state.desired.mushstaff, 1, 'missing upgrade should stay in desired');
+  assert.equal(state.available.sticky_sword, 1, 'available should claim non-tool fallback from inventory');
+  assert.equal(state.available.copper_pick, undefined, 'tool should not be preferred over non-tool fallback');
+
+  const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+  assert.equal(keepByCode.sticky_sword, 1, 'inventory fallback weapon should be protected by keep map');
+
+  await flushGearState();
+}
+
+async function testMigrationBackfillsAvailableFromLegacyOwned(basePath) {
+  _resetGearStateForTests();
+
+  const statePath = join(basePath, 'gear-state-migration-v1.json');
+  writeFileSync(statePath, `${JSON.stringify({
+    version: 1,
+    updatedAtMs: 123,
+    bankRevisionSnapshot: 7,
+    levels: { Legacy: 12 },
+    characters: {
+      Legacy: {
+        owned: { sticky_sword: 1 },
+        desired: { mushstaff: 1 },
+        required: { mushstaff: 1 },
+        selectedMonsters: ['cow'],
+        bestTarget: 'cow',
+        levelSnapshot: 12,
+        bankRevisionSnapshot: 7,
+        updatedAtMs: 123,
+      },
+    },
+  }, null, 2)}\n`, 'utf-8');
+
+  _setDepsForTests({
+    gameDataSvc: createBaseGameData([]),
+    optimizeForMonsterFn: async () => null,
+    getBankRevisionFn: () => 7,
+    globalCountFn: () => 0,
+  });
+
+  await initializeGearState({
+    path: statePath,
+    characters: [{
+      name: 'Legacy',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+
+  const state = getCharacterGearState('Legacy');
+  assert.ok(state, 'migrated state should exist');
+  assert.equal(state.available.sticky_sword, 1, 'available should be backfilled from legacy owned');
+  assert.equal(state.owned.sticky_sword, 1, 'owned compatibility field should remain populated');
+  assert.equal(state.assigned.sticky_sword, undefined, 'assigned should default empty for v1 migration');
+  assert.equal(getAvailableMap('Legacy').get('sticky_sword') || 0, 1, 'available getter should read migrated claims');
+  assert.equal(getAssignedMap('Legacy').size, 0, 'assigned getter should default to empty map');
 
   await flushGearState();
 }
@@ -613,6 +889,10 @@ async function run() {
     await testBagIncludedInOwnedDeficitRequests(tempDir);
     await testTrimToFitReservesTenSlots(tempDir);
     await testScarcityAssignmentUsesCharacterOrder(tempDir);
+    await testCraftableDisplacementKeepsFallbackAvailable(tempDir);
+    await testTransitionCompletionDropsFallbackClaim(tempDir);
+    await testKeepMapProtectsInventoryFallbackWhenUpgradeMissing(tempDir);
+    await testMigrationBackfillsAvailableFromLegacyOwned(tempDir);
     await testRecomputeTriggersOnRevisionAndLevel(tempDir);
     await testGearStatePassesPlanningFlagToOptimizer(tempDir);
     await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);

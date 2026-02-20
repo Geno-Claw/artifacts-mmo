@@ -560,7 +560,12 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     // Optimize gear for target monster (cached — only runs once per target)
-    await equipForCombat(ctx, monsterCode);
+    const { ready = true } = await equipForCombat(ctx, monsterCode);
+    if (!ready) {
+      const context = claim ? 'order fight' : 'combat';
+      log.warn(`[${ctx.name}] ${context}: combat gear not ready for ${monsterCode}, deferring`);
+      return false;
+    }
     await prepareCombatPotions(ctx, monsterCode);
 
     // Withdraw food from bank for all remaining fights (once per combat goal)
@@ -736,7 +741,11 @@ export class SkillRotationRoutine extends BaseRoutine {
         }
 
         // Equip for combat against this monster
-        const { simResult } = await this._equipForCraftFight(ctx, monsterCode);
+        const { simResult, ready = true } = await this._equipForCraftFight(ctx, monsterCode);
+        if (!ready) {
+          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: combat gear not ready for ${monsterCode}, deferring recipe step`);
+          return false;
+        }
         if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
           await this._handleUnwinnableCraftFight(ctx, {
             monsterCode,
@@ -1019,7 +1028,11 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     // Optimize gear for NPC task monster — also validates fight is winnable
-    const { simResult } = await equipForCombat(ctx, monster);
+    const { simResult, ready = true } = await equipForCombat(ctx, monster);
+    if (!ready) {
+      log.warn(`[${ctx.name}] NPC Task: combat gear not ready for ${monster}, deferring`);
+      return false;
+    }
     if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
       log.warn(`[${ctx.name}] NPC Task: simulation predicts loss vs ${monster} even with optimal gear, skipping`);
       this.rotation.goalProgress = this.rotation.goalTarget;

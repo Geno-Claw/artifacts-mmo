@@ -39,7 +39,11 @@ export class FightTaskMonsterRoutine extends BaseRoutine {
 
     // Optimize gear when NPC task monster changes
     if (this._lastOptimizedMonster !== monster) {
-      await equipForCombat(ctx, monster);
+      const { ready = true } = await equipForCombat(ctx, monster);
+      if (!ready) {
+        log.warn(`[${ctx.name}] NPC Task: gear not ready for ${monster}, deferring`);
+        return false;
+      }
       this._lastOptimizedMonster = monster;
     }
 

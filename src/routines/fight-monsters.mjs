@@ -35,7 +35,11 @@ export class FightMonstersRoutine extends BaseRoutine {
   async execute(ctx) {
     // Optimize gear once when combat loop starts (not every fight)
     if (!this._gearOptimized) {
-      await equipForCombat(ctx, this.monster);
+      const { ready = true } = await equipForCombat(ctx, this.monster);
+      if (!ready) {
+        log.warn(`[${ctx.name}] combat: gear not ready for ${this.monster}, deferring`);
+        return false;
+      }
       this._gearOptimized = true;
     }
 

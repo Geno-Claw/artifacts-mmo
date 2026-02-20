@@ -3,10 +3,12 @@ import { depositAll } from '../helpers.mjs';
 import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
 import * as recycler from '../services/recycler.mjs';
+import * as gameData from '../services/game-data.mjs';
 import {
   depositGoldToBank,
 } from '../services/bank-ops.mjs';
 import {
+  getCharacterGearState,
   getOwnedKeepByCodeForInventory,
   publishDesiredOrdersForCharacter,
   refreshGearState,
@@ -31,7 +33,7 @@ export class DepositBankRoutine extends BaseRoutine {
     const cap = ctx.inventoryCapacity();
     if (cap <= 0) return false;
 
-    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+    const keepByCode = this._buildKeepByCode(ctx);
     const depositableCount = this._countDepositableInventory(ctx, keepByCode);
     if (this.threshold <= 0) return depositableCount > 0;
     return (depositableCount / cap) >= this.threshold;
@@ -41,7 +43,7 @@ export class DepositBankRoutine extends BaseRoutine {
     let keepByCode = {};
     try {
       await refreshGearState();
-      keepByCode = getOwnedKeepByCodeForInventory(ctx);
+      keepByCode = this._buildKeepByCode(ctx);
       publishDesiredOrdersForCharacter(ctx.name);
     } catch (err) {
       log.warn(`[${ctx.name}] Gear-state sync failed: ${err.message}`);
@@ -79,7 +81,7 @@ export class DepositBankRoutine extends BaseRoutine {
     }
 
     // Re-deposit any leftover inventory (failed recycles, etc.)
-    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+    const keepByCode = this._buildKeepByCode(ctx);
     const depositableCount = this._countDepositableInventory(ctx, keepByCode);
     if (depositableCount > 0) {
       log.info(`[${ctx.name}] Re-depositing unrecycled inventory`);
@@ -114,7 +116,7 @@ export class DepositBankRoutine extends BaseRoutine {
     }
 
     // Always re-deposit any leftover inventory items + gold
-    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+    const keepByCode = this._buildKeepByCode(ctx);
     const depositableCount = this._countDepositableInventory(ctx, keepByCode);
     if (depositableCount > 0) {
       log.info(`[${ctx.name}] Re-depositing unsold inventory`);
@@ -137,6 +139,27 @@ export class DepositBankRoutine extends BaseRoutine {
         log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
       }
     }
+  }
+
+  _buildKeepByCode(ctx) {
+    const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+
+    const equippedWeapon = `${ctx.get().weapon_slot || ''}`.trim();
+    if (equippedWeapon) {
+      keepByCode[equippedWeapon] = Math.max(keepByCode[equippedWeapon] || 0, 1);
+    }
+
+    const gearState = getCharacterGearState(ctx.name);
+    const required = gearState?.required && typeof gearState.required === 'object'
+      ? gearState.required
+      : {};
+    for (const code of Object.keys(required)) {
+      const item = gameData.getItem(code);
+      if (item?.type !== 'weapon') continue;
+      keepByCode[code] = Math.max(keepByCode[code] || 0, 1);
+    }
+
+    return keepByCode;
   }
 
   _countDepositableInventory(ctx, keepByCode = {}) {
