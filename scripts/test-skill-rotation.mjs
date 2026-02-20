@@ -9,6 +9,7 @@ process.env.ARTIFACTS_TOKEN ||= 'test-token';
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
 const orderBoard = await import('../src/services/order-board.mjs');
+const orderPriority = await import('../src/services/order-priority.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');
 const inventoryManager = await import('../src/services/inventory-manager.mjs');
 
@@ -19,6 +20,11 @@ const {
   initializeOrderBoard,
   listClaimableOrders,
 } = orderBoard;
+
+const {
+  _setDepsForTests: setOrderPriorityDepsForTests,
+  _resetForTests: resetOrderPriorityForTests,
+} = orderPriority;
 
 const {
   _setApiClientForTests: setBankOpsApiForTests,
@@ -79,6 +85,31 @@ function makeRecipe(code, skill, level) {
       _testCode: code,
     },
   };
+}
+
+function installOrderPriorityDeps(itemsByCode = new Map()) {
+  const equipmentTypes = new Set([
+    'weapon',
+    'shield',
+    'helmet',
+    'body_armor',
+    'leg_armor',
+    'boots',
+    'ring',
+    'amulet',
+    'bag',
+  ]);
+
+  setOrderPriorityDepsForTests({
+    gameDataSvc: {
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+      isEquipmentType(item) {
+        return item != null && equipmentTypes.has(item.type);
+      },
+    },
+  });
 }
 
 async function withTempOrderBoard(testFn) {
@@ -614,6 +645,210 @@ async function testAcquireCraftClaimSucceedsWhenPrechecksPass() {
   });
 }
 
+async function testAcquireGatherClaimPrioritizesToolOrders() {
+  await withTempOrderBoard(async () => {
+    installOrderPriorityDeps(new Map([
+      ['priority_tool', { code: 'priority_tool', type: 'weapon', subtype: 'tool' }],
+      ['priority_resource', { code: 'priority_resource', type: 'resource' }],
+      ['priority_weapon', { code: 'priority_weapon', type: 'weapon' }],
+      ['priority_gear', { code: 'priority_gear', type: 'ring' }],
+    ]));
+
+    try {
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+        },
+      });
+      routine.rotation = { currentSkill: 'mining' };
+
+      // Reverse of desired priority to verify sorting is applied.
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r1',
+        itemCode: 'priority_gear',
+        sourceType: 'gather',
+        sourceCode: 'rocks_gear',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r2',
+        itemCode: 'priority_weapon',
+        sourceType: 'gather',
+        sourceCode: 'rocks_weapon',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r3',
+        itemCode: 'priority_resource',
+        sourceType: 'gather',
+        sourceCode: 'rocks_resource',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r4',
+        itemCode: 'priority_tool',
+        sourceType: 'gather',
+        sourceCode: 'rocks_tool',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+
+      const claim = await routine._acquireGatherOrderClaim({ name: 'Tester' });
+      assert.equal(claim?.itemCode, 'priority_tool', 'gather claim should prioritize tool orders first');
+    } finally {
+      resetOrderPriorityForTests();
+    }
+  });
+}
+
+async function testAcquireCombatClaimPrioritizesToolOrders() {
+  await withTempOrderBoard(async () => {
+    installOrderPriorityDeps(new Map([
+      ['fight_tool', { code: 'fight_tool', type: 'weapon', subtype: 'tool' }],
+      ['fight_resource', { code: 'fight_resource', type: 'resource' }],
+      ['fight_weapon', { code: 'fight_weapon', type: 'weapon' }],
+      ['fight_gear', { code: 'fight_gear', type: 'helmet' }],
+    ]));
+
+    try {
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+        },
+      });
+      routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 5 } });
+
+      // Reverse of desired priority to verify sorting is applied.
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c1',
+        itemCode: 'fight_gear',
+        sourceType: 'fight',
+        sourceCode: 'rat_gear',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c2',
+        itemCode: 'fight_weapon',
+        sourceType: 'fight',
+        sourceCode: 'rat_weapon',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c3',
+        itemCode: 'fight_resource',
+        sourceType: 'fight',
+        sourceCode: 'rat_resource',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c4',
+        itemCode: 'fight_tool',
+        sourceType: 'fight',
+        sourceCode: 'rat_tool',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+
+      const claim = await routine._acquireCombatOrderClaim({ name: 'Tester' });
+      assert.equal(claim?.itemCode, 'fight_tool', 'combat claim should prioritize tool orders first');
+    } finally {
+      resetOrderPriorityForTests();
+    }
+  });
+}
+
+async function testAcquireCraftClaimPrioritizesToolOrders() {
+  await withTempOrderBoard(async () => {
+    installOrderPriorityDeps(new Map([
+      ['craft_tool', { code: 'craft_tool', type: 'weapon', subtype: 'tool' }],
+      ['craft_resource', { code: 'craft_resource', type: 'resource' }],
+      ['craft_weapon', { code: 'craft_weapon', type: 'weapon' }],
+      ['craft_gear', { code: 'craft_gear', type: 'body_armor' }],
+    ]));
+
+    try {
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+        },
+      });
+      routine._getCraftClaimBankItems = async () => new Map();
+      routine._canClaimCraftOrderNow = async () => ({ ok: true, reason: '' });
+
+      // Reverse of desired priority to verify sorting is applied.
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k1',
+        itemCode: 'craft_gear',
+        sourceType: 'craft',
+        sourceCode: 'craft_gear',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k2',
+        itemCode: 'craft_weapon',
+        sourceType: 'craft',
+        sourceCode: 'craft_weapon',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k3',
+        itemCode: 'craft_resource',
+        sourceType: 'craft',
+        sourceCode: 'craft_resource',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k4',
+        itemCode: 'craft_tool',
+        sourceType: 'craft',
+        sourceCode: 'craft_tool',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+
+      const claim = await routine._acquireCraftOrderClaim(
+        makeCtx({ skillLevels: { alchemy: 10 } }),
+        'alchemy',
+      );
+      assert.equal(claim?.itemCode, 'craft_tool', 'craft claim should prioritize tool orders first');
+    } finally {
+      resetOrderPriorityForTests();
+    }
+  });
+}
+
 async function testCraftFightStepSkipsCombatWhenSimUnwinnable() {
   const routine = new SkillRotationRoutine();
   routine._ensureOrderClaim = async () => null;
@@ -964,6 +1199,9 @@ async function run() {
   await testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar();
   await testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar();
   await testAcquireCraftClaimSucceedsWhenPrechecksPass();
+  await testAcquireGatherClaimPrioritizesToolOrders();
+  await testAcquireCombatClaimPrioritizesToolOrders();
+  await testAcquireCraftClaimPrioritizesToolOrders();
   await testCraftFightStepSkipsCombatWhenSimUnwinnable();
   await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
   await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
@@ -974,10 +1212,12 @@ async function run() {
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
   await testCraftingWithdrawSkipsFinalRecipeOutput();
+  resetOrderPriorityForTests();
   console.log('skill-rotation tests passed');
 }
 
 run().catch((err) => {
+  resetOrderPriorityForTests();
   console.error(err);
   process.exit(1);
 });

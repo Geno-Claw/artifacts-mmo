@@ -23,6 +23,7 @@ import {
   renewClaim,
 } from '../services/order-board.mjs';
 import { optimizeForMonster } from '../services/gear-optimizer.mjs';
+import { sortOrdersForClaim } from '../services/order-priority.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -217,11 +218,11 @@ export class SkillRotationRoutine extends BaseRoutine {
   }
 
   async _acquireGatherOrderClaim(ctx) {
-    const orders = listClaimableOrders({
+    const orders = sortOrdersForClaim(listClaimableOrders({
       sourceType: 'gather',
       gatherSkill: this.rotation.currentSkill,
       charName: ctx.name,
-    });
+    }));
 
     for (const order of orders) {
       const active = this._claimOrderForChar(ctx, order);
@@ -231,10 +232,10 @@ export class SkillRotationRoutine extends BaseRoutine {
   }
 
   async _acquireCombatOrderClaim(ctx) {
-    const orders = listClaimableOrders({
+    const orders = sortOrdersForClaim(listClaimableOrders({
       sourceType: 'fight',
       charName: ctx.name,
-    });
+    }));
 
     for (const order of orders) {
       const sim = await this._simulateClaimFight(ctx, order.sourceCode);
@@ -335,11 +336,11 @@ export class SkillRotationRoutine extends BaseRoutine {
   }
 
   async _acquireCraftOrderClaim(ctx, craftSkill) {
-    const orders = listClaimableOrders({
+    const orders = sortOrdersForClaim(listClaimableOrders({
       sourceType: 'craft',
       craftSkill,
       charName: ctx.name,
-    });
+    }));
     const bank = await this._getCraftClaimBankItems();
     const simCache = new Map();
 
