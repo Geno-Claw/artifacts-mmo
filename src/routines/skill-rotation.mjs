@@ -953,6 +953,18 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     if (reserveGatherBlocked) {
+      // Deposit completed recipe product to free inventory for gathering
+      const productQty = ctx.itemCount(recipe.code);
+      if (productQty > 0) {
+        await depositBankItems(ctx, [{ code: recipe.code, quantity: productQty }], {
+          reason: 'reserve pressure product deposit',
+        });
+        log.info(
+          `[${ctx.name}] ${this.rotation.currentSkill}: deposited ${recipe.code} x${productQty} to bank (reserve pressure relief)`,
+        );
+        return true;
+      }
+
       log.info(`[${ctx.name}] ${this.rotation.currentSkill}: reserve pressure blocked gathering; yielding to allow bank/deposit routines`);
       return false;
     }
