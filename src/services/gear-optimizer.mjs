@@ -186,16 +186,44 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
 
 /**
  * Is result A better than result B?
- * Priority: win > loss, then higher remainingHp, then fewer turns.
+ * Priority:
+ *  - any win beats any loss
+ *  - wins: higher remainingHp, then fewer turns
+ *  - losses: higher remainingHp, then more turns (survive longer)
  */
 function isBetterResult(a, b) {
   if (!b) return true;
   if (!a) return false;
   if (a.win && !b.win) return true;
   if (!a.win && b.win) return false;
-  if (!a.win && !b.win) return false; // Both losses — don't change gear
   if (a.remainingHp !== b.remainingHp) return a.remainingHp > b.remainingHp;
-  return a.turns < b.turns;
+  if (a.win) return a.turns < b.turns;
+  return a.turns > b.turns;
+}
+
+function isResultTie(a, b) {
+  if (!a || !b) return false;
+  return Boolean(a.win) === Boolean(b.win)
+    && Number(a.remainingHp || 0) === Number(b.remainingHp || 0)
+    && Number(a.turns || 0) === Number(b.turns || 0);
+}
+
+function isPreferredItemOnTie(candidate, currentBest) {
+  if (!candidate && !currentBest) return false;
+  if (candidate && !currentBest) return true;
+  if (!candidate && currentBest) return false;
+
+  const aLevel = Number(candidate.level) || 0;
+  const bLevel = Number(currentBest.level) || 0;
+  if (aLevel !== bLevel) return aLevel > bLevel;
+
+  const aScore = Number(_deps.scoreItemFn(candidate)) || 0;
+  const bScore = Number(_deps.scoreItemFn(currentBest)) || 0;
+  if (aScore !== bScore) return aScore > bScore;
+
+  const aCode = `${candidate.code || ''}`;
+  const bCode = `${currentBest.code || ''}`;
+  return aCode.localeCompare(bCode) < 0;
 }
 
 // --- Ring deduplication ---
@@ -261,7 +289,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     testLoadout.set('weapon', item);
     const hypo = buildStats(baseStats, testLoadout);
     const dmg = _deps.calcTurnDamageFn(hypo, monster);
-    if (dmg > bestWeaponDmg) {
+    if (dmg > bestWeaponDmg || (dmg === bestWeaponDmg && isPreferredItemOnTie(item, bestWeapon))) {
       bestWeaponDmg = dmg;
       bestWeapon = item;
     }
@@ -279,7 +307,10 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
       const result = _deps.simulateCombatFn(hypo, monster);
-      if (isBetterResult(result, bestResult)) {
+      if (
+        isBetterResult(result, bestResult)
+        || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
+      ) {
         bestResult = result;
         bestItem = item;
       }
@@ -314,7 +345,10 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
       const result = _deps.simulateCombatFn(hypo, monster);
-      if (isBetterResult(result, bestResult)) {
+      if (
+        isBetterResult(result, bestResult)
+        || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
+      ) {
         bestResult = result;
         bestItem = item;
       }

@@ -5,10 +5,8 @@ import * as geSeller from '../services/ge-seller.mjs';
 import * as recycler from '../services/recycler.mjs';
 import {
   depositGoldToBank,
-  withdrawBankItems,
 } from '../services/bank-ops.mjs';
 import {
-  getOwnedDeficitRequests,
   getOwnedKeepByCodeForInventory,
   publishDesiredOrdersForCharacter,
   refreshGearState,
@@ -43,8 +41,6 @@ export class DepositBankRoutine extends BaseRoutine {
     let keepByCode = {};
     try {
       await refreshGearState();
-      keepByCode = getOwnedKeepByCodeForInventory(ctx);
-      await this._withdrawOwnedGearDeficits(ctx);
       keepByCode = getOwnedKeepByCodeForInventory(ctx);
       publishDesiredOrdersForCharacter(ctx.name);
     } catch (err) {
@@ -139,29 +135,6 @@ export class DepositBankRoutine extends BaseRoutine {
         await depositGoldToBank(ctx, gold, { reason: 'deposit routine GE cleanup gold' });
       } catch (err) {
         log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
-      }
-    }
-  }
-
-  async _withdrawOwnedGearDeficits(ctx) {
-    const requests = getOwnedDeficitRequests(ctx);
-    if (requests.length === 0) return;
-
-    const result = await withdrawBankItems(ctx, requests, {
-      reason: 'deposit routine owned gear refill',
-      mode: 'partial',
-      retryStaleOnce: true,
-    });
-
-    if (result.withdrawn.length > 0) {
-      log.info(`[${ctx.name}] Refilled owned gear: ${result.withdrawn.map(row => `${row.code} x${row.quantity}`).join(', ')}`);
-    }
-    for (const row of result.failed) {
-      log.warn(`[${ctx.name}] Could not refill owned ${row.code}: ${row.error}`);
-    }
-    for (const row of result.skipped) {
-      if (!row.reason.startsWith('partial fill')) {
-        log.warn(`[${ctx.name}] Could not refill owned ${row.code}: ${row.reason}`);
       }
     }
   }
