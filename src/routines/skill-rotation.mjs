@@ -286,6 +286,18 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.isTaskReward(itemCode);
   }
 
+  _getItemTaskItem(itemCode) {
+    return gameData.getItem(itemCode);
+  }
+
+  _getItemTaskResource(itemCode) {
+    return gameData.getResourceForDrop(itemCode);
+  }
+
+  _resolveItemTaskPlan(craft) {
+    return gameData.resolveRecipeChain(craft);
+  }
+
   async _getCraftClaimBankItems(forceRefresh = false) {
     return gameData.getBankItems(forceRefresh);
   }
@@ -1197,7 +1209,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     const needed = c.task_total - c.task_progress;
 
     // 3. Check prerequisites — can we obtain this item?
-    const item = gameData.getItem(itemCode);
+    const item = this._getItemTaskItem(itemCode);
     if (!item) {
       log.warn(`[${ctx.name}] Item Task: unknown item ${itemCode}, cancelling`);
       await this._cancelItemTask(ctx, ITEMS_MASTER);
@@ -1205,9 +1217,11 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     // Check if it's a gatherable resource drop
-    const resource = gameData.getResourceForDrop(itemCode);
+    const resource = this._getItemTaskResource(itemCode);
     // Check if it's craftable
     const craftable = item.craft ? true : false;
+    const charGatherLevel = resource ? ctx.skillLevel(resource.skill) : 0;
+    const canGatherNow = !!resource && charGatherLevel >= resource.level;
 
     if (!resource && !craftable) {
       log.warn(`[${ctx.name}] Item Task: ${itemCode} can't be gathered or crafted, cancelling`);
@@ -1218,25 +1232,42 @@ export class SkillRotationRoutine extends BaseRoutine {
     // Try to withdraw from bank and trade first (before gathering)
     const haveQty = ctx.itemCount(itemCode);
     if (!ctx.inventoryFull()) {
-      const bankQty = await this._withdrawForItemTask(ctx, itemCode, needed - haveQty);
+      const withdrawn = await this._withdrawForItemTask(ctx, itemCode, needed - haveQty);
       const totalHave = ctx.itemCount(itemCode);
-      if (totalHave > 0) {
+      if (withdrawn > 0) {
+        const tradeQty = Math.min(Math.max(totalHave, withdrawn), needed);
+        if (tradeQty > 0) {
+          return this._tradeItemTask(ctx, itemCode, tradeQty);
+        }
+      }
+
+      const shouldTradeAfterBank = this._shouldTradeItemTaskNow(ctx, {
+        haveQty: totalHave,
+        needed,
+        canGatherNow,
+      });
+      if (shouldTradeAfterBank.tradeNow) {
         return this._tradeItemTask(ctx, itemCode, Math.min(totalHave, needed));
       }
     }
 
-    // If we have items in inventory, trade them
-    if (haveQty > 0) {
-      return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
+    // If we have accumulated enough inventory for this item task, trade now.
+    const currentHave = ctx.itemCount(itemCode);
+    const shouldTrade = this._shouldTradeItemTaskNow(ctx, {
+      haveQty: currentHave,
+      needed,
+      canGatherNow,
+    });
+    if (shouldTrade.tradeNow) {
+      return this._tradeItemTask(ctx, itemCode, Math.min(currentHave, needed));
     }
 
     // Prerequisite check for gathering
     if (resource) {
-      const charLevel = ctx.skillLevel(resource.skill);
-      if (charLevel < resource.level) {
+      if (!canGatherNow) {
         // Can we craft it instead?
         if (!craftable) {
-          log.warn(`[${ctx.name}] Item Task: need ${resource.skill} lv${resource.level} for ${itemCode} (have lv${charLevel}), cancelling`);
+          log.warn(`[${ctx.name}] Item Task: need ${resource.skill} lv${resource.level} for ${itemCode} (have lv${charGatherLevel}), cancelling`);
           await this._cancelItemTask(ctx, ITEMS_MASTER);
           return true;
         }
@@ -1249,7 +1280,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     // Crafting path
     if (craftable) {
-      const plan = gameData.resolveRecipeChain(item.craft);
+      const plan = this._resolveItemTaskPlan(item.craft);
       if (!plan) {
         log.warn(`[${ctx.name}] Item Task: can't resolve recipe for ${itemCode}, cancelling`);
         await this._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
@@ -1576,6 +1607,19 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
   }
 
+  _shouldTradeItemTaskNow(ctx, { haveQty = 0, needed = 0, canGatherNow = false } = {}) {
+    const qty = Math.max(0, Math.floor(Number(haveQty) || 0));
+    const remaining = Math.max(0, Math.floor(Number(needed) || 0));
+    const batchTarget = Math.max(1, Math.ceil(remaining * 0.2));
+
+    if (qty <= 0) return { tradeNow: false, batchTarget };
+    if (canGatherNow === false) return { tradeNow: true, batchTarget };
+    if (ctx.inventoryFull()) return { tradeNow: true, batchTarget };
+    if (qty >= batchTarget) return { tradeNow: true, batchTarget };
+
+    return { tradeNow: false, batchTarget };
+  }
+
   async _gatherForItemTask(ctx, itemCode, resource, needed) {
     const loc = await gameData.getResourceLocation(resource.code);
     if (!loc) {
@@ -1586,8 +1630,12 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     // Trade if we've accumulated a batch (20% of remaining, min 1)
     const haveQty = ctx.itemCount(itemCode);
-    const batchTarget = Math.ceil(needed * 0.2);
-    if (haveQty >= batchTarget || (haveQty > 0 && ctx.inventoryFull())) {
+    const decision = this._shouldTradeItemTaskNow(ctx, {
+      haveQty,
+      needed,
+      canGatherNow: true,
+    });
+    if (decision.tradeNow) {
       return this._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
     }
 
@@ -1599,7 +1647,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     await moveTo(ctx, loc.x, loc.y);
     const result = await gatherOnce(ctx);
     const items = result.details?.items || [];
-    log.info(`[${ctx.name}] Item Task: gathering ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${ctx.itemCount(itemCode)}/${batchTarget} for next trade)`);
+    log.info(`[${ctx.name}] Item Task: gathering ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${ctx.itemCount(itemCode)}/${decision.batchTarget} for next trade)`);
 
     return !ctx.inventoryFull();
   }

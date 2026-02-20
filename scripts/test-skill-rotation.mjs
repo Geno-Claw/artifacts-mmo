@@ -1189,6 +1189,136 @@ async function testBatchSizeRespectsInventoryReserve() {
   );
 }
 
+async function testItemTaskTradeDecisionDefersBelowBatchWhenGatherable() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => false },
+    { haveQty: 3, needed: 20, canGatherNow: true },
+  );
+  assert.equal(decision.tradeNow, false, 'below batch target should continue gathering');
+  assert.equal(decision.batchTarget, 4);
+}
+
+async function testItemTaskTradeDecisionTradesAtBatchTarget() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => false },
+    { haveQty: 4, needed: 20, canGatherNow: true },
+  );
+  assert.equal(decision.tradeNow, true, 'at batch target should trade');
+  assert.equal(decision.batchTarget, 4);
+}
+
+async function testItemTaskTradeDecisionTradesWhenInventoryFull() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => true },
+    { haveQty: 1, needed: 20, canGatherNow: true },
+  );
+  assert.equal(decision.tradeNow, true, 'full inventory with task items should trade immediately');
+}
+
+async function testItemTaskTradeDecisionTradesWhenNotGatherable() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => false },
+    { haveQty: 1, needed: 20, canGatherNow: false },
+  );
+  assert.equal(decision.tradeNow, true, 'non-gatherable path should trade immediately when items exist');
+}
+
+function makeItemTaskFlowCtx(state, { task = 'sunflower', taskTotal = 20, taskProgress = 0, gatherLevel = 10 } = {}) {
+  return {
+    name: 'Tester',
+    hasTask: () => true,
+    taskComplete: () => false,
+    get: () => ({
+      task,
+      task_total: taskTotal,
+      task_progress: taskProgress,
+    }),
+    itemCount: () => state.haveQty,
+    inventoryFull: () => false,
+    skillLevel: () => gatherLevel,
+    refresh: async () => {},
+  };
+}
+
+async function testItemTaskFlowDefersTradeUntilBatchWhenGatherable() {
+  const routine = new SkillRotationRoutine();
+  const state = { haveQty: 1 };
+  const trades = [];
+  let gatherCalls = 0;
+
+  routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
+  routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
+  routine._withdrawForItemTask = async () => 0;
+  routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
+    trades.push(quantity);
+    return true;
+  };
+  routine._gatherForItemTask = async () => {
+    gatherCalls += 1;
+    return true;
+  };
+
+  const result = await routine._runItemTaskFlow(makeItemTaskFlowCtx(state));
+  assert.equal(result, true);
+  assert.equal(gatherCalls, 1, 'below batch threshold should continue gathering');
+  assert.deepEqual(trades, [], 'below batch threshold should not trade');
+}
+
+async function testItemTaskFlowTradesAtBatchThresholdWhenGatherable() {
+  const routine = new SkillRotationRoutine();
+  const state = { haveQty: 4 };
+  const trades = [];
+  let gatherCalls = 0;
+
+  routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
+  routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
+  routine._withdrawForItemTask = async () => 0;
+  routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
+    trades.push(quantity);
+    return true;
+  };
+  routine._gatherForItemTask = async () => {
+    gatherCalls += 1;
+    return true;
+  };
+
+  const result = await routine._runItemTaskFlow(makeItemTaskFlowCtx(state));
+  assert.equal(result, true);
+  assert.equal(gatherCalls, 0, 'at batch threshold should trade instead of gathering');
+  assert.deepEqual(trades, [4], 'trade quantity should match available task item count');
+}
+
+async function testItemTaskFlowTradesImmediatelyAfterBankWithdraw() {
+  const routine = new SkillRotationRoutine();
+  const state = { haveQty: 1 };
+  const trades = [];
+  let gatherCalls = 0;
+
+  routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
+  routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
+  routine._withdrawForItemTask = async () => {
+    state.haveQty += 2;
+    return 2;
+  };
+  routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
+    trades.push(quantity);
+    return true;
+  };
+  routine._gatherForItemTask = async () => {
+    gatherCalls += 1;
+    return true;
+  };
+
+  const result = await routine._runItemTaskFlow(makeItemTaskFlowCtx(state));
+  assert.equal(result, true);
+  assert.equal(gatherCalls, 0, 'fresh bank withdrawal should trade immediately');
+  assert.deepEqual(trades, [3], 'trade should use post-withdraw inventory quantity');
+}
+
 async function testItemTaskWithdrawRespectsReserveCap() {
   const state = {
     bank: new Map([
@@ -1739,6 +1869,13 @@ async function run() {
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
   await testBatchSizeRespectsInventoryReserve();
+  await testItemTaskTradeDecisionDefersBelowBatchWhenGatherable();
+  await testItemTaskTradeDecisionTradesAtBatchTarget();
+  await testItemTaskTradeDecisionTradesWhenInventoryFull();
+  await testItemTaskTradeDecisionTradesWhenNotGatherable();
+  await testItemTaskFlowDefersTradeUntilBatchWhenGatherable();
+  await testItemTaskFlowTradesAtBatchThresholdWhenGatherable();
+  await testItemTaskFlowTradesImmediatelyAfterBankWithdraw();
   await testItemTaskWithdrawRespectsReserveCap();
   await testItemTaskReserveOverflowUsesCraftTradeFallback();
   await testItemTaskReserveOverflowYieldsWhenNoFallbackProgress();
