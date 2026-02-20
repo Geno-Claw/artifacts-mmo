@@ -144,7 +144,9 @@ function applyPotionEffects(stats, item) {
 
 function scorePotionCandidate(item, charStats, monster, { poisonBias = true, healHeuristic = false } = {}) {
   const hypoStats = applyPotionEffects(charStats, item);
-  const sim = _simulateCombat(hypoStats, monster);
+  // Pass the candidate utility to the simulator so restore/antipoison are modeled
+  const simOpts = { utilities: [{ code: item.code, effects: item.effects }] };
+  const sim = _simulateCombat(hypoStats, monster, simOpts);
   let score = 0;
 
   if (sim.win) score += 1_000_000;

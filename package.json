@@ -26,7 +26,8 @@
     "test:no-direct-bank-api": "node scripts/test-no-direct-bank-api.mjs",
     "test:potions": "node scripts/test-potion-manager.mjs",
     "test:bank-travel": "node scripts/test-bank-travel-potions.mjs",
-    "test:all": "node scripts/test-inventory-manager.mjs && node scripts/test-bank-ops.mjs && node scripts/test-order-board.mjs && node scripts/test-gear-state.mjs && node scripts/test-gear-optimizer.mjs && node scripts/test-tool-policy.mjs && node scripts/test-recycler.mjs && node scripts/test-no-direct-bank-api.mjs && node scripts/test-skill-rotation.mjs && node scripts/test-potion-manager.mjs && node scripts/test-bank-travel-potions.mjs"
+    "test:combat-sim": "node scripts/test-combat-simulator.mjs",
+    "test:all": "node scripts/test-inventory-manager.mjs && node scripts/test-bank-ops.mjs && node scripts/test-order-board.mjs && node scripts/test-gear-state.mjs && node scripts/test-gear-optimizer.mjs && node scripts/test-tool-policy.mjs && node scripts/test-recycler.mjs && node scripts/test-no-direct-bank-api.mjs && node scripts/test-skill-rotation.mjs && node scripts/test-potion-manager.mjs && node scripts/test-bank-travel-potions.mjs && node scripts/test-combat-simulator.mjs"
   },
   "engines": {
     "node": ">=20"

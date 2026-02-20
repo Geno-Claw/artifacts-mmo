@@ -20,6 +20,29 @@ import * as log from '../log.mjs';
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
 const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2'];
 
+/**
+ * Extract combat sim options (utilities/rune) from character state.
+ * These stay constant during gear optimization — only equipment changes.
+ */
+function getSimOptions(ctx) {
+  const c = ctx.get();
+  const opts = {};
+  const utilities = [];
+  for (const slot of ['utility1', 'utility2']) {
+    const code = c[`${slot}_slot`];
+    if (!code) continue;
+    const item = _deps.getItemFn(code);
+    if (item?.effects) utilities.push({ code, effects: item.effects });
+  }
+  if (utilities.length > 0) opts.utilities = utilities;
+  const runeCode = c.rune_slot;
+  if (runeCode) {
+    const item = _deps.getItemFn(runeCode);
+    if (item?.effects) opts.rune = { code: runeCode, effects: item.effects };
+  }
+  return opts;
+}
+
 let _deps = {
   calcTurnDamageFn: calcTurnDamage,
   simulateCombatFn: simulateCombat,
@@ -271,6 +294,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
   const bankItems = await _deps.getBankItemsFn();
   const baseStats = getBaseStats(ctx);
+  const simOpts = getSimOptions(ctx);
 
   // Start with current gear as baseline
   const loadout = new Map();
@@ -306,7 +330,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = _deps.simulateCombatFn(hypo, monster);
+      const result = _deps.simulateCombatFn(hypo, monster, simOpts);
       if (
         isBetterResult(result, bestResult)
         || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
@@ -320,7 +344,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster);
+    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, simOpts);
     if (isBetterResult(emptyResult, bestResult)) {
       bestItem = null;
     }
@@ -344,7 +368,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = _deps.simulateCombatFn(hypo, monster);
+      const result = _deps.simulateCombatFn(hypo, monster, simOpts);
       if (
         isBetterResult(result, bestResult)
         || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
@@ -358,7 +382,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster);
+    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, simOpts);
     if (isBetterResult(emptyResult, bestResult)) {
       bestItem = null;
     }
@@ -375,7 +399,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
   // --- Final validation ---
   const finalStats = buildStats(baseStats, loadout);
-  const finalResult = _deps.simulateCombatFn(finalStats, monster);
+  const finalResult = _deps.simulateCombatFn(finalStats, monster, simOpts);
 
   // Convert to slot → itemCode map
   const codeLoadout = new Map();
