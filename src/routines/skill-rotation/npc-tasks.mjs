@@ -82,6 +82,11 @@ export async function runNpcTaskFlow(ctx, routine) {
     return true;
   }
 
+  // Re-withdraw food if bank routine deposited it between goals
+  if (routine._foodWithdrawn && ctx.inventoryCount() === 0) {
+    routine._foodWithdrawn = false;
+  }
+
   // Fight the task monster
   const c = ctx.get();
   const monster = c.task;

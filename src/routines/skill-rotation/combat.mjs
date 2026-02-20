@@ -7,6 +7,11 @@ import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, w
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
 export async function executeCombat(ctx, routine) {
+  // Re-withdraw food if bank routine deposited it mid-goal
+  if (routine._foodWithdrawn && ctx.inventoryCount() === 0) {
+    routine._foodWithdrawn = false;
+  }
+
   let claim = await routine._ensureOrderClaim(ctx, 'fight');
 
   let monsterCode = routine.rotation.monster?.code || null;

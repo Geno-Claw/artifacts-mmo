@@ -88,6 +88,38 @@ The scheduler holds a priority-sorted list of routines. Each iteration:
 4. For loop routines: re-checks `canRun()` before each iteration, and checks for higher-priority preemption
 5. Preemption is gated by `routine.canBePreempted(ctx)` — routines can defer preemption until a safe break point (e.g., skill rotation only yields between goal cycles, not mid-action)
 
+### Scheduler ↔ Executor Interaction
+
+Understanding how the scheduler routines (Rest, Bank) and the SkillRotation executors share responsibility for resting and banking is critical for avoiding duplication or regressions.
+
+**Why executors have inline rest/bank operations:**
+
+`SkillRotationRoutine.canBePreempted()` returns `true` only between goals (no skill selected or goal complete). This means RestRoutine and BankRoutine **cannot preempt mid-goal**. Executors must handle their own resting and targeted bank operations during a goal cycle.
+
+The one exception: `canRun()` returns `false` when inventory is full, which **always** breaks the loop regardless of `canBePreempted()`. This lets BankRoutine run when truly needed.
+
+**Two-layer design:**
+
+| Concern | Scheduler routine | Executor inline |
+|---------|------------------|-----------------|
+| **Resting** | RestRoutine: between-goal safety net (HP < 40% → heal to 80%) | `restBeforeFight()`: surgical heal to exact minimum HP for a specific fight |
+| **Deposits** | BankRoutine: bulk deposit all + recycle + GE sell + gold | Targeted deposits: claim items, exchange rewards, craft products (reserve pressure) |
+| **Withdrawals** | *(none)* | All withdrawals are inline: food, materials, gear, coins, task items |
+
+**The `return !ctx.inventoryFull()` protocol:**
+
+Every executor returns `false` when inventory is full. This breaks the loop, letting BankRoutine run naturally. After bank deposits, `canRun()` passes again and SkillRotation resumes.
+
+**Bank deposit recovery:**
+
+When BankRoutine runs between goals and deposits everything (including items the executor needs), the executor must detect this and re-withdraw. Patterns:
+- **Crafting**: `bankChecked` flag resets when inventory is empty → triggers re-withdrawal of craft materials
+- **Combat/NPC tasks**: `_foodWithdrawn` flag resets when inventory is empty → triggers food re-withdrawal
+
+**Future: Event/urgent preemption**
+
+`canBePreempted()` currently blocks ALL preemption mid-goal, including high-priority event routines. To support group events (all characters drop everything and participate), add an `urgent` flag to `BaseRoutine` (default `false`). The scheduler preemption check becomes: `if (preempt && (preempt.urgent || routine.canBePreempted(this.ctx)))` — one line in `scheduler.mjs`. Event routines set `urgent: true` to bypass `canBePreempted()`. Cross-character coordination (shared event service, synchronization) is the larger piece of work.
+
 ### CharacterContext
 
 Per-character state wrapper (replaces old singleton `state.mjs`). One instance per character.
