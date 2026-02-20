@@ -8,7 +8,7 @@ process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
 const { CharacterContext } = await import('../src/context.mjs');
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
-const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
+const { SkillRotationRoutine } = await import('../src/routines/skill-rotation/index.mjs');
 const orderBoard = await import('../src/services/order-board.mjs');
 const orderPriority = await import('../src/services/order-priority.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');

@@ -37,12 +37,16 @@ src/
     index.mjs             Re-exports all routine classes
     rest.mjs              Priority 100 — rest when HP low, eats food first
     deposit-bank.mjs      Priority 50  — bank when inventory full, recycle equipment, optional GE selling
-    do-task.mjs           Priority 60/15 — complete/accept NPC tasks
-    cancel-task.mjs       Priority 55  — cancel too-hard NPC tasks (optional, costs task coins)
-    fight-monsters.mjs    Priority 10  — combat grinding (configurable target)
-    fight-task-monster.mjs Priority 20 — fight current NPC task monster, loss tracking
-    gather-resource.mjs   Priority 10  — resource gathering (configurable target)
-    skill-rotation.mjs    Priority 5   — weighted multi-skill rotation
+    skill-rotation/       Priority 5   — weighted multi-skill rotation (see below)
+      index.mjs           SkillRotationRoutine class — orchestrator with thin wrappers
+      constants.mjs       Shared constants (skill sets, task coin config, reserve limits)
+      gathering.mjs       Mining, woodcutting, fishing + smelting executor
+      combat.mjs          Monster fighting executor
+      crafting.mjs        Multi-step recipe crafting, batch management, inventory helpers
+      npc-tasks.mjs       NPC task accept/fight/complete flow
+      item-tasks.mjs      Item task accept/gather/craft/trade flow
+      task-exchange.mjs   Task coin exchange for rewards
+      order-claims.mjs    Order board claim lifecycle (acquire, renew, deposit, release)
 config/
   characters.json         Per-character routine configuration
   sell-rules.json         Grand Exchange sell rules
@@ -192,6 +196,26 @@ Bank contents are fetched via paginated API (100 items/page) and cached with a 6
 State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
 - Alchemy is hybrid in rotation: try crafting first, and if no viable alchemy recipe exists, fall back to alchemy gathering to bootstrap progression.
 
+### SkillRotation Routine (`routines/skill-rotation/`)
+
+The main gameplay routine, split into focused executor modules. The `index.mjs` class is the orchestrator — it owns all mutable state and exposes thin one-line wrapper methods (`_executeGathering`, `_batchSize`, `_claimOrderForChar`, etc.) that delegate to standalone functions in the executor files.
+
+**Executor pattern:** Each executor exports functions that receive `(ctx, routine)`. The `routine` parameter provides access to shared state and other executors via `routine._methodName()`.
+
+```
+index.mjs        — SkillRotationRoutine class, execute() dispatch, small helpers
+gathering.mjs    — executeGathering(), trySmelting()
+combat.mjs       — executeCombat()
+crafting.mjs     — executeCrafting(), batchSize(), withdrawFromBank(), inventory helpers
+npc-tasks.mjs    — executeNpcTask(), runNpcTaskFlow(), task type inference
+item-tasks.mjs   — runItemTaskFlow(), craftForItemTask(), gatherForItemTask(), trade flow
+task-exchange.mjs — runTaskExchange(), proactive exchange, coin management
+order-claims.mjs — ensureOrderClaim(), acquire/deposit/release claim lifecycle
+constants.mjs    — GATHERING_SKILLS, CRAFTING_SKILLS, TASK_COIN_CODE, reserve limits
+```
+
+**Critical rule:** All cross-calls between executor functions MUST go through `routine._methodName()`, never direct function calls. Tests monkey-patch methods on the routine instance, so direct calls would bypass mocks. For example, `executeCrafting` must call `routine._batchSize(ctx)` not `batchSize(ctx, routine)`.
+
 ## Configuration
 
 ### `config/characters.json`
@@ -204,9 +228,6 @@ State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, a
       "routines": [
         { "type": "rest", "triggerPct": 40, "targetPct": 80 },
         { "type": "depositBank", "threshold": 0.8, "recycleEquipment": true, "sellOnGE": true },
-        { "type": "completeNpcTask" },
-        { "type": "cancelNpcTask", "maxLosses": 3 },
-        { "type": "acceptNpcTask" },
         { "type": "skillRotation", "weights": { "mining": 1, "combat": 1 }, "goals": { "mining": 20 } }
       ]
     }
@@ -214,7 +235,7 @@ State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, a
 }
 ```
 
-Routine types: `rest`, `depositBank`, `completeNpcTask`, `acceptNpcTask`, `cancelNpcTask`, `fightMonsters`, `fightTaskMonster`, `gatherResource`, `skillRotation`.
+Routine types: `rest`, `depositBank`, `skillRotation`. SkillRotation handles all gameplay (gathering, crafting, combat, NPC tasks, item tasks, order board fulfillment, task coin exchange) internally via its executor modules.
 Character `settings` can optionally include potion automation controls (`settings.potions.combat`, `settings.potions.bankTravel`).
 
 ### `config/sell-rules.json`
@@ -230,10 +251,8 @@ Controls equipment recycling and GE selling:
 | Range | Purpose | Examples |
 |-------|---------|---------|
 | 90–100 | Survival | Rest when HP low |
-| 50–70 | Maintenance | Bank deposits, complete/cancel NPC tasks |
-| 15–20 | NPC tasks | Accept tasks, fight task monsters |
-| 10 | Core gameplay | Fight monsters, gather resources |
-| 5 | Background | Skill rotation |
+| 50–70 | Maintenance | Bank deposits |
+| 5 | Core gameplay | Skill rotation (handles all gathering, crafting, combat, tasks) |
 
 ## Equipment Scoring
 
