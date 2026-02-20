@@ -31,7 +31,7 @@ const DEFAULT_ORDER_BOARD = Object.freeze({
   enabled: false,
   createOrders: false,
   fulfillOrders: false,
-  leaseMs: 120_000,
+  leaseMs: 300_000,
   blockedRetryMs: 600_000,
 });
 const TASK_COIN_CODE = 'tasks_coin';
@@ -447,7 +447,18 @@ export class SkillRotationRoutine extends BaseRoutine {
   }
 
   async _depositClaimItemsIfNeeded(ctx, { force = false } = {}) {
-    const claim = this._syncActiveClaimFromBoard();
+    const prevClaim = this._activeOrderClaim;
+    let claim = this._syncActiveClaimFromBoard();
+
+    // Lease expired but we still remember the order — try to reclaim
+    if (!claim && prevClaim) {
+      const order = this._resolveOrderById(prevClaim.orderId);
+      if (order && order.status !== 'fulfilled' && !order.claim) {
+        log.info(`[${ctx.name}] Lease expired for order ${prevClaim.orderId}, reclaiming`);
+        claim = this._claimOrderForChar(ctx, order);
+      }
+    }
+
     if (!claim) return false;
 
     const carried = ctx.itemCount(claim.itemCode);
@@ -540,10 +551,10 @@ export class SkillRotationRoutine extends BaseRoutine {
       const res = this.rotation.resource;
       log.info(`[${ctx.name}] ${res.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
     } else {
+      await this._depositClaimItemsIfNeeded(ctx);
       const active = this._syncActiveClaimFromBoard();
       const remaining = active ? active.remainingQty : 0;
       log.info(`[${ctx.name}] Order gather ${resource.code}: ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (remaining ${remaining})`);
-      await this._depositClaimItemsIfNeeded(ctx);
     }
 
     return !ctx.inventoryFull();
@@ -641,10 +652,10 @@ export class SkillRotationRoutine extends BaseRoutine {
       if (this._recordProgress(1)) {
         log.info(`[${ctx.name}] ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${this.rotation.goalProgress}/${this.rotation.goalTarget})`);
       } else {
+        await this._depositClaimItemsIfNeeded(ctx);
         const active = this._syncActiveClaimFromBoard();
         const remaining = active ? active.remainingQty : 0;
         log.info(`[${ctx.name}] Order fight ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (remaining ${remaining})`);
-        await this._depositClaimItemsIfNeeded(ctx);
       }
 
       return !ctx.inventoryFull();
