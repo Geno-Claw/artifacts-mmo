@@ -34,6 +34,11 @@ const DEFAULT_ORDER_BOARD = Object.freeze({
   leaseMs: 120_000,
   blockedRetryMs: 600_000,
 });
+const TASK_COIN_CODE = 'tasks_coin';
+const TASK_EXCHANGE_COST = 6;
+const PROACTIVE_EXCHANGE_BACKOFF_MS = 60_000;
+
+let taskExchangeLockHolder = null;
 
 function normalizeOrderBoardConfig(cfg = {}) {
   const input = cfg && typeof cfg === 'object' ? cfg : {};
@@ -63,6 +68,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._currentBatch = 1;
     this._foodWithdrawn = false;
     this._activeOrderClaim = null;
+    this._nextProactiveExchangeAt = 0;
   }
 
   canRun(ctx) {
@@ -87,6 +93,12 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     const skill = this.rotation.currentSkill;
+    const proactive = await this._maybeRunProactiveExchange(ctx, {
+      trigger: 'rotation_setup',
+    });
+    if (proactive.attempted) {
+      return true;
+    }
 
     if (skill === 'alchemy') {
       const hasCraftPlan = !!(this.rotation.recipe && this.rotation.productionPlan);
@@ -263,8 +275,26 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.canFulfillPlan(plan, ctx);
   }
 
-  async _getCraftClaimBankItems() {
-    return gameData.getBankItems();
+  _nowMs() {
+    return Date.now();
+  }
+
+  _isTaskRewardCode(itemCode) {
+    return gameData.isTaskReward(itemCode);
+  }
+
+  async _getCraftClaimBankItems(forceRefresh = false) {
+    return gameData.getBankItems(forceRefresh);
+  }
+
+  async _getBankItemsForExchange(forceRefresh = false) {
+    return gameData.getBankItems(forceRefresh);
+  }
+
+  _parseMissingBankDependency(reason = '') {
+    const prefix = 'missing_bank_dependency:';
+    if (!reason.startsWith(prefix)) return '';
+    return reason.slice(prefix.length).trim();
   }
 
   _blockUnclaimableOrderForChar(order, ctx, reason = 'cannot_complete') {
@@ -341,11 +371,24 @@ export class SkillRotationRoutine extends BaseRoutine {
       craftSkill,
       charName: ctx.name,
     }));
-    const bank = await this._getCraftClaimBankItems();
+    let bank = await this._getCraftClaimBankItems();
     const simCache = new Map();
 
     for (const order of orders) {
-      const viability = await this._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
+      let viability = await this._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
+      if (!viability.ok) {
+        const missingCode = this._parseMissingBankDependency(viability.reason);
+        if (missingCode && this._isTaskRewardCode(missingCode)) {
+          const proactive = await this._maybeRunProactiveExchange(ctx, {
+            extraNeedItemCode: missingCode,
+            trigger: 'craft_claim',
+          });
+          if (proactive.attempted || proactive.resolved) {
+            bank = await this._getCraftClaimBankItems(true);
+            viability = await this._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
+          }
+        }
+      }
       if (!viability.ok) {
         this._blockUnclaimableOrderForChar(order, ctx, viability.reason);
         continue;
@@ -687,6 +730,17 @@ export class SkillRotationRoutine extends BaseRoutine {
         // Must come from bank (event items, etc.) — already withdrawn above
         const have = ctx.itemCount(step.itemCode);
         if (have >= step.quantity) continue; // have enough for at least 1 craft
+        if (this._isTaskRewardCode(step.itemCode)) {
+          const proactive = await this._maybeRunProactiveExchange(ctx, {
+            extraNeedItemCode: step.itemCode,
+            trigger: claimMode ? 'craft_step_claim' : 'craft_step',
+          });
+          if (proactive.resolved) {
+            // Rewards are deposited to bank; force a fresh withdraw pass next tick.
+            this.rotation.bankChecked = false;
+            return true;
+          }
+        }
         if (claimMode) {
           await this._blockAndReleaseClaim(ctx, 'missing_bank_dependency');
         } else {
@@ -1449,35 +1503,207 @@ export class SkillRotationRoutine extends BaseRoutine {
 
   // --- Task coin exchange ---
 
-  async _exchangeTaskCoins(ctx) {
-    const targets = this.rotation.getExchangeTargets();
-    if (targets.size === 0) return;
+  _collectExchangeTargets({ extraNeedItemCode = '' } = {}) {
+    const targets = typeof this.rotation?.getExchangeTargets === 'function'
+      ? this.rotation.getExchangeTargets()
+      : new Map();
+    const code = `${extraNeedItemCode || ''}`.trim();
+    if (code && this._isTaskRewardCode(code)) {
+      targets.set(code, Math.max(targets.get(code) || 0, 1));
+    }
+    return targets;
+  }
 
-    while (ctx.taskCoins() >= 6) {
-      // Check if all targets met (force-refresh bank)
-      const bank = await gameData.getBankItems(true);
-      if (!this.rotation.hasUnmetExchangeTargets(bank, ctx)) {
-        log.info(`[${ctx.name}] Task Exchange: all collection targets met, saving coins`);
-        break;
-      }
+  _computeUnmetTargets(ctx, targets, bankItems) {
+    const unmet = new Map();
+    const bank = bankItems instanceof Map ? bankItems : new Map();
 
-      // Check inventory space (rewards give 1-2 items)
-      if (ctx.inventoryCount() + 2 >= ctx.inventoryCapacity()) {
-        log.info(`[${ctx.name}] Task Exchange: inventory too full, deferring`);
-        break;
-      }
+    for (const [code, rawTarget] of targets) {
+      const target = Math.max(0, Math.floor(Number(rawTarget) || 0));
+      if (!code || target <= 0) continue;
+      const have = (bank.get(code) || 0) + ctx.itemCount(code);
+      if (have < target) unmet.set(code, target - have);
+    }
+    return unmet;
+  }
 
-      // Already at task master after completing task
-      await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
-      try {
-        const result = await api.taskExchange(ctx.name);
-        await api.waitForCooldown(result);
-        await ctx.refresh();
-        log.info(`[${ctx.name}] Task Exchange: exchanged 6 coins (${ctx.taskCoins()} remaining)`);
-      } catch (err) {
-        log.warn(`[${ctx.name}] Task Exchange failed: ${err.message}`);
-        break;
+  _inventorySnapshotForTargets(ctx, targets) {
+    const snapshot = new Map();
+    for (const code of targets.keys()) {
+      snapshot.set(code, ctx.itemCount(code));
+    }
+    return snapshot;
+  }
+
+  async _ensureExchangeCoinsInInventory(ctx, minCoins = TASK_EXCHANGE_COST) {
+    const invCoins = ctx.itemCount(TASK_COIN_CODE);
+    if (invCoins >= minCoins) {
+      return { ok: true, available: invCoins };
+    }
+
+    const needed = Math.max(0, minCoins - invCoins);
+    if (needed <= 0) {
+      return { ok: true, available: invCoins };
+    }
+
+    const result = await withdrawBankItems(ctx, [{ code: TASK_COIN_CODE, quantity: needed }], {
+      reason: 'task exchange coin withdrawal',
+      mode: 'partial',
+      retryStaleOnce: true,
+    });
+    for (const row of result.failed) {
+      log.warn(`[${ctx.name}] Task Exchange: coin withdrawal failed for ${row.code}: ${row.error}`);
+    }
+
+    const refreshedInv = ctx.itemCount(TASK_COIN_CODE);
+    const ok = refreshedInv >= minCoins;
+    return { ok, available: refreshedInv };
+  }
+
+  async _depositTargetRewardsToBank(ctx, targets, beforeInvSnapshot = new Map()) {
+    const deposits = [];
+    for (const code of targets.keys()) {
+      const before = beforeInvSnapshot.get(code) || 0;
+      const now = ctx.itemCount(code);
+      const gained = now - before;
+      if (gained > 0) {
+        deposits.push({ code, quantity: gained });
       }
     }
+    if (deposits.length === 0) return [];
+
+    try {
+      return await depositBankItems(ctx, deposits, {
+        reason: 'task exchange reward deposit',
+      });
+    } catch (err) {
+      log.warn(`[${ctx.name}] Task Exchange: reward deposit failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  async _performTaskExchange(ctx) {
+    await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
+    const result = await api.taskExchange(ctx.name);
+    await api.waitForCooldown(result);
+    await ctx.refresh();
+  }
+
+  async _runTaskExchange(
+    ctx,
+    { targets = null, trigger = 'unknown', proactive = false, extraNeedItemCode = '' } = {},
+  ) {
+    let targetMap = targets instanceof Map
+      ? new Map(targets)
+      : this._collectExchangeTargets({ extraNeedItemCode });
+    const extraCode = `${extraNeedItemCode || ''}`.trim();
+    if (extraCode && this._isTaskRewardCode(extraCode)) {
+      targetMap.set(extraCode, Math.max(targetMap.get(extraCode) || 0, 1));
+    }
+    if (targetMap.size === 0) {
+      return { attempted: false, exchanged: 0, resolved: true, reason: 'no_targets' };
+    }
+
+    if (taskExchangeLockHolder && taskExchangeLockHolder !== ctx.name) {
+      return { attempted: false, exchanged: 0, resolved: false, reason: 'lock_busy' };
+    }
+
+    taskExchangeLockHolder = ctx.name;
+    try {
+      let bank = await this._getBankItemsForExchange(true);
+      let unmet = this._computeUnmetTargets(ctx, targetMap, bank);
+      if (unmet.size === 0) {
+        return { attempted: false, exchanged: 0, resolved: true, reason: 'targets_met' };
+      }
+
+      let attempted = false;
+      let exchanged = 0;
+      let reason = 'targets_unmet';
+
+      while (unmet.size > 0) {
+        const coinStatus = await this._ensureExchangeCoinsInInventory(ctx, TASK_EXCHANGE_COST);
+        if (!coinStatus.ok) {
+          reason = 'insufficient_coins';
+          break;
+        }
+
+        if (ctx.inventoryCount() + 2 >= ctx.inventoryCapacity()) {
+          reason = 'inventory_full';
+          break;
+        }
+
+        attempted = true;
+        const beforeInv = this._inventorySnapshotForTargets(ctx, targetMap);
+
+        try {
+          await this._performTaskExchange(ctx);
+          exchanged += 1;
+          log.info(`[${ctx.name}] Task Exchange (${trigger}): exchanged ${TASK_EXCHANGE_COST} coins (${ctx.taskCoins()} available)`);
+        } catch (err) {
+          reason = `exchange_failed:${err.code || 'unknown'}`;
+          log.warn(`[${ctx.name}] Task Exchange (${trigger}) failed: ${err.message}`);
+          break;
+        }
+
+        await this._depositTargetRewardsToBank(ctx, targetMap, beforeInv);
+        bank = await this._getBankItemsForExchange(true);
+        unmet = this._computeUnmetTargets(ctx, targetMap, bank);
+      }
+
+      const resolved = unmet.size === 0;
+      if (resolved) {
+        if (attempted) {
+          log.info(`[${ctx.name}] Task Exchange (${trigger}): targets met`);
+        }
+        return { attempted, exchanged, resolved: true, reason: 'targets_met' };
+      }
+
+      if (!attempted && reason === 'targets_unmet') {
+        reason = 'deferred';
+      }
+      if (proactive && reason === 'lock_busy') {
+        return { attempted: false, exchanged, resolved: false, reason };
+      }
+      return { attempted, exchanged, resolved: false, reason };
+    } finally {
+      if (taskExchangeLockHolder === ctx.name) {
+        taskExchangeLockHolder = null;
+      }
+    }
+  }
+
+  async _maybeRunProactiveExchange(ctx, { extraNeedItemCode = '', trigger = 'proactive' } = {}) {
+    const now = this._nowMs();
+    if (now < this._nextProactiveExchangeAt) {
+      return { attempted: false, exchanged: 0, resolved: false, reason: 'backoff' };
+    }
+
+    const targets = this._collectExchangeTargets({ extraNeedItemCode });
+    if (targets.size === 0) {
+      return { attempted: false, exchanged: 0, resolved: true, reason: 'no_targets' };
+    }
+
+    const result = await this._runTaskExchange(ctx, {
+      targets,
+      trigger,
+      proactive: true,
+      extraNeedItemCode,
+    });
+    if (!result.resolved) {
+      this._nextProactiveExchangeAt = this._nowMs() + PROACTIVE_EXCHANGE_BACKOFF_MS;
+    } else {
+      this._nextProactiveExchangeAt = 0;
+    }
+    return result;
+  }
+
+  async _exchangeTaskCoins(ctx) {
+    const targets = this._collectExchangeTargets();
+    if (targets.size === 0) return;
+    await this._runTaskExchange(ctx, {
+      targets,
+      trigger: 'task_completion',
+      proactive: false,
+    });
   }
 }

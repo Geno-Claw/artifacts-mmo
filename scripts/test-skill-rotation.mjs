@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
+const { CharacterContext } = await import('../src/context.mjs');
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
 const orderBoard = await import('../src/services/order-board.mjs');
@@ -574,6 +575,12 @@ async function testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar() {
       simCalls += 1;
       return { simResult: { win: true, hpLostPercent: 20 } };
     };
+    routine._isTaskRewardCode = () => false;
+    let proactiveCalls = 0;
+    routine._maybeRunProactiveExchange = async () => {
+      proactiveCalls += 1;
+      return { attempted: false, exchanged: 0, resolved: false, reason: 'deferred' };
+    };
 
     const claim = await routine._acquireCraftOrderClaim(
       makeCtx({ skillLevels: { alchemy: 10 } }),
@@ -582,11 +589,61 @@ async function testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar() {
 
     assert.equal(claim, null, 'claim should be skipped when bank dependency is missing');
     assert.equal(simCalls, 0, 'fight simulation should not run when bank step already fails');
+    assert.equal(proactiveCalls, 0, 'non-task reward bank dependency should not trigger proactive exchange');
     assert.equal(
       listClaimableOrders({ sourceType: 'craft', craftSkill: 'alchemy', charName: 'Tester' }).length,
       0,
       'skipped order should be blocked for this character',
     );
+  });
+}
+
+async function testAcquireCraftClaimRetriesTaskRewardDependencyWithProactiveExchange() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'satchel',
+      itemCode: 'satchel',
+      sourceType: 'craft',
+      sourceCode: 'satchel',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    let bankState = new Map();
+    routine._getCraftClaimBankItems = async () => bankState;
+    routine._canClaimCraftOrderNow = async (_ctx, _order, _craftSkill, bank) => {
+      const hasJasper = (bank.get('jasper_crystal') || 0) >= 1;
+      if (!hasJasper) {
+        return { ok: false, reason: 'missing_bank_dependency:jasper_crystal' };
+      }
+      return { ok: true, reason: '' };
+    };
+    routine._isTaskRewardCode = (code) => code === 'jasper_crystal';
+
+    let proactiveCalls = 0;
+    routine._maybeRunProactiveExchange = async () => {
+      proactiveCalls += 1;
+      bankState = new Map([['jasper_crystal', 1]]);
+      return { attempted: true, exchanged: 1, resolved: true, reason: 'targets_met' };
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { gearcrafting: 10 } }),
+      'gearcrafting',
+    );
+
+    assert.ok(claim, 'claim should succeed after proactive exchange satisfies missing task reward');
+    assert.equal(proactiveCalls, 1, 'proactive exchange should run once for missing task reward dependency');
   });
 }
 
@@ -1185,7 +1242,240 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
   }
 }
 
+function makeMutableCtx(state) {
+  return {
+    name: state.name || 'Tester',
+    get() {
+      return {
+        x: state.x || 0,
+        y: state.y || 0,
+        inventory: [...state.inventory.entries()].map(([code, quantity]) => ({ code, quantity })),
+      };
+    },
+    settings() {
+      return {
+        potions: {
+          enabled: false,
+          bankTravel: { enabled: false },
+        },
+      };
+    },
+    isAt(x, y) {
+      return (state.x || 0) === x && (state.y || 0) === y;
+    },
+    itemCount(code) {
+      return state.inventory.get(code) || 0;
+    },
+    inventoryCount() {
+      let total = 0;
+      for (const qty of state.inventory.values()) total += qty;
+      return total;
+    },
+    inventoryCapacity() {
+      return 20;
+    },
+    taskCoins() {
+      return state.inventory.get('tasks_coin') || 0;
+    },
+    async refresh() {},
+  };
+}
+
+async function testContextTaskCoinsUsesInventoryOnly() {
+  const inventoryOnly = new CharacterContext('InventoryOnly');
+  inventoryOnly._char = {
+    inventory: [
+      { code: 'tasks_coin', quantity: 5 },
+      { code: 'apple', quantity: 3 },
+    ],
+  };
+  assert.equal(inventoryOnly.taskCoins(), 5, 'taskCoins should count tasks_coin from inventory');
+
+  const none = new CharacterContext('NoCoins');
+  none._char = {
+    inventory: [
+      { code: 'apple', quantity: 3 },
+    ],
+  };
+  assert.equal(none.taskCoins(), 0, 'taskCoins should return 0 when tasks_coin is absent');
+}
+
+async function testRoutineTriggersProactiveExchangeBeforeSkillDispatch() {
+  const routine = new SkillRotationRoutine();
+  let proactiveCalls = 0;
+  let combatCalls = 0;
+
+  routine._maybeRunProactiveExchange = async () => {
+    proactiveCalls += 1;
+    return { attempted: true, exchanged: 1, resolved: false, reason: 'insufficient_coins' };
+  };
+  routine._executeCombat = async () => {
+    combatCalls += 1;
+    return true;
+  };
+  routine.rotation = {
+    currentSkill: 'combat',
+    isGoalComplete: () => false,
+  };
+
+  const result = await routine.execute({
+    name: 'Tester',
+    inventoryFull: () => false,
+  });
+
+  assert.equal(result, true);
+  assert.equal(proactiveCalls, 1, 'execute should call proactive exchange hook once');
+  assert.equal(combatCalls, 0, 'skill dispatch should be skipped when proactive exchange does work');
+}
+
+async function testTaskExchangeLockPreventsConcurrentRuns() {
+  const routineA = new SkillRotationRoutine();
+  const routineB = new SkillRotationRoutine();
+  const targets = new Map([['jasper_crystal', 1]]);
+
+  let releaseGate;
+  const gate = new Promise(resolve => {
+    releaseGate = resolve;
+  });
+
+  routineA._getBankItemsForExchange = async () => new Map();
+  routineA._computeUnmetTargets = () => new Map([['jasper_crystal', 1]]);
+  routineA._ensureExchangeCoinsInInventory = async () => {
+    await gate;
+    return { ok: false, available: 0 };
+  };
+
+  const runA = routineA._runTaskExchange(
+    {
+      name: 'LockA',
+      itemCount: () => 0,
+      inventoryCount: () => 0,
+      inventoryCapacity: () => 20,
+      taskCoins: () => 0,
+    },
+    { targets, trigger: 'lock-a', proactive: true },
+  );
+
+  await Promise.resolve();
+
+  const resultB = await routineB._runTaskExchange(
+    {
+      name: 'LockB',
+      itemCount: () => 0,
+      inventoryCount: () => 0,
+      inventoryCapacity: () => 20,
+      taskCoins: () => 0,
+    },
+    { targets, trigger: 'lock-b', proactive: true },
+  );
+
+  assert.equal(resultB.reason, 'lock_busy', 'second routine should defer while lock holder is active');
+  releaseGate();
+  await runA;
+}
+
+async function testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards() {
+  const state = {
+    x: 4,
+    y: 1,
+    bank: new Map([['tasks_coin', 12]]),
+    inventory: new Map(),
+    withdrawCalls: [],
+    depositCalls: [],
+  };
+
+  const fakeApi = {
+    async getMaps(params = {}) {
+      if (params.content_type === 'bank') {
+        return [{ x: 4, y: 1, name: 'bank', access: { conditions: [] } }];
+      }
+      return [];
+    },
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move(x, y) {
+      state.x = x;
+      state.y = y;
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const row of items) {
+        const code = `${row?.code || ''}`.trim();
+        const qty = Math.max(0, Number(row?.quantity) || 0);
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const nextBank = have - qty;
+        if (nextBank > 0) state.bank.set(code, nextBank);
+        else state.bank.delete(code);
+        state.inventory.set(code, (state.inventory.get(code) || 0) + qty);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+    async depositBank(items) {
+      for (const row of items) {
+        const code = `${row?.code || ''}`.trim();
+        const qty = Math.max(0, Number(row?.quantity) || 0);
+        if (!code || qty <= 0) continue;
+        const have = state.inventory.get(code) || 0;
+        if (have < qty) throw new Error(`not enough inventory ${code}`);
+        const nextInv = have - qty;
+        if (nextInv > 0) state.inventory.set(code, nextInv);
+        else state.inventory.delete(code);
+        state.bank.set(code, (state.bank.get(code) || 0) + qty);
+        state.depositCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    routine._getBankItemsForExchange = async () => new Map(state.bank);
+    routine._performTaskExchange = async () => {
+      const coins = state.inventory.get('tasks_coin') || 0;
+      assert.ok(coins >= 6, 'exchange should run only after coins are withdrawn to inventory');
+      const nextCoins = coins - 6;
+      if (nextCoins > 0) state.inventory.set('tasks_coin', nextCoins);
+      else state.inventory.delete('tasks_coin');
+      state.inventory.set('jasper_crystal', (state.inventory.get('jasper_crystal') || 0) + 1);
+    };
+
+    const result = await routine._runTaskExchange(makeMutableCtx(state), {
+      targets: new Map([['jasper_crystal', 1]]),
+      trigger: 'test',
+      proactive: true,
+    });
+
+    assert.equal(result.resolved, true, 'target reward should be satisfied after proactive exchange');
+    assert.ok(
+      state.withdrawCalls.some(row => row.code === 'tasks_coin'),
+      'coins should be withdrawn from bank for exchange',
+    );
+    assert.ok(
+      state.depositCalls.some(row => row.code === 'jasper_crystal'),
+      'gained target rewards should be deposited to bank',
+    );
+    assert.equal(state.bank.get('jasper_crystal') || 0, 1);
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
 async function run() {
+  await testContextTaskCoinsUsesInventoryOnly();
   await testAlchemyFallbackToGatherAtLevel1();
   await testAlchemyCraftingSelectsViableRecipe();
   await testAlchemyCraftingNonViableFallsBackToGathering();
@@ -1198,6 +1488,7 @@ async function run() {
   await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();
   await testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar();
   await testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar();
+  await testAcquireCraftClaimRetriesTaskRewardDependencyWithProactiveExchange();
   await testAcquireCraftClaimSucceedsWhenPrechecksPass();
   await testAcquireGatherClaimPrioritizesToolOrders();
   await testAcquireCombatClaimPrioritizesToolOrders();
@@ -1211,6 +1502,9 @@ async function run() {
   await testRoutineSkipsGoalProgressWhileOrderClaimIsActive();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
+  await testRoutineTriggersProactiveExchangeBeforeSkillDispatch();
+  await testTaskExchangeLockPreventsConcurrentRuns();
+  await testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards();
   await testCraftingWithdrawSkipsFinalRecipeOutput();
   resetOrderPriorityForTests();
   console.log('skill-rotation tests passed');

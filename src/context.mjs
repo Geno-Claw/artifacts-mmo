@@ -161,7 +161,10 @@ export class CharacterContext {
   }
 
   taskCoins() {
-    return this.get().tasks_coins || 0;
+    return (this.get().inventory || []).reduce((sum, slot) => {
+      if (slot?.code !== 'tasks_coin') return sum;
+      return sum + Math.max(0, Number(slot.quantity) || 0);
+    }, 0);
   }
 
   settings() {
