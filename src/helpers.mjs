@@ -18,6 +18,7 @@ import {
   withdrawBankItems,
 } from './services/bank-ops.mjs';
 import { getOwnedKeepByCodeForInventory } from './services/gear-state.mjs';
+import { logWithdrawalWarnings } from './utils.mjs';
 
 /** Move to (x,y) if not already there. No-ops if already at target. */
 export async function moveTo(ctx, x, y) {
@@ -31,58 +32,14 @@ export async function moveTo(ctx, x, y) {
   return result;
 }
 
-/** Find consumable food items in inventory that restore HP. */
-function findHealingFood(ctx) {
-  const character = ctx.get();
-  const inv = character.inventory;
-  if (!inv) return [];
-
+/**
+ * Score and filter healing items from a list of { code, quantity } entries.
+ * Returns items sorted by potency (most potent first).
+ */
+function scoreHealingItems(entries, character) {
   const foods = [];
-  for (const slot of inv) {
-    if (!slot.code || slot.quantity <= 0) continue;
-
-    const item = gameData.getItem(slot.code);
-    if (!item || item.type !== 'consumable') continue;
-    if (!canUseItem(item, character)) continue;
-    if (!item.effects || item.effects.length === 0) continue;
-
-    let hpRestore = 0;
-    for (const effect of item.effects) {
-      const name = effect.name || effect.code || '';
-      if (name === 'hp' || name === 'heal' || name === 'restore' || name === 'restore_hp') {
-        hpRestore += (effect.value || 0);
-      }
-    }
-    if (hpRestore <= 0) continue;
-
-    foods.push({ code: slot.code, quantity: slot.quantity, hpRestore });
-  }
-
-  // Eat the most potent food first
-  foods.sort((a, b) => b.hpRestore - a.hpRestore);
-  return foods;
-}
-
-/** True if character has at least one usable healing consumable in inventory. */
-export function hasHealingFood(ctx) {
-  return findHealingFood(ctx).length > 0;
-}
-
-/** Rest action availability (server-side requires level > 4). */
-export function canUseRestAction(ctx) {
-  return (ctx.get().level || 0) > 4;
-}
-
-function isConditionNotMet(err) {
-  const msg = `${err?.message || ''}`.toLowerCase();
-  return msg.includes('condition not met');
-}
-
-/** Find consumable food items in the bank that restore HP. */
-function findBankFood(bankItems, character) {
-  const foods = [];
-  for (const [code, quantity] of bankItems) {
-    if (quantity <= 0) continue;
+  for (const { code, quantity } of entries) {
+    if (!code || quantity <= 0) continue;
 
     const item = gameData.getItem(code);
     if (!item || item.type !== 'consumable') continue;
@@ -103,6 +60,38 @@ function findBankFood(bankItems, character) {
 
   foods.sort((a, b) => b.hpRestore - a.hpRestore);
   return foods;
+}
+
+/** Find consumable food items in inventory that restore HP. */
+function findHealingFood(ctx) {
+  const character = ctx.get();
+  const inv = character.inventory;
+  if (!inv) return [];
+  return scoreHealingItems(inv, character);
+}
+
+/** True if character has at least one usable healing consumable in inventory. */
+export function hasHealingFood(ctx) {
+  return findHealingFood(ctx).length > 0;
+}
+
+/** Rest action availability (server-side requires level > 4). */
+export function canUseRestAction(ctx) {
+  return (ctx.get().level || 0) > 4;
+}
+
+function isConditionNotMet(err) {
+  const msg = `${err?.message || ''}`.toLowerCase();
+  return msg.includes('condition not met');
+}
+
+/** Find consumable food items in the bank that restore HP. */
+function findBankFood(bankItems, character) {
+  const entries = [];
+  for (const [code, quantity] of bankItems) {
+    entries.push({ code, quantity });
+  }
+  return scoreHealingItems(entries, character);
 }
 
 /** Rest until HP reaches the given percentage. Eats food first for faster recovery. Returns true when target HP is reached. */
@@ -276,12 +265,7 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
     mode: 'partial',
     retryStaleOnce: true,
   });
-  for (const row of withdrawalResult.failed) {
-    log.warn(`[${ctx.name}] Food: could not withdraw ${row.code}: ${row.error}`);
-  }
-  for (const row of withdrawalResult.skipped) {
-    log.warn(`[${ctx.name}] Food: skipped ${row.code} (${row.reason})`);
-  }
+  logWithdrawalWarnings(ctx, withdrawalResult, 'Food');
 
   return true;
 }
@@ -445,14 +429,7 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1, opts = {}) 
   for (const row of result.withdrawn) {
     withdrawn.push(`${row.code} x${row.quantity}`);
   }
-  for (const row of result.failed) {
-    log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.error}`);
-  }
-  for (const row of result.skipped) {
-    if (!row.reason.startsWith('partial fill')) {
-      log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
-    }
-  }
+  logWithdrawalWarnings(ctx, result);
 
   return withdrawn;
 }
@@ -497,6 +474,132 @@ function buildDepositRowsRespectingKeep(ctx, codes, keepByCode = {}) {
   return rows;
 }
 
+// --- Gear loadout application (shared by combat & gathering) ---
+
+/**
+ * Apply a target gear loadout: compute slot changes, withdraw from bank if
+ * needed, perform equipment swaps, and deposit old gear.
+ *
+ * @param {import('./context.mjs').CharacterContext} ctx
+ * @param {Map<string, string|null>} loadout — slot → itemCode (or null to unequip)
+ * @param {object} opts
+ * @param {string} opts.reason — log/audit label (e.g. "combat gear for chicken")
+ * @param {boolean} [opts.abortOnMissing=false] — if true, return early without
+ *   swapping when any target item is unavailable after bank withdrawal
+ * @returns {Promise<{ changed: boolean, swapsFailed: boolean, missingSlots: string[] }>}
+ */
+async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abortOnMissing = false } = {}) {
+  // Determine which slots need changing
+  const changes = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const currentCode = ctx.get()[`${slot}_slot`] || null;
+    const targetCode = loadout.get(slot) || null;
+    if (currentCode !== targetCode) {
+      changes.push({ slot, currentCode, targetCode });
+    }
+  }
+
+  if (changes.length === 0) {
+    return { changed: false, swapsFailed: false, missingSlots: [] };
+  }
+
+  log.info(`[${ctx.name}] ${reason}: ${changes.length} slot(s) to change`);
+
+  // Determine if any items need to come from bank
+  const desiredByCode = new Map();
+  for (const change of changes) {
+    if (!change.targetCode) continue;
+    desiredByCode.set(change.targetCode, (desiredByCode.get(change.targetCode) || 0) + 1);
+  }
+
+  const bankNeeded = new Map();
+  for (const [code, desired] of desiredByCode.entries()) {
+    const missing = Math.max(0, desired - ctx.itemCount(code));
+    if (missing > 0) bankNeeded.set(code, missing);
+  }
+
+  if (bankNeeded.size > 0) {
+    // Ensure inventory space for swaps
+    const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
+    if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
+      await depositAll(ctx, { keepByCode: getOwnedKeepByCodeForInventory(ctx) });
+    }
+
+    const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
+    const wdResult = await withdrawBankItems(ctx, requests, {
+      reason,
+      mode: 'partial',
+      retryStaleOnce: true,
+    });
+    logWithdrawalWarnings(ctx, wdResult);
+  }
+
+  // Check for missing items after bank withdrawal
+  const missingSlots = [];
+  for (const { slot, targetCode } of changes) {
+    if (!targetCode) continue;
+    if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
+      missingSlots.push(`${slot}:${targetCode}`);
+    }
+  }
+  if (abortOnMissing && missingSlots.length > 0) {
+    return { changed: false, swapsFailed: true, missingSlots };
+  }
+
+  // Perform equipment swaps
+  let swapsFailed = false;
+  for (const { slot, currentCode, targetCode } of changes) {
+    if (targetCode === null) {
+      // Unequip only
+      if (currentCode) {
+        if (ctx.inventoryFull()) {
+          log.warn(`[${ctx.name}] Inventory full, cannot unequip ${slot}`);
+          swapsFailed = true;
+          continue;
+        }
+        log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
+        const ur = await api.unequipItem(slot, ctx.name);
+        await api.waitForCooldown(ur);
+        await ctx.refresh();
+      }
+    } else {
+      if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
+        log.warn(`[${ctx.name}] Skipping ${slot} swap: ${targetCode} not in inventory`);
+        swapsFailed = true;
+        continue;
+      }
+      try {
+        await swapEquipment(ctx, slot, targetCode);
+      } catch (err) {
+        log.warn(`[${ctx.name}] Gear swap failed for ${slot}: ${err.message}`);
+        swapsFailed = true;
+      }
+    }
+  }
+
+  // Deposit old gear to bank if we made a bank trip
+  if (bankNeeded.size > 0) {
+    const unequippedCodes = changes
+      .filter(c => c.currentCode && c.currentCode !== c.targetCode)
+      .map(c => c.currentCode)
+      .filter(code => ctx.hasItem(code));
+
+    if (unequippedCodes.length > 0) {
+      const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+      const items = buildDepositRowsRespectingKeep(ctx, unequippedCodes, keepByCode);
+      if (items.length > 0) {
+        try {
+          await depositBankItems(ctx, items, { reason: `${reason} cleanup` });
+        } catch (err) {
+          log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  return { changed: true, swapsFailed, missingSlots: [] };
+}
+
 // --- Combat gear optimization ---
 
 // Cache: "charName:monsterCode" → { loadout, simResult, level }
@@ -533,122 +636,21 @@ export async function equipForCombat(ctx, monsterCode) {
 
   const { loadout, simResult } = result;
 
-  // Determine which slots need changing
-  const changes = [];
-  for (const slot of EQUIPMENT_SLOTS) {
-    const currentCode = ctx.get()[`${slot}_slot`] || null;
-    const targetCode = loadout.get(slot) || null;
-    if (currentCode !== targetCode) {
-      changes.push({ slot, currentCode, targetCode });
-    }
-  }
+  const { changed, swapsFailed, missingSlots } = await applyGearLoadout(ctx, loadout, {
+    reason: `combat gear for ${monsterCode}`,
+    abortOnMissing: true,
+  });
 
-  if (changes.length === 0) {
-    _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
-    return { changed: false, simResult, ready: true };
-  }
-
-  log.info(`[${ctx.name}] Gear optimizer: ${changes.length} slot(s) to change for ${monsterCode}`);
-
-  // Determine if any items need to come from bank
-  const desiredByCode = new Map();
-  for (const change of changes) {
-    if (!change.targetCode) continue;
-    desiredByCode.set(change.targetCode, (desiredByCode.get(change.targetCode) || 0) + 1);
-  }
-
-  const bankNeeded = new Map();
-  for (const [code, desired] of desiredByCode.entries()) {
-    const missing = Math.max(0, desired - ctx.itemCount(code));
-    if (missing > 0) bankNeeded.set(code, missing);
-  }
-
-  if (bankNeeded.size > 0) {
-    // Ensure inventory space for swaps
-    const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
-    if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
-      await depositAll(ctx, { keepByCode: getOwnedKeepByCodeForInventory(ctx) });
-    }
-
-    const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
-    const result = await withdrawBankItems(ctx, requests, {
-      reason: `combat gear withdrawal for ${monsterCode}`,
-      mode: 'partial',
-      retryStaleOnce: true,
-    });
-    for (const row of result.failed) {
-      log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.error}`);
-    }
-    for (const row of result.skipped) {
-      if (!row.reason.startsWith('partial fill')) {
-        log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
-      }
-    }
-  }
-
-  const missingSlots = [];
-  for (const { slot, targetCode } of changes) {
-    if (!targetCode) continue;
-    if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
-      missingSlots.push(`${slot}:${targetCode}`);
-    }
-  }
-  if (missingSlots.length > 0) {
+  if (!changed && missingSlots.length > 0) {
     _gearCache.delete(cacheKey);
     log.error(`[${ctx.name}] Combat gear not ready for ${monsterCode}; missing ${missingSlots.join(', ')}`);
     return { changed: false, simResult, ready: false };
   }
 
-  // Perform equipment swaps
-  let swapsFailed = false;
-  for (const { slot, currentCode, targetCode } of changes) {
-    if (targetCode === null) {
-      // Unequip only
-      if (currentCode) {
-        if (ctx.inventoryFull()) {
-          log.warn(`[${ctx.name}] Inventory full, cannot unequip ${slot}`);
-          swapsFailed = true;
-          continue;
-        }
-        log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
-        const ur = await api.unequipItem(slot, ctx.name);
-        await api.waitForCooldown(ur);
-        await ctx.refresh();
-      }
-    } else {
-      // Verify target item is available before attempting swap
-      if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
-        log.warn(`[${ctx.name}] Skipping ${slot} swap: ${targetCode} not in inventory (withdrawal failed?)`);
-        swapsFailed = true;
-        continue;
-      }
-      try {
-        await swapEquipment(ctx, slot, targetCode);
-      } catch (err) {
-        log.warn(`[${ctx.name}] Gear swap failed for ${slot}: ${err.message}`);
-        swapsFailed = true;
-      }
-    }
-  }
-
-  // Deposit old gear to bank if we made a bank trip
-  if (bankNeeded.size > 0) {
-    const unequippedCodes = changes
-      .filter(c => c.currentCode && c.currentCode !== c.targetCode)
-      .map(c => c.currentCode)
-      .filter(code => ctx.hasItem(code));
-
-    if (unequippedCodes.length > 0) {
-      const keepByCode = getOwnedKeepByCodeForInventory(ctx);
-      const items = buildDepositRowsRespectingKeep(ctx, unequippedCodes, keepByCode);
-      if (items.length > 0) {
-        try {
-          await depositBankItems(ctx, items, { reason: 'combat gear cleanup deposit' });
-        } catch (err) {
-          log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
-        }
-      }
-    }
+  if (!changed) {
+    // No slots needed changing (applyGearLoadout found 0 changes)
+    _gearCache.set(cacheKey, { loadout, simResult, level: ctx.get().level });
+    return { changed: false, simResult, ready: true };
   }
 
   if (!swapsFailed) {
@@ -743,106 +745,13 @@ export async function equipForGathering(ctx, skill) {
 
   const { loadout } = result;
 
-  // Determine which slots need changing
-  const changes = [];
-  for (const slot of EQUIPMENT_SLOTS) {
-    const currentCode = ctx.get()[`${slot}_slot`] || null;
-    const targetCode = loadout.get(slot) || null;
-    if (currentCode !== targetCode) {
-      changes.push({ slot, currentCode, targetCode });
-    }
-  }
+  const { changed, swapsFailed } = await applyGearLoadout(ctx, loadout, {
+    reason: `gathering gear for ${skill}`,
+  });
 
-  if (changes.length === 0) {
+  if (!changed) {
     _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level });
     return { changed: false };
-  }
-
-  log.info(`[${ctx.name}] Gathering gear: ${changes.length} slot(s) to change for ${skill}`);
-
-  // Determine if any items need to come from bank
-  const desiredByCode = new Map();
-  for (const change of changes) {
-    if (!change.targetCode) continue;
-    desiredByCode.set(change.targetCode, (desiredByCode.get(change.targetCode) || 0) + 1);
-  }
-
-  const bankNeeded = new Map();
-  for (const [code, desired] of desiredByCode.entries()) {
-    const missing = Math.max(0, desired - ctx.itemCount(code));
-    if (missing > 0) bankNeeded.set(code, missing);
-  }
-
-  if (bankNeeded.size > 0) {
-    const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
-    if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
-      await depositAll(ctx, { keepByCode: getOwnedKeepByCodeForInventory(ctx) });
-    }
-
-    const requests = [...bankNeeded.entries()].map(([code, qty]) => ({ code, qty }));
-    const result = await withdrawBankItems(ctx, requests, {
-      reason: `gathering gear withdrawal for ${skill}`,
-      mode: 'partial',
-      retryStaleOnce: true,
-    });
-    for (const row of result.failed) {
-      log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.error}`);
-    }
-    for (const row of result.skipped) {
-      if (!row.reason.startsWith('partial fill')) {
-        log.warn(`[${ctx.name}] Could not withdraw ${row.code}: ${row.reason}`);
-      }
-    }
-  }
-
-  // Perform equipment swaps
-  let swapsFailed = false;
-  for (const { slot, currentCode, targetCode } of changes) {
-    if (targetCode === null) {
-      if (currentCode) {
-        if (ctx.inventoryFull()) {
-          log.warn(`[${ctx.name}] Inventory full, cannot unequip ${slot}`);
-          swapsFailed = true;
-          continue;
-        }
-        log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
-        const ur = await api.unequipItem(slot, ctx.name);
-        await api.waitForCooldown(ur);
-        await ctx.refresh();
-      }
-    } else {
-      if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {
-        log.warn(`[${ctx.name}] Skipping ${slot} swap: ${targetCode} not in inventory`);
-        swapsFailed = true;
-        continue;
-      }
-      try {
-        await swapEquipment(ctx, slot, targetCode);
-      } catch (err) {
-        log.warn(`[${ctx.name}] Gear swap failed for ${slot}: ${err.message}`);
-        swapsFailed = true;
-      }
-    }
-  }
-
-  // Deposit old gear to bank if we made a bank trip
-  if (bankNeeded.size > 0) {
-    const unequippedCodes = changes
-      .filter(c => c.currentCode && c.currentCode !== c.targetCode)
-      .map(c => c.currentCode)
-      .filter(code => ctx.hasItem(code));
-
-    if (unequippedCodes.length > 0) {
-      const keepByCode = getOwnedKeepByCodeForInventory(ctx);
-      const items = buildDepositRowsRespectingKeep(ctx, unequippedCodes, keepByCode);
-      if (items.length > 0) {
-        try {
-          await depositBankItems(ctx, items, { reason: 'gathering gear cleanup deposit' });
-        } catch (err) {
-          log.warn(`[${ctx.name}] Could not deposit old gear: ${err.message}`);
-        }
-      }
-    }
   }
 
   if (!swapsFailed) {

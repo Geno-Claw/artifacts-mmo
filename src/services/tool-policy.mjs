@@ -1,4 +1,5 @@
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { createOrMergeOrder, getOrderBoardSnapshot } from './order-board.mjs';
 import { globalCount, getCharacterLevelsSnapshot } from './inventory-manager.mjs';
@@ -23,12 +24,6 @@ function createDefaultDeps() {
 }
 
 let _deps = createDefaultDeps();
-
-function toPositiveInt(value, fallback = 0) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
 
 function isToolForSkill(item, skill) {
   if (!item || item.type !== 'weapon' || item.subtype !== 'tool') return false;

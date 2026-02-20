@@ -4,6 +4,7 @@ import { Scheduler } from './scheduler.mjs';
 import { CharacterContext } from './context.mjs';
 import { buildRoutines } from './routines/factory.mjs';
 import * as log from './log.mjs';
+import { toPositiveInt } from './utils.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
 import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
@@ -26,12 +27,6 @@ import { initializeUiState, recordCooldown, recordLog } from './services/ui-stat
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
 const ORDER_BOARD_ROLLOUT_MARKER = './report/.order-board-v2-rollout';
-
-function toPositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
 
 function withTimeout(promise, timeoutMs) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {

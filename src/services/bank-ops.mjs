@@ -5,6 +5,7 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import { BANK } from '../data/locations.mjs';
 import { canUseItem } from './item-conditions.mjs';
 import * as gameData from './game-data.mjs';
@@ -42,12 +43,7 @@ const DEFAULT_BANK_TRAVEL_SETTINGS = Object.freeze({
   itemUseSeconds: 3,
 });
 
-function toPositiveInt(value) {
-  const n = Number(value) || 0;
-  return Number.isFinite(n) ? Math.floor(n) : 0;
-}
-
-function normalizeItemRows(items = []) {
+function _normalizeByCode(items, qtyField) {
   const totals = new Map();
   const order = [];
 
@@ -59,22 +55,15 @@ function normalizeItemRows(items = []) {
     totals.set(code, (totals.get(code) || 0) + qty);
   }
 
-  return order.map(code => ({ code, quantity: totals.get(code) }));
+  return order.map(code => ({ code, [qtyField]: totals.get(code) }));
+}
+
+function normalizeItemRows(items = []) {
+  return _normalizeByCode(items, 'quantity');
 }
 
 function normalizeRequests(requests = []) {
-  const totals = new Map();
-  const order = [];
-
-  for (const req of requests) {
-    const code = req?.code;
-    const qty = toPositiveInt(req?.qty ?? req?.quantity);
-    if (!code || qty <= 0) continue;
-    if (!totals.has(code)) order.push(code);
-    totals.set(code, (totals.get(code) || 0) + qty);
-  }
-
-  return order.map(code => ({ code, requested: totals.get(code) }));
+  return _normalizeByCode(requests, 'requested');
 }
 
 function normalizeKeepByCode(keepByCode = {}) {

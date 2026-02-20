@@ -270,7 +270,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.getItem(order?.itemCode || order?.sourceCode);
   }
 
-  _resolveCraftClaimPlan(craft) {
+  _resolveRecipeChain(craft) {
     return gameData.resolveRecipeChain(craft);
   }
 
@@ -294,15 +294,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.getResourceForDrop(itemCode);
   }
 
-  _resolveItemTaskPlan(craft) {
-    return gameData.resolveRecipeChain(craft);
-  }
-
-  async _getCraftClaimBankItems(forceRefresh = false) {
-    return gameData.getBankItems(forceRefresh);
-  }
-
-  async _getBankItemsForExchange(forceRefresh = false) {
+  async _getBankItems(forceRefresh = false) {
     return gameData.getBankItems(forceRefresh);
   }
 
@@ -336,7 +328,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       return { ok: false, reason: 'insufficient_craft_level' };
     }
 
-    const plan = this._resolveCraftClaimPlan(item.craft);
+    const plan = this._resolveRecipeChain(item.craft);
     if (!plan || plan.length === 0) {
       return { ok: false, reason: 'unresolvable_recipe_chain' };
     }
@@ -386,7 +378,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       craftSkill,
       charName: ctx.name,
     }));
-    let bank = await this._getCraftClaimBankItems();
+    let bank = await this._getBankItems();
     const simCache = new Map();
 
     for (const order of orders) {
@@ -399,7 +391,7 @@ export class SkillRotationRoutine extends BaseRoutine {
             trigger: 'craft_claim',
           });
           if (proactive.attempted || proactive.resolved) {
-            bank = await this._getCraftClaimBankItems(true);
+            bank = await this._getBankItems(true);
             viability = await this._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
           }
         }
@@ -700,7 +692,7 @@ export class SkillRotationRoutine extends BaseRoutine {
         return true;
       }
 
-      const claimPlan = this._resolveCraftClaimPlan(claimItem.craft);
+      const claimPlan = this._resolveRecipeChain(claimItem.craft);
       if (!claimPlan) {
         await this._blockAndReleaseClaim(ctx, 'unresolvable_recipe_chain');
         return true;
@@ -1302,7 +1294,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     // Crafting path
     if (craftable) {
-      const plan = this._resolveItemTaskPlan(item.craft);
+      const plan = this._resolveRecipeChain(item.craft);
       if (!plan) {
         log.warn(`[${ctx.name}] Item Task: can't resolve recipe for ${itemCode}, cancelling`);
         await this._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
@@ -1802,7 +1794,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
     taskExchangeLockHolder = ctx.name;
     try {
-      let bank = await this._getBankItemsForExchange(true);
+      let bank = await this._getBankItems(true);
       let unmet = this._computeUnmetTargets(ctx, targetMap, bank);
       if (unmet.size === 0) {
         return { attempted: false, exchanged: 0, resolved: true, reason: 'targets_met' };
@@ -1838,7 +1830,7 @@ export class SkillRotationRoutine extends BaseRoutine {
         }
 
         await this._depositTargetRewardsToBank(ctx, targetMap, beforeInv);
-        bank = await this._getBankItemsForExchange(true);
+        bank = await this._getBankItems(true);
         unmet = this._computeUnmetTargets(ctx, targetMap, bank);
       }
 

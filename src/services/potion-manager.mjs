@@ -4,6 +4,7 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { canUseItem } from './item-conditions.mjs';
 import { simulateCombat } from './combat-simulator.mjs';
@@ -33,11 +34,6 @@ function normalizeSlotCode(code) {
   if (typeof code !== 'string') return null;
   if (!code || code === 'none') return null;
   return code;
-}
-
-function toPositiveInt(value) {
-  const n = Number(value) || 0;
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
 }
 
 function isUtilityPotion(item) {

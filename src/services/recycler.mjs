@@ -19,6 +19,7 @@ import {
   computeToolTargetsByCode,
 } from './tool-policy.mjs';
 import { moveTo } from '../helpers.mjs';
+import { toPositiveInt } from '../utils.mjs';
 
 const TARGET_BANK_UNIQUE_SLOTS = 45;
 const MAX_RECYCLE_PASSES = 6;
@@ -41,12 +42,6 @@ let _deps = {
   recycleFn: (code, qty, name) => api.recycle(code, qty, name),
   waitForCooldownFn: (result) => api.waitForCooldown(result),
 };
-
-function toPositiveInt(value, fallback = 0) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
 
 function getLevelForCharacter(levelsByChar, name) {
   const charName = `${name || ''}`.trim();

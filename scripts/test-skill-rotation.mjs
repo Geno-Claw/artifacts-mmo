@@ -501,12 +501,12 @@ async function testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar() {
     });
     assert.ok(created, 'expected craft order to be created');
 
-    routine._getCraftClaimBankItems = async () => new Map();
+    routine._getBankItems = async () => new Map();
     routine._getCraftClaimItem = () => ({
       code: 'cheese',
       craft: { skill: 'alchemy', level: 1, items: [] },
     });
-    routine._resolveCraftClaimPlan = () => [
+    routine._resolveRecipeChain = () => [
       {
         type: 'fight',
         itemCode: 'milk_bucket',
@@ -561,12 +561,12 @@ async function testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar() {
     });
     assert.ok(created, 'expected craft order to be created');
 
-    routine._getCraftClaimBankItems = async () => new Map();
+    routine._getBankItems = async () => new Map();
     routine._getCraftClaimItem = () => ({
       code: 'rare_potion',
       craft: { skill: 'alchemy', level: 1, items: [] },
     });
-    routine._resolveCraftClaimPlan = () => [
+    routine._resolveRecipeChain = () => [
       { type: 'bank', itemCode: 'event_core', quantity: 1 },
     ];
     routine._canFulfillCraftClaimPlan = () => true;
@@ -620,7 +620,7 @@ async function testAcquireCraftClaimRetriesTaskRewardDependencyWithProactiveExch
     assert.ok(created, 'expected craft order to be created');
 
     let bankState = new Map();
-    routine._getCraftClaimBankItems = async () => bankState;
+    routine._getBankItems = async () => bankState;
     routine._canClaimCraftOrderNow = async (_ctx, _order, _craftSkill, bank) => {
       const hasJasper = (bank.get('jasper_crystal') || 0) >= 1;
       if (!hasJasper) {
@@ -668,12 +668,12 @@ async function testAcquireCraftClaimSucceedsWhenPrechecksPass() {
     });
     assert.ok(created, 'expected craft order to be created');
 
-    routine._getCraftClaimBankItems = async () => new Map([['empty_vial', 1]]);
+    routine._getBankItems = async () => new Map([['empty_vial', 1]]);
     routine._getCraftClaimItem = () => ({
       code: 'fang_elixir',
       craft: { skill: 'alchemy', level: 1, items: [] },
     });
-    routine._resolveCraftClaimPlan = () => [
+    routine._resolveRecipeChain = () => [
       {
         type: 'gather',
         itemCode: 'herb',
@@ -850,7 +850,7 @@ async function testAcquireCraftClaimPrioritizesToolOrders() {
           fulfillOrders: true,
         },
       });
-      routine._getCraftClaimBankItems = async () => new Map();
+      routine._getBankItems = async () => new Map();
       routine._canClaimCraftOrderNow = async () => ({ ok: true, reason: '' });
 
       // Reverse of desired priority to verify sorting is applied.
@@ -1039,7 +1039,7 @@ async function testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim() {
     code: 'cheese',
     craft: { skill: 'alchemy', level: 1, items: [] },
   });
-  routine._resolveCraftClaimPlan = () => [{
+  routine._resolveRecipeChain = () => [{
     type: 'fight',
     itemCode: 'milk_bucket',
     quantity: 1,
@@ -1811,7 +1811,7 @@ async function testTaskExchangeLockPreventsConcurrentRuns() {
     releaseGate = resolve;
   });
 
-  routineA._getBankItemsForExchange = async () => new Map();
+  routineA._getBankItems = async () => new Map();
   routineA._computeUnmetTargets = () => new Map([['jasper_crystal', 1]]);
   routineA._ensureExchangeCoinsInInventory = async () => {
     await gate;
@@ -1915,7 +1915,7 @@ async function testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards() {
     await getBankItems(true);
 
     const routine = new SkillRotationRoutine();
-    routine._getBankItemsForExchange = async () => new Map(state.bank);
+    routine._getBankItems = async () => new Map(state.bank);
     routine._performTaskExchange = async () => {
       const coins = state.inventory.get('tasks_coin') || 0;
       assert.ok(coins >= 6, 'exchange should run only after coins are withdrawn to inventory');

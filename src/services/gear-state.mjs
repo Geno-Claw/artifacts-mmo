@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
@@ -67,12 +68,6 @@ let _deps = {
 
 function nowMs() {
   return Date.now();
-}
-
-function toPositiveInt(value, fallback = 0) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
 }
 
 function mapToObject(map) {

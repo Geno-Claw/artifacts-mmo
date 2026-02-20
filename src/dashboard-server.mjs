@@ -11,12 +11,7 @@ import {
 } from './services/config-store.mjs';
 import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './services/ui-state.mjs';
 import { getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
-
-function toPositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
+import { toPositiveInt } from './utils.mjs';
 
 function toPort(value, fallback) {
   const num = Number(value);

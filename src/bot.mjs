@@ -1,14 +1,9 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import * as log from './log.mjs';
+import { toPositiveInt } from './utils.mjs';
 import { createRuntimeManager } from './runtime-manager.mjs';
 import { startDashboardServer } from './dashboard-server.mjs';
-
-function toPositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
 
 const stopTimeoutMs = toPositiveInt(process.env.RUNTIME_STOP_TIMEOUT_MS, 120_000);
 
