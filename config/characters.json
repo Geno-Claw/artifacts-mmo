@@ -27,7 +27,7 @@
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 2,
-            "npc_task": 2,
+            "npc_task": 1,
             "item_task": 1
           },
           "goals": {
@@ -44,9 +44,7 @@
             "item_task": 1
           },
           "orderBoard": {
-            "enabled": true,
-            "createOrders": true,
-            "fulfillOrders": false
+            "enabled": true
           },
           "craftBlacklist": {},
           "taskCollection": {}
@@ -95,7 +93,7 @@
             "mining": 0,
             "woodcutting": 0,
             "fishing": 0,
-            "cooking": 0,
+            "cooking": 1,
             "alchemy": 1,
             "weaponcrafting": 0,
             "gearcrafting": 0,
@@ -105,10 +103,10 @@
             "item_task": 1
           },
           "goals": {
-            "mining": 20,
-            "woodcutting": 20,
-            "fishing": 20,
-            "cooking": 10,
+            "mining": 50,
+            "woodcutting": 50,
+            "fishing": 50,
+            "cooking": 50,
             "alchemy": 50,
             "weaponcrafting": 5,
             "gearcrafting": 5,
@@ -167,14 +165,14 @@
             "mining": 0,
             "woodcutting": 0,
             "fishing": 0,
-            "cooking": 0,
+            "cooking": 1,
             "alchemy": 0,
             "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 1,
             "npc_task": 1,
-            "item_task": 1
+            "item_task": 0
           },
           "goals": {
             "mining": 20,

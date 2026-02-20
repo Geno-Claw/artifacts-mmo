@@ -8,6 +8,7 @@ import { optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
 import { getBankRevision, globalCount } from './inventory-manager.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
+import { getBestToolForSkillAtLevel } from './tool-policy.mjs';
 
 const DEFAULT_GEAR_STATE_PATH = './report/gear-state.json';
 const STATE_VERSION = 2;
@@ -15,6 +16,7 @@ const RESERVED_FREE_SLOTS = 10;
 const CARRY_SLOT_PRIORITY = ['weapon', 'shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'bag', 'amulet', 'ring1', 'ring2'];
 const OWNED_EQUIPMENT_SLOTS = [...new Set([...EQUIPMENT_SLOTS, 'bag'])];
 const UTILITY_SLOTS = ['utility1_slot', 'utility2_slot'];
+const TOOL_SKILLS = ['mining', 'woodcutting', 'fishing', 'alchemy'];
 const FALLBACK_EQUIPPED_SLOTS = [
   { key: 'weapon_slot', category: 'weapon', quantityKey: null },
   { key: 'shield_slot', category: 'shield', quantityKey: null },
@@ -46,9 +48,18 @@ let persistTimer = null;
 let persistWritePromise = Promise.resolve();
 let persistQueued = false;
 
+function getBestToolForSkillAtLevelSafe(skill, level) {
+  try {
+    return getBestToolForSkillAtLevel(skill, level);
+  } catch {
+    return null;
+  }
+}
+
 let _deps = {
   gameDataSvc: gameData,
   optimizeForMonsterFn: optimizeForMonster,
+  getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
   createOrMergeOrderFn: createOrMergeOrder,
   getBankRevisionFn: getBankRevision,
   globalCountFn: globalCount,
@@ -352,6 +363,20 @@ function computePotionRequirements(ctx, cfg) {
   return required;
 }
 
+function computeToolRequirements(level) {
+  const required = new Map();
+  const charLevel = toPositiveInt(level);
+  if (charLevel <= 0) return required;
+
+  for (const skill of TOOL_SKILLS) {
+    const tool = _deps.getBestToolForSkillAtLevelFn(skill, charLevel);
+    if (!tool?.code) continue;
+    incrementCount(required, tool.code, 1);
+  }
+
+  return required;
+}
+
 function equipmentCountsOnCharacter(ctx) {
   const char = ctx.get();
   const counts = new Map();
@@ -376,7 +401,9 @@ function carriedCountForCode(ctx, equipmentCounts, code) {
 function categoryFromItem(item) {
   const type = `${item?.type || ''}`.trim();
   if (!type) return null;
-  if (type === 'weapon') return 'weapon';
+  if (type === 'weapon') {
+    return item?.subtype === 'tool' ? 'tool' : 'weapon';
+  }
   if (type === 'shield') return 'shield';
   if (type === 'helmet') return 'helmet';
   if (type === 'body_armor') return 'body_armor';
@@ -493,7 +520,6 @@ function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new M
   for (const slot of FALLBACK_EQUIPPED_SLOTS) {
     const code = `${char[slot.key] || ''}`.trim();
     if (!code || code === 'none') continue;
-    if ((missingByCategory.get(slot.category) || 0) <= 0) continue;
 
     const qty = slot.quantityKey
       ? Math.max(1, toPositiveInt(char[slot.quantityKey], 1))
@@ -501,7 +527,11 @@ function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new M
     if (qty <= 0) continue;
 
     const item = _deps.gameDataSvc.getItem(code);
-    addFallbackCandidate(candidatesByCategory, slot.category, {
+    const category = categoryFromItem(item) || slot.category;
+    if (!category) continue;
+    if ((missingByCategory.get(category) || 0) <= 0) continue;
+
+    addFallbackCandidate(candidatesByCategory, category, {
       code,
       qty,
       source: 'equipped',
@@ -638,6 +668,8 @@ async function computeCharacterRequirements(name, ctx) {
 
   const potionRequired = computePotionRequirements(ctx, cfg);
   maxMergeCounts(required, potionRequired);
+  const toolRequired = computeToolRequirements(level);
+  maxMergeCounts(required, toolRequired);
 
   const selected = new Map();
   const selectedMonsters = [];
@@ -730,6 +762,15 @@ async function computeCharacterRequirements(name, ctx) {
       if (addQty <= 0) continue;
       selected.set(code, have + addQty);
     }
+  }
+
+  maxMergeCounts(selected, toolRequired);
+  const selectedTotal = countMapTotal(selected);
+  if (selectedTotal > carryBudget) {
+    log.warn(
+      `[GearState] ${name}: selected ownership exceeds carry budget ` +
+      `(${selectedTotal} > ${carryBudget}) after tool requirements`,
+    );
   }
 
   if (!bestTarget && allRecords.length > 0) {
@@ -951,6 +992,10 @@ export function getGearStateSnapshot() {
   };
 }
 
+export function getTrackedCharacterNames() {
+  return [...characterOrder];
+}
+
 export function getCharacterGearState(name) {
   if (!name) return null;
   const row = stateByChar.get(name);
@@ -1059,6 +1104,8 @@ export function publishDesiredOrdersForCharacter(name) {
   for (const [itemCode, qty] of row.desired.entries()) {
     const missingQty = toPositiveInt(qty);
     if (missingQty <= 0) continue;
+    const item = _deps.gameDataSvc.getItem(itemCode);
+    if (isToolItem(item)) continue;
 
     const source = resolveCraftDesiredOrder(itemCode);
     if (!source) continue;
@@ -1115,6 +1162,7 @@ export function _resetGearStateForTests() {
   _deps = {
     gameDataSvc: gameData,
     optimizeForMonsterFn: optimizeForMonster,
+    getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
     createOrMergeOrderFn: createOrMergeOrder,
     getBankRevisionFn: getBankRevision,
     globalCountFn: globalCount,

@@ -58,6 +58,7 @@ function installAnalyzeDeps({
   globalByCode,
   bankByCode,
   levelsByChar = {},
+  trackedCharNames = Object.keys(levelsByChar || {}),
   needsByCode = new Map(),
   latestBySkill = new Map(),
   targetsByCode = new Map(),
@@ -76,6 +77,7 @@ function installAnalyzeDeps({
     globalCountFn: (code) => globalByCode.get(code) || 0,
     bankCountFn: (code) => bankByCode.get(code) || 0,
     getCharacterLevelsSnapshotFn: () => levelsByChar,
+    getTrackedCharacterNamesFn: () => trackedCharNames,
     computeToolNeedsByCodeFn: () => needsByCode,
     computeLatestToolBySkillFn: () => latestBySkill,
     computeToolTargetsByCodeFn: () => targetsByCode,
@@ -189,6 +191,7 @@ async function testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds() {
       Low: 5,
       High: 25,
     },
+    trackedCharNames: ['Low', 'High'],
     needsByCode: new Map([
       ['stone_pick', 1],
       ['iron_pick', 2],
@@ -237,6 +240,10 @@ async function testAnalyzeToolSurplusStillHonorsClaimedProtection() {
       ['iron_pick', 7],
     ]),
     bankByCode: bankItems,
+    levelsByChar: {
+      Miner: 20,
+    },
+    trackedCharNames: ['Miner'],
     needsByCode: new Map([
       ['iron_pick', 2],
     ]),
@@ -252,6 +259,59 @@ async function testAnalyzeToolSurplusStillHonorsClaimedProtection() {
   assert.equal(rows.length, 1, 'tool should still be recyclable when above claimed quantity');
   assert.equal(rows[0].code, 'iron_pick');
   assert.equal(rows[0].quantity, 1, 'claimed tool quantities must be protected before recycling');
+}
+
+async function testAnalyzeSkipsToolRecycleOnIncompleteLevelSnapshot() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['stone_pick', 8],
+    ['free_amulet', 2],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['stone_pick', { code: 'stone_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+      ['free_amulet', { code: 'free_amulet', type: 'amulet', craft: { skill: 'jewelrycrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['stone_pick', 0],
+      ['free_amulet', 0],
+    ]),
+    globalByCode: new Map([
+      ['stone_pick', 8],
+      ['free_amulet', 2],
+    ]),
+    bankByCode: bankItems,
+    levelsByChar: {
+      Alpha: 25,
+    },
+    trackedCharNames: ['Alpha', 'Beta'],
+    needsByCode: new Map([
+      ['stone_pick', 1],
+    ]),
+    latestBySkill: new Map([
+      ['mining', { code: 'stone_pick', level: 20 }],
+    ]),
+    targetsByCode: new Map([
+      ['stone_pick', 5],
+    ]),
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  rows.sort((a, b) => a.code.localeCompare(b.code));
+
+  assert.deepEqual(
+    rows.map(row => ({ code: row.code, quantity: row.quantity })),
+    [
+      { code: 'free_amulet', quantity: 2 },
+    ],
+    'tool candidates should be skipped when tracked level snapshot is incomplete',
+  );
 }
 
 async function testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget() {
@@ -408,6 +468,7 @@ async function run() {
   await testAnalyzeTreatsFallbackClaimsAsProtected();
   await testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds();
   await testAnalyzeToolSurplusStillHonorsClaimedProtection();
+  await testAnalyzeSkipsToolRecycleOnIncompleteLevelSnapshot();
   await testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget();
   await testClaimedEquipmentIsProtectedFromRecycle();
   _resetForTests();

@@ -673,6 +673,16 @@ export function clearGearCache(charName) {
 
 // Cache: "charName:skill" → { loadout, level }
 const _gatheringGearCache = new Map();
+const GATHER_NO_TOOL_RECHECK_MS = 30_000;
+
+function currentGatherLoadout(ctx) {
+  const loadout = new Map();
+  const char = ctx.get();
+  for (const slot of EQUIPMENT_SLOTS) {
+    loadout.set(slot, char[`${slot}_slot`] || null);
+  }
+  return loadout;
+}
 
 /**
  * Equip optimal gear for gathering a specific skill.
@@ -689,6 +699,18 @@ export async function equipForGathering(ctx, skill) {
   // Check cache — skip if same skill, same level, same gear
   const cached = _gatheringGearCache.get(cacheKey);
   if (cached && cached.level === ctx.get().level) {
+    if (cached.missingTool === true) {
+      const nextCheckAtMs = Number(cached.nextCheckAtMs) || 0;
+      if (Date.now() < nextCheckAtMs) {
+        return {
+          changed: false,
+          missingToolCode: cached.missingToolCode || null,
+          orderQueued: false,
+          proceedWithoutTool: true,
+        };
+      }
+    }
+
     let gearMatches = true;
     for (const slot of EQUIPMENT_SLOTS) {
       const current = ctx.get()[`${slot}_slot`] || null;
@@ -703,10 +725,19 @@ export async function equipForGathering(ctx, skill) {
   const result = await optimizeForGathering(ctx, skill);
   if (!result) {
     const order = ensureMissingGatherToolOrder(ctx, skill);
+    _gatheringGearCache.set(cacheKey, {
+      loadout: currentGatherLoadout(ctx),
+      level: ctx.get().level,
+      missingTool: true,
+      missingToolCode: order?.toolCode || null,
+      nextCheckAtMs: Date.now() + GATHER_NO_TOOL_RECHECK_MS,
+    });
+    log.info(`[${ctx.name}] Gathering gear: proceeding without ${skill} tool (recheck in ${Math.round(GATHER_NO_TOOL_RECHECK_MS / 1000)}s)`);
     return {
       changed: false,
       missingToolCode: order?.toolCode || null,
       orderQueued: order?.queued === true,
+      proceedWithoutTool: true,
     };
   }
 
@@ -815,7 +846,7 @@ export async function equipForGathering(ctx, skill) {
   }
 
   if (!swapsFailed) {
-    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level });
+    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level, missingTool: false });
   } else {
     _gatheringGearCache.delete(cacheKey);
   }

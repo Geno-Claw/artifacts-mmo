@@ -673,6 +673,157 @@ async function testRecomputeTriggersOnRevisionAndLevel(basePath) {
   await flushGearState();
 }
 
+async function testToolRequirementsIncludedWithCombatRequirements(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'Toolsmith',
+    level: 20,
+    capacity: 30,
+    equipped: {
+      weapon: 'combat_blade',
+    },
+  });
+
+  const itemsByCode = new Map([
+    ['combat_blade', { code: 'combat_blade', type: 'weapon', level: 10 }],
+    ['mining_tool', { code: 'mining_tool', type: 'weapon', subtype: 'tool', level: 5 }],
+    ['woodcutting_tool', { code: 'woodcutting_tool', type: 'weapon', subtype: 'tool', level: 5 }],
+    ['fishing_tool', { code: 'fishing_tool', type: 'weapon', subtype: 'tool', level: 5 }],
+    ['alchemy_tool', { code: 'alchemy_tool', type: 'weapon', subtype: 'tool', level: 5 }],
+  ]);
+  const counts = new Map([
+    ['combat_blade', 1],
+    ['mining_tool', 1],
+    ['woodcutting_tool', 1],
+    ['fishing_tool', 1],
+    ['alchemy_tool', 1],
+  ]);
+  const toolBySkill = {
+    mining: 'mining_tool',
+    woodcutting: 'woodcutting_tool',
+    fishing: 'fishing_tool',
+    alchemy: 'alchemy_tool',
+  };
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'wolf', level: 10 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'combat_blade',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 10,
+        turns: 4,
+        remainingHp: 90,
+      },
+    }),
+    getBestToolForSkillAtLevelFn: (skill) => {
+      const code = toolBySkill[skill];
+      return code ? itemsByCode.get(code) : null;
+    },
+    getBankRevisionFn: () => 1,
+    globalCountFn: (code) => counts.get(code) || 0,
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-tool-requirements.json'),
+    characters: [{
+      name: 'Toolsmith',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Toolsmith');
+  assert.ok(state, 'character state should exist');
+  assert.equal(state.required.combat_blade, 1, 'required should include combat weapon');
+  assert.equal(state.required.mining_tool, 1, 'required should include mining tool');
+  assert.equal(state.required.woodcutting_tool, 1, 'required should include woodcutting tool');
+  assert.equal(state.required.fishing_tool, 1, 'required should include fishing tool');
+  assert.equal(state.required.alchemy_tool, 1, 'required should include alchemy tool');
+  assert.equal(state.assigned.mining_tool, 1, 'assigned should include tool claims when owned');
+  assert.equal(state.available.mining_tool, 1, 'available should include tool claims when owned');
+  assertOwnedMirrorsAvailable(state, 'Toolsmith');
+
+  await flushGearState();
+}
+
+async function testToolDeficitNotSatisfiedByWeaponFallback(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'ToolGap',
+    level: 20,
+    capacity: 30,
+    equipped: {
+      weapon: 'sticky_sword',
+    },
+  });
+
+  const itemsByCode = new Map([
+    ['sticky_sword', { code: 'sticky_sword', type: 'weapon', level: 8 }],
+    ['mushstaff', { code: 'mushstaff', type: 'weapon', level: 20, craft: { skill: 'weaponcrafting', level: 20 } }],
+    ['copper_pick', { code: 'copper_pick', type: 'weapon', subtype: 'tool', level: 5, craft: { skill: 'weaponcrafting', level: 5 } }],
+  ]);
+  const counts = new Map([
+    ['sticky_sword', 1],
+    ['mushstaff', 0],
+    ['copper_pick', 0],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'cow', level: 8 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'mushstaff',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 25,
+        turns: 4,
+        remainingHp: 100,
+      },
+    }),
+    getBestToolForSkillAtLevelFn: (skill) => (skill === 'mining' ? itemsByCode.get('copper_pick') : null),
+    getBankRevisionFn: () => 2,
+    globalCountFn: (code) => counts.get(code) || 0,
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-tool-fallback-separation.json'),
+    characters: [{
+      name: 'ToolGap',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('ToolGap');
+  assert.ok(state, 'character state should exist');
+  assert.equal(state.required.copper_pick, 1, 'required should include missing tool');
+  assert.equal(state.desired.copper_pick, 1, 'tool deficit should remain desired');
+  assert.equal(state.available.copper_pick, undefined, 'tool deficit should not be covered by non-tool fallback');
+  assert.equal(state.available.sticky_sword, 1, 'non-tool fallback should still cover weapon deficit only');
+
+  await flushGearState();
+}
+
 async function testGearStatePassesPlanningFlagToOptimizer(basePath) {
   _resetGearStateForTests();
 
@@ -800,6 +951,83 @@ async function testPublishDesiredOrdersCraftOnlyForGloballyMissing(basePath) {
   await flushGearState();
 }
 
+async function testPublishDesiredOrdersSkipsToolItems(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({ name: 'ToolOrders', level: 20, capacity: 30 });
+  const created = [];
+  const itemsByCode = new Map([
+    ['craft_weapon', {
+      code: 'craft_weapon',
+      type: 'weapon',
+      level: 15,
+      craft: { skill: 'weaponcrafting', level: 15 },
+    }],
+    ['needed_tool', {
+      code: 'needed_tool',
+      type: 'weapon',
+      subtype: 'tool',
+      level: 10,
+      craft: { skill: 'weaponcrafting', level: 10 },
+    }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'target', level: 20 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'craft_weapon',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: 4,
+        remainingHp: 90,
+      },
+    }),
+    getBestToolForSkillAtLevelFn: (skill) => (skill === 'mining' ? itemsByCode.get('needed_tool') : null),
+    getBankRevisionFn: () => 6,
+    globalCountFn: () => 0,
+    createOrMergeOrderFn: (request) => {
+      created.push(request);
+      return { id: `order-${request.itemCode}` };
+    },
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-orders-skip-tools.json'),
+    characters: [{
+      name: 'ToolOrders',
+      settings: {},
+      routines: [{
+        type: 'skillRotation',
+        orderBoard: {
+          enabled: true,
+          createOrders: true,
+        },
+      }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('ToolOrders');
+  assert.equal(state.desired.craft_weapon, 1, 'craft weapon should remain desired when missing');
+  assert.equal(state.desired.needed_tool, 1, 'tool should remain desired when missing');
+
+  const added = publishDesiredOrdersForCharacter('ToolOrders');
+  assert.equal(added, 1, 'only non-tool desired craft item should publish an order');
+  assert.equal(created.length, 1, 'tool desired orders should be skipped');
+  assert.equal(created[0].itemCode, 'craft_weapon');
+
+  await flushGearState();
+}
+
 async function testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(basePath) {
   _resetGearStateForTests();
 
@@ -894,7 +1122,10 @@ async function run() {
     await testKeepMapProtectsInventoryFallbackWhenUpgradeMissing(tempDir);
     await testMigrationBackfillsAvailableFromLegacyOwned(tempDir);
     await testRecomputeTriggersOnRevisionAndLevel(tempDir);
+    await testToolRequirementsIncludedWithCombatRequirements(tempDir);
+    await testToolDeficitNotSatisfiedByWeaponFallback(tempDir);
     await testGearStatePassesPlanningFlagToOptimizer(tempDir);
+    await testPublishDesiredOrdersSkipsToolItems(tempDir);
     await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);
     await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
     console.log('test-gear-state: PASS');

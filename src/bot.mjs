@@ -35,12 +35,15 @@ async function shutdown(signal) {
 
   try {
     await runtimeManager.stop(stopTimeoutMs);
+    log.info('Runtime stop complete; closing dashboard');
   } catch (err) {
     log.error('Graceful runtime stop failed', err?.message || String(err));
+    log.info('Proceeding to dashboard shutdown after runtime stop failure');
   }
 
   try {
     await dashboard.close();
+    log.info('Dashboard shutdown complete');
   } catch (err) {
     log.error('Dashboard shutdown failed', err?.message || String(err));
   }

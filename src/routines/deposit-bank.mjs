@@ -153,6 +153,7 @@ export class DepositBankRoutine extends BaseRoutine {
     const required = gearState?.required && typeof gearState.required === 'object'
       ? gearState.required
       : {};
+    // Required gear-state claims can include both combat weapons and tool weapons.
     for (const code of Object.keys(required)) {
       const item = gameData.getItem(code);
       if (item?.type !== 'weapon') continue;

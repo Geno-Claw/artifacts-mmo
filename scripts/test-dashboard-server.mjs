@@ -746,6 +746,20 @@ async function nextSseEvent(sse, eventName, maxEvents = 20, timeoutMs = 1_500) {
   throw new Error(`Timed out waiting for SSE "${eventName}" event`);
 }
 
+async function resolvesWithin(promise, timeoutMs) {
+  let timerId = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true, () => false),
+      new Promise(resolve => {
+        timerId = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timerId) clearTimeout(timerId);
+  }
+}
+
 async function run() {
   const rootDir = resolve(fileURLToPath(new URL('../', import.meta.url)));
   const configFixture = createConfigFixture(rootDir);
@@ -756,6 +770,8 @@ async function run() {
   const runtimeControlMock = createRuntimeControlMock();
   let dashboard = null;
   let sse = null;
+  let closeRegressionDashboard = null;
+  let closeRegressionSse = null;
   const orderBoardPath = join(configFixture.tempDir, 'order-board.json');
   try {
     process.env.BOT_CONFIG = configFixture.configPath;
@@ -1051,10 +1067,29 @@ async function run() {
       'POST /api/control/reload-config (pending completion)',
     );
 
+    // Regression: close() must not hang when SSE clients are still connected.
+    closeRegressionDashboard = await startDashboardServer({
+      host: '127.0.0.1',
+      port: 0,
+      rootDir,
+      heartbeatMs: 100,
+      broadcastDebounceMs: 20,
+      runtimeManager: runtimeControlMock,
+      runtime: runtimeControlMock,
+      controlRuntime: runtimeControlMock,
+    });
+    const closeRegressionBaseUrl = `http://127.0.0.1:${closeRegressionDashboard.port}`;
+    closeRegressionSse = await openSse(`${closeRegressionBaseUrl}/api/ui/events`);
+
+    const closeResolved = await resolvesWithin(closeRegressionDashboard.close(), 1_500);
+    assert.equal(closeResolved, true, 'dashboard.close() should resolve quickly with active SSE clients');
+
     console.log('test-dashboard-server: PASS');
   } finally {
     if (sse) await sse.close();
     if (dashboard) await dashboard.close();
+    if (closeRegressionSse) await closeRegressionSse.close();
+    if (closeRegressionDashboard) await closeRegressionDashboard.close();
     _resetOrderBoardForTests();
     globalThis.fetch = originalFetch;
     if (originalBotConfig === undefined) delete process.env.BOT_CONFIG;

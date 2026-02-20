@@ -324,7 +324,12 @@ export async function startDashboardServer({
   }
 
   const clients = new Set();
+  const sockets = new Set();
   let broadcastTimer = null;
+  let closing = false;
+  let closePromise = null;
+  let realtimeResourcesCleaned = false;
+  const closeFallbackMs = 2_000;
   function buildSnapshotPayload() {
     const snapshot = getUiSnapshot();
     const orderBoard = getOrderBoardSnapshot();
@@ -370,6 +375,28 @@ export async function startDashboardServer({
       }
     }
   }, resolvedHeartbeatMs);
+
+  function cleanupRealtimeResources() {
+    if (realtimeResourcesCleaned) return;
+    realtimeResourcesCleaned = true;
+
+    if (broadcastTimer) {
+      clearTimeout(broadcastTimer);
+      broadcastTimer = null;
+    }
+    clearInterval(heartbeatTimer);
+    unsubscribeUiEvents();
+    unsubscribeOrderBoardEvents();
+
+    for (const client of clients) {
+      try {
+        client.res.end();
+      } catch {
+        // No-op
+      }
+    }
+    clients.clear();
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -717,6 +744,11 @@ export async function startDashboardServer({
       }
 
       if (pathname === '/api/ui/events') {
+        if (closing) {
+          sendError(res, 503, 'server_shutting_down', 'Dashboard is shutting down', 'server_shutting_down');
+          return;
+        }
+
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -747,23 +779,16 @@ export async function startDashboardServer({
     }
   });
 
-  server.on('close', () => {
-    if (broadcastTimer) {
-      clearTimeout(broadcastTimer);
-      broadcastTimer = null;
-    }
-    clearInterval(heartbeatTimer);
-    unsubscribeUiEvents();
-    unsubscribeOrderBoardEvents();
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => {
+      sockets.delete(socket);
+    });
+  });
 
-    for (const client of clients) {
-      try {
-        client.res.end();
-      } catch {
-        // No-op
-      }
-    }
-    clients.clear();
+  server.on('close', () => {
+    cleanupRealtimeResources();
+    sockets.clear();
   });
 
   await new Promise((resolveStart, rejectStart) => {
@@ -781,9 +806,39 @@ export async function startDashboardServer({
     port: boundPort,
     server,
     async close() {
-      await new Promise((resolveClose) => {
-        server.close(() => resolveClose());
+      if (closePromise) return closePromise;
+      closing = true;
+      cleanupRealtimeResources();
+
+      closePromise = new Promise((resolveClose) => {
+        const fallbackTimer = setTimeout(() => {
+          try {
+            server.closeAllConnections?.();
+          } catch {
+            // No-op
+          }
+          for (const socket of sockets) {
+            try {
+              socket.destroy();
+            } catch {
+              // No-op
+            }
+          }
+        }, closeFallbackMs);
+        fallbackTimer.unref?.();
+
+        try {
+          server.close(() => {
+            clearTimeout(fallbackTimer);
+            resolveClose();
+          });
+        } catch {
+          clearTimeout(fallbackTimer);
+          resolveClose();
+        }
       });
+
+      return closePromise;
     },
   };
 }

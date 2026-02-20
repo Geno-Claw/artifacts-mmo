@@ -7,7 +7,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { bankCount, globalCount, getCharacterLevelsSnapshot } from './inventory-manager.mjs';
-import { getClaimedTotal } from './gear-state.mjs';
+import { getClaimedTotal, getTrackedCharacterNames } from './gear-state.mjs';
 import {
   depositBankItems,
   withdrawBankItems,
@@ -31,6 +31,7 @@ let _deps = {
   globalCountFn: globalCount,
   bankCountFn: bankCount,
   getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+  getTrackedCharacterNamesFn: getTrackedCharacterNames,
   computeToolNeedsByCodeFn: computeToolNeedsByCode,
   computeLatestToolBySkillFn: computeLatestToolBySkill,
   computeToolTargetsByCodeFn: computeToolTargetsByCode,
@@ -40,6 +41,30 @@ let _deps = {
   recycleFn: (code, qty, name) => api.recycle(code, qty, name),
   waitForCooldownFn: (result) => api.waitForCooldown(result),
 };
+
+function toPositiveInt(value, fallback = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.floor(num);
+}
+
+function getLevelForCharacter(levelsByChar, name) {
+  const charName = `${name || ''}`.trim();
+  if (!charName) return 0;
+  if (levelsByChar instanceof Map) return toPositiveInt(levelsByChar.get(charName));
+  if (levelsByChar && typeof levelsByChar === 'object') {
+    return toPositiveInt(levelsByChar[charName]);
+  }
+  return 0;
+}
+
+function summarizeMissingCharacters(names = [], limit = 5) {
+  const list = Array.isArray(names) ? names : [];
+  if (list.length === 0) return 'none';
+  const head = list.slice(0, limit).join(', ');
+  const rest = list.length - Math.min(list.length, limit);
+  return rest > 0 ? `${head}, +${rest} more` : head;
+}
 
 // --- Analysis ---
 
@@ -59,9 +84,26 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
   const candidates = [];
   const neverSellSet = new Set(sellRules.neverSell || []);
   const levelsByChar = _deps.getCharacterLevelsSnapshotFn();
-  const needsByCode = _deps.computeToolNeedsByCodeFn(levelsByChar);
-  const latestBySkill = _deps.computeLatestToolBySkillFn(levelsByChar);
-  const targetsByCode = _deps.computeToolTargetsByCodeFn(levelsByChar);
+  const trackedNames = _deps.getTrackedCharacterNamesFn();
+  const normalizedTracked = Array.isArray(trackedNames)
+    ? trackedNames.map(name => `${name || ''}`.trim()).filter(Boolean)
+    : [];
+  const missingLevelNames = [];
+  for (const name of normalizedTracked) {
+    if (getLevelForCharacter(levelsByChar, name) > 0) continue;
+    missingLevelNames.push(name);
+  }
+  const toolSnapshotComplete = normalizedTracked.length > 0 && missingLevelNames.length === 0;
+  if (!toolSnapshotComplete) {
+    const detail = normalizedTracked.length <= 0
+      ? 'no tracked characters'
+      : `missing ${missingLevelNames.length}/${normalizedTracked.length} level(s): ${summarizeMissingCharacters(missingLevelNames)}`;
+    log.warn(`[${ctx.name}] Recycle: skipping tool recycle (incomplete level snapshot: ${detail})`);
+  }
+
+  const needsByCode = toolSnapshotComplete ? _deps.computeToolNeedsByCodeFn(levelsByChar) : new Map();
+  const latestBySkill = toolSnapshotComplete ? _deps.computeLatestToolBySkillFn(levelsByChar) : new Map();
+  const targetsByCode = toolSnapshotComplete ? _deps.computeToolTargetsByCodeFn(levelsByChar) : new Map();
   const latestToolCodes = new Set();
   for (const tool of latestBySkill.values()) {
     if (tool?.code) latestToolCodes.add(tool.code);
@@ -80,6 +122,7 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
     const totalOwned = _deps.globalCountFn(code);
     const liveBankQty = _deps.bankCountFn(code);
     const isTool = item.type === 'weapon' && item.subtype === 'tool';
+    if (isTool && !toolSnapshotComplete) continue;
 
     let qty = 0;
     let reason = '';
@@ -266,6 +309,7 @@ export function _resetForTests() {
     globalCountFn: globalCount,
     bankCountFn: bankCount,
     getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+    getTrackedCharacterNamesFn: getTrackedCharacterNames,
     computeToolNeedsByCodeFn: computeToolNeedsByCode,
     computeLatestToolBySkillFn: computeLatestToolBySkill,
     computeToolTargetsByCodeFn: computeToolTargetsByCode,
