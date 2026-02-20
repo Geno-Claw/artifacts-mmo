@@ -372,7 +372,7 @@ function computeToolRequirements(level) {
   return required;
 }
 
-function equipmentCountsOnCharacter(ctx) {
+export function equipmentCountsOnCharacter(ctx) {
   const char = ctx.get();
   const counts = new Map();
   for (const slot of OWNED_EQUIPMENT_SLOTS) {

@@ -8,6 +8,7 @@ import {
   depositGoldToBank,
 } from '../services/bank-ops.mjs';
 import {
+  equipmentCountsOnCharacter,
   getCharacterGearState,
   getOwnedKeepByCodeForInventory,
   publishDesiredOrdersForCharacter,
@@ -40,14 +41,14 @@ export class DepositBankRoutine extends BaseRoutine {
   }
 
   async execute(ctx) {
-    let keepByCode = {};
     try {
       await refreshGearState();
-      keepByCode = this._buildKeepByCode(ctx);
       publishDesiredOrdersForCharacter(ctx.name);
     } catch (err) {
       log.warn(`[${ctx.name}] Gear-state sync failed: ${err.message}`);
     }
+    // Always build keepByCode — uses last known gear state even if refresh failed
+    const keepByCode = this._buildKeepByCode(ctx);
 
     // Step 1: Deposit all non-owned inventory items to bank
     if (this._countDepositableInventory(ctx, keepByCode) > 0) {
@@ -149,15 +150,20 @@ export class DepositBankRoutine extends BaseRoutine {
       keepByCode[equippedWeapon] = Math.max(keepByCode[equippedWeapon] || 0, 1);
     }
 
+    // Protect all required gear-state items (combat loadout + tools), quantity-aware.
     const gearState = getCharacterGearState(ctx.name);
     const required = gearState?.required && typeof gearState.required === 'object'
       ? gearState.required
       : {};
-    // Required gear-state claims can include both combat weapons and tool weapons.
-    for (const code of Object.keys(required)) {
-      const item = gameData.getItem(code);
-      if (item?.type !== 'weapon') continue;
-      keepByCode[code] = Math.max(keepByCode[code] || 0, 1);
+    const eqCounts = equipmentCountsOnCharacter(ctx);
+    for (const [code, qty] of Object.entries(required)) {
+      const need = Math.max(0, Number(qty) || 0);
+      if (need <= 0) continue;
+      const equipped = eqCounts.get(code) || 0;
+      const keepInBags = Math.max(0, need - equipped);
+      if (keepInBags > 0) {
+        keepByCode[code] = Math.max(keepByCode[code] || 0, keepInBags);
+      }
     }
 
     return keepByCode;
