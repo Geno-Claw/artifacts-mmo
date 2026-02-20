@@ -41,6 +41,7 @@ src/
     order-board.mjs      Multi-character crafting coordination (claims, leases, deposits)
     ge-seller.mjs        Grand Exchange selling flow (whitelist-only, pricing, order mgmt)
     recycler.mjs         Equipment recycling at workshops (surplus → crafting materials)
+    websocket-client.mjs Real-time notification client (auto-reconnect, pub/sub dispatch)
     skill-rotation.mjs   State machine for multi-skill cycling
   routines/
     base.mjs             BaseRoutine abstract class
@@ -287,6 +288,15 @@ Bank contents are fetched via paginated API (100 items/page) and cached with a 6
 - **Local-then-assign**: The map is built in a local variable and assigned to the cache only when complete, so concurrent readers never see a partially-built map.
 - **Reservation-aware withdrawals**: All item withdrawals route through `services/bank-ops.mjs`, reducing race conditions across characters.
 
+### WebSocket Client (`services/websocket-client.mjs`)
+Opt-in real-time notification client for the Artifacts MMO WebSocket API (`wss://realtime.artifactsmmo.com`). Enabled by setting `WEBSOCKET_URL` in `.env`. Singleton lifecycle managed by RuntimeManager (init on start, cleanup on stop).
+
+- Authenticates on connect by sending `{ token }` as the first message
+- Auto-reconnects on unexpected disconnect with exponential backoff (1s → 30s cap)
+- Pub/sub dispatch: `subscribe(eventType, handler)` for specific events, `subscribeAll(handler)` for all
+- Available event types: `event_spawn`, `event_removed`, `grandexchange_sell_order`, `grandexchange_buy_order`, `grandexchange_buy`, `grandexchange_sell`, `pending_item_received`, `online_characters`, `announcement`, `achievement_unlocked`, `account_log`, `test`
+- Health state via `getState()` — exposed in `RuntimeManager.getStatus().websocket`
+
 ### Skill Rotation (`services/skill-rotation.mjs`)
 State machine for `SkillRotationRoutine`. Tracks current skill, goal progress, and production plans. Supports weighted random skill selection with configurable goals per skill.
 - Alchemy is hybrid in rotation: try crafting first, and if no viable alchemy recipe exists, fall back to alchemy gathering to bootstrap progression.
@@ -401,6 +411,7 @@ npm start          # runs src/bot.mjs — all characters start concurrently
 Environment (`.env`):
 ```
 ARTIFACTS_TOKEN=your_token
+WEBSOCKET_URL=wss://realtime.artifactsmmo.com   # optional — enables real-time notifications
 ```
 
 Characters are configured entirely in `config/characters.json`. Ctrl+C to stop.

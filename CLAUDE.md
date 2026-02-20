@@ -46,6 +46,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 - **Equipment scoring** uses weighted effect sums (`data/scoring-weights.mjs`), but gear optimizer uses combat simulation for actual decisions.
 - **Grand Exchange** supports both sell orders and buy orders (Season 7). Sell endpoint is `/grandexchange/create-sell-order` (renamed from `/sell`). Buy orders lock gold upfront; filled items go to the pending items queue.
 - **Pending items** system delivers items without needing inventory space (achievement rewards, GE buy order fills). Claim via `/action/claim_item/{id}` with any character.
+- **WebSocket** (`services/websocket-client.mjs`) — opt-in real-time notification client. Set `WEBSOCKET_URL` in `.env` to enable. Singleton with auto-reconnect, pub/sub via `subscribe(eventType, handler)` / `subscribeAll(handler)`. Initialized/cleaned up by RuntimeManager.
 
 ## Adding a New Routine
 
@@ -64,7 +65,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 
 - `config/characters.json` — per-character routine configs with weights, goals, settings
 - `config/sell-rules.json` — GE selling whitelist and recycler rules
-- `.env` — `ARTIFACTS_TOKEN` (required), `BOT_CONFIG`, `PORT` (dashboard, default 3000)
+- `.env` — `ARTIFACTS_TOKEN` (required), `BOT_CONFIG`, `PORT` (dashboard, default 3000), `WEBSOCKET_URL` (optional, enables real-time notifications)
 - Both config files have companion `.schema.json` validators
 
 ## File Conventions

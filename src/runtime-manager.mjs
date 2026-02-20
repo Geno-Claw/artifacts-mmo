@@ -23,6 +23,11 @@ import {
 } from './services/gear-state.mjs';
 import { createCharacter, subscribeActionEvents } from './api.mjs';
 import { initializeUiState, recordCooldown, recordLog } from './services/ui-state.mjs';
+import {
+  initialize as initWebSocket,
+  cleanup as cleanupWebSocket,
+  getState as getWebSocketState,
+} from './services/websocket-client.mjs';
 
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
@@ -312,6 +317,12 @@ export class RuntimeManager {
       log.warn(`[Runtime] Could not flush gear-state during cleanup: ${err?.message || String(err)}`);
     }
 
+    try {
+      await cleanupWebSocket();
+    } catch (err) {
+      log.warn(`[Runtime] WebSocket cleanup failed: ${err?.message || String(err)}`);
+    }
+
     for (const entry of run.schedulerEntries) {
       unregisterContext(entry.name);
     }
@@ -362,6 +373,11 @@ export class RuntimeManager {
       this._runOrderBoardRolloutResetIfNeeded();
       await initializeGearState({ characters: config.characters });
       loadSellRules();
+
+      const wsUrl = process.env.WEBSOCKET_URL;
+      if (wsUrl) {
+        await initWebSocket({ url: wsUrl, token: process.env.ARTIFACTS_TOKEN });
+      }
 
       for (const charCfg of config.characters) {
         const { scheduler, ctx } = await this._createScheduler(charCfg);
@@ -487,6 +503,7 @@ export class RuntimeManager {
         characterCount: run?.characterNames?.length || 0,
         characterNames: run?.characterNames ? [...run.characterNames] : [],
       },
+      websocket: getWebSocketState(),
       lastError: this.lastError ? { ...this.lastError } : null,
       updatedAtMs: this.updatedAtMs,
     };
