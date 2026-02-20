@@ -1,6 +1,6 @@
 /**
  * World locations — monsters, resources, banks, etc.
- * Coordinates from Season 6. Use GET /maps?content_type=X&content_code=Y to verify.
+ * Coordinates from Season 7. Use GET /maps?content_type=X&content_code=Y to verify.
  */
 
 export const MONSTERS = {

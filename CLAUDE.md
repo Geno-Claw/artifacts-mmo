@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Multi-character automation bot for [Artifacts MMO](https://artifactsmmo.com/) (API-driven MMORPG, Season 6). Runs 5 characters concurrently, each with an independent priority-based routine scheduler. ES modules (.mjs), Node.js >=20, minimal dependencies (dotenv, puppeteer-core).
+Multi-character automation bot for [Artifacts MMO](https://artifactsmmo.com/) (API-driven MMORPG, Season 7). Runs 5 characters concurrently, each with an independent priority-based routine scheduler. ES modules (.mjs), Node.js >=20, minimal dependencies (dotenv, puppeteer-core).
 
 ## Commands
 
@@ -43,6 +43,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 - **Order board** (`services/order-board.mjs`) coordinates multi-character crafting with claims, leases, and item deposits.
 - **Item types** use slot name directly (e.g., `type: "boots"`), NOT `type: "equipment"` with a subtype.
 - **Equipment scoring** uses weighted effect sums (`data/scoring-weights.mjs`), but gear optimizer uses combat simulation for actual decisions.
+- **Grand Exchange** supports both sell orders and buy orders (Season 7). Sell endpoint is `/grandexchange/create-sell-order` (renamed from `/sell`). Buy orders lock gold upfront; filled items go to the pending items queue.
+- **Pending items** system delivers items without needing inventory space (achievement rewards, GE buy order fills). Claim via `/action/claim_item/{id}` with any character.
 
 ## Adding a New Routine
 

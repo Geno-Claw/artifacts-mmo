@@ -94,20 +94,11 @@ export function hasHealingFood(ctx) {
   return findHealingFood(ctx).length > 0;
 }
 
-/** Rest action availability (server-side requires level > 4). */
-export function canUseRestAction(ctx) {
-  return (ctx.get().level || 0) > 4;
+/** Rest action is always available (no level requirement). */
+export function canUseRestAction() {
+  return true;
 }
 
-/** True if the character has any way to recover HP between fights (rest API, food in inventory, or food in bank). */
-export async function canSustainCombat(ctx) {
-  if (typeof ctx?.get !== 'function') return true; // incomplete ctx — assume OK
-  if (canUseRestAction(ctx)) return true;
-  if (hasHealingFood(ctx)) return true;
-  const bankItems = await gameData.getBankItems();
-  const bankFood = findBankFood(bankItems, ctx.get());
-  return bankFood.length > 0;
-}
 
 function isConditionNotMet(err) {
   const msg = `${err?.message || ''}`.toLowerCase();
@@ -155,11 +146,6 @@ export async function restUntil(ctx, hpPct = 80) {
   }
 
   if (ctx.hpPercent() >= hpPct) return true;
-  if (!canUseRestAction(ctx)) {
-    const c = ctx.get();
-    log.warn(`[${ctx.name}] Rest unavailable below level 5 (lv${c.level}); cannot heal to ${hpPct}%`);
-    return false;
-  }
 
   // Phase 2: Fall back to rest API for remaining HP deficit
   while (ctx.hpPercent() < hpPct) {

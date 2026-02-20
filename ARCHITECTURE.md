@@ -21,7 +21,7 @@ src/
   api.mjs                HTTP client for all API calls, auto-retry on cooldown
   log.mjs                Timestamped console logging
   data/
-    locations.mjs        Monster, resource, and bank coordinates (Season 6)
+    locations.mjs        Monster, resource, and bank coordinates (Season 7)
     scoring-weights.mjs  Equipment scoring multipliers
   services/
     game-data.mjs        Static game data cache (items, monsters, resources, recipes)
@@ -216,6 +216,7 @@ Grand Exchange selling automation — **whitelist-only** (only `alwaysSell` rule
 - Withdraw → list → deposit flow with inventory verification before each sell order
 - Order collection and stale order cancellation
 - Concurrency control: async mutex ensures only one character runs GE order flow at a time
+- Season 7: sell endpoint renamed to `create-sell-order`; GE also supports buy orders and the pending items delivery system
 
 ### Bank Data (`getBankItems` in `services/game-data.mjs`)
 Bank contents are fetched via paginated API (100 items/page) and cached with a 60s TTL. Key safeguards:
@@ -341,3 +342,16 @@ ARTIFACTS_TOKEN=your_token
 ```
 
 Characters are configured entirely in `config/characters.json`. Ctrl+C to stop.
+
+## Season 7 Changes
+
+Key API/game changes from Season 6 → Season 7:
+
+- **GE sell endpoint renamed**: `/grandexchange/sell` → `/grandexchange/create-sell-order`
+- **GE buy orders**: New `create-buy-order` and `fill` endpoints. Buy orders lock gold; filled items delivered via pending items.
+- **Pending items system**: Account-wide queue for receiving items (GE buy order fills, achievement rewards). Claim with any character via `claim_item/{id}`.
+- **Achievements**: Now support multiple objectives and item rewards (delivered via pending items).
+- **Rest formula**: Changed from 1s per 5 missing HP to 1s per 1% missing HP (min 3s). Server-side — no bot code impact.
+- **New combat effect**: Protective Bubble — grants random elemental resistance each turn (element rotates, never same twice in a row).
+- **New monsters**: Rat (level 25), Goblin Guard (level 35), Goblin Priestess boss (level 35). Loaded dynamically via game-data.
+- **GE order schema**: Orders now have `type` (sell/buy) and unified `account` field instead of separate `seller`/`buyer`.
