@@ -1300,19 +1300,19 @@ async function testItemTaskTradeDecisionDefersBelowBatchWhenGatherable() {
   const routine = new SkillRotationRoutine();
   const decision = routine._shouldTradeItemTaskNow(
     { inventoryFull: () => false },
-    { haveQty: 3, needed: 20, canGatherNow: true },
+    { haveQty: 3, needed: 20, canGatherNow: true, usableSpace: 50 },
   );
   assert.equal(decision.tradeNow, false, 'below batch target should continue gathering');
-  assert.equal(decision.batchTarget, 4);
+  assert.equal(decision.batchTarget, 20);
 }
 
 async function testItemTaskTradeDecisionTradesAtBatchTarget() {
   const routine = new SkillRotationRoutine();
   const decision = routine._shouldTradeItemTaskNow(
     { inventoryFull: () => false },
-    { haveQty: 4, needed: 20, canGatherNow: true },
+    { haveQty: 4, needed: 20, canGatherNow: true, usableSpace: 0 },
   );
-  assert.equal(decision.tradeNow, true, 'at batch target should trade');
+  assert.equal(decision.tradeNow, true, 'no usable space left should trade');
   assert.equal(decision.batchTarget, 4);
 }
 
@@ -1360,6 +1360,7 @@ async function testItemTaskFlowDefersTradeUntilBatchWhenGatherable() {
   routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
   routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
   routine._withdrawForItemTask = async () => 0;
+  routine._usableInventorySpace = () => 50;
   routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
     trades.push(quantity);
     return true;
@@ -1384,6 +1385,7 @@ async function testItemTaskFlowTradesAtBatchThresholdWhenGatherable() {
   routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
   routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
   routine._withdrawForItemTask = async () => 0;
+  routine._usableInventorySpace = () => 0;
   routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
     trades.push(quantity);
     return true;

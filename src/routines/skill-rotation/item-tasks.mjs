@@ -76,6 +76,7 @@ export async function runItemTaskFlow(ctx, routine) {
       haveQty: totalHave,
       needed,
       canGatherNow,
+      usableSpace: routine._usableInventorySpace(ctx),
     });
     if (shouldTradeAfterBank.tradeNow) {
       return routine._tradeItemTask(ctx, itemCode, Math.min(totalHave, needed));
@@ -88,6 +89,7 @@ export async function runItemTaskFlow(ctx, routine) {
     haveQty: currentHave,
     needed,
     canGatherNow,
+    usableSpace: routine._usableInventorySpace(ctx),
   });
   if (shouldTrade.tradeNow) {
     return routine._tradeItemTask(ctx, itemCode, Math.min(currentHave, needed));
@@ -438,10 +440,11 @@ export async function withdrawForItemTask(ctx, routine, itemCode, needed, opts =
   }
 }
 
-export function shouldTradeItemTaskNow(ctx, { haveQty = 0, needed = 0, canGatherNow = false } = {}) {
+export function shouldTradeItemTaskNow(ctx, { haveQty = 0, needed = 0, canGatherNow = false, usableSpace = Infinity } = {}) {
   const qty = Math.max(0, Math.floor(Number(haveQty) || 0));
   const remaining = Math.max(0, Math.floor(Number(needed) || 0));
-  const batchTarget = Math.max(1, Math.ceil(remaining * 0.2));
+  const space = Math.max(0, Math.floor(Number(usableSpace)) || 0);
+  const batchTarget = Math.max(1, Math.min(remaining, qty + space));
 
   if (qty <= 0) return { tradeNow: false, batchTarget };
   if (canGatherNow === false) return { tradeNow: true, batchTarget };
@@ -459,12 +462,13 @@ export async function gatherForItemTask(ctx, routine, itemCode, resource, needed
     return true;
   }
 
-  // Trade if we've accumulated a batch (20% of remaining, min 1)
+  // Trade if we've filled available inventory space
   const haveQty = ctx.itemCount(itemCode);
   const decision = routine._shouldTradeItemTaskNow(ctx, {
     haveQty,
     needed,
     canGatherNow: true,
+    usableSpace: routine._usableInventorySpace(ctx),
   });
   if (decision.tradeNow) {
     return routine._tradeItemTask(ctx, itemCode, Math.min(haveQty, needed));
