@@ -99,6 +99,16 @@ export function canUseRestAction(ctx) {
   return (ctx.get().level || 0) > 4;
 }
 
+/** True if the character has any way to recover HP between fights (rest API, food in inventory, or food in bank). */
+export async function canSustainCombat(ctx) {
+  if (typeof ctx?.get !== 'function') return true; // incomplete ctx — assume OK
+  if (canUseRestAction(ctx)) return true;
+  if (hasHealingFood(ctx)) return true;
+  const bankItems = await gameData.getBankItems();
+  const bankFood = findBankFood(bankItems, ctx.get());
+  return bankFood.length > 0;
+}
+
 function isConditionNotMet(err) {
   const msg = `${err?.message || ''}`.toLowerCase();
   return msg.includes('condition not met');

@@ -7,6 +7,7 @@ import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
+import { canSustainCombat } from '../helpers.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -424,6 +425,15 @@ export class SkillRotation {
    * Candidates that don't need combat pass through unchanged.
    */
   async _verifyCombatViability(candidates, ctx, skill = this.currentSkill) {
+    // When healing is impossible (low level + no food), prefer non-combat recipes
+    if (!(await canSustainCombat(ctx))) {
+      const nonCombat = candidates.filter(c => !c.needsCombat);
+      if (nonCombat.length > 0) {
+        log.info(`[${ctx.name}] Rotation: preferring non-combat recipes (below level 5, no healing available)`);
+        return nonCombat;
+      }
+    }
+
     const verified = [];
     // Cache sim results per monster to avoid redundant sims
     const simCache = new Map();

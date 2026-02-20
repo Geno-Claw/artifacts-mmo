@@ -5,51 +5,51 @@
       "name": "GenoDev",
       "routines": [
         {
-          "type": "rest",
+          "targetPct": 80,
           "triggerPct": 40,
-          "targetPct": 80
+          "type": "rest"
         },
         {
-          "type": "depositBank",
-          "threshold": 0.5,
+          "depositGold": true,
           "sellOnGE": true,
-          "depositGold": true
+          "threshold": 0.5,
+          "type": "depositBank"
         },
         {
-          "type": "skillRotation",
-          "weights": {
-            "mining": 0,
-            "woodcutting": 0,
-            "fishing": 0,
-            "cooking": 1,
-            "alchemy": 0,
-            "weaponcrafting": 0,
-            "gearcrafting": 0,
-            "jewelrycrafting": 0,
-            "combat": 3,
-            "npc_task": 1,
-            "item_task": 0
-          },
+          "craftBlacklist": {},
           "goals": {
-            "mining": 50,
-            "woodcutting": 50,
-            "fishing": 50,
-            "cooking": 40,
             "alchemy": 10,
-            "weaponcrafting": 5,
-            "gearcrafting": 5,
-            "jewelrycrafting": 5,
             "combat": 50,
+            "cooking": 40,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "item_task": 1,
+            "jewelrycrafting": 5,
+            "mining": 50,
             "npc_task": 1,
-            "item_task": 1
+            "weaponcrafting": 5,
+            "woodcutting": 50
           },
           "orderBoard": {
-            "enabled": true,
             "createOrders": true,
+            "enabled": true,
             "fulfillOrders": false
           },
-          "craftBlacklist": {},
-          "taskCollection": {}
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 1,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 0,
+            "woodcutting": 0
+          }
         }
       ]
     },
@@ -57,49 +57,49 @@
       "name": "GenoDev2",
       "routines": [
         {
-          "type": "rest",
+          "targetPct": 80,
           "triggerPct": 40,
-          "targetPct": 80
+          "type": "rest"
         },
         {
-          "type": "depositBank",
-          "threshold": 0.5,
+          "depositGold": true,
           "sellOnGE": true,
-          "depositGold": true
+          "threshold": 0.5,
+          "type": "depositBank"
         },
         {
-          "type": "skillRotation",
-          "weights": {
-            "mining": 0,
-            "woodcutting": 0,
-            "fishing": 0,
-            "cooking": 3,
-            "alchemy": 1,
-            "weaponcrafting": 0,
-            "gearcrafting": 0,
-            "jewelrycrafting": 0,
-            "combat": 1,
-            "npc_task": 0,
-            "item_task": 0
-          },
+          "craftBlacklist": {},
           "goals": {
-            "mining": 50,
-            "woodcutting": 50,
-            "fishing": 50,
-            "cooking": 40,
             "alchemy": 10,
-            "weaponcrafting": 5,
-            "gearcrafting": 5,
-            "jewelrycrafting": 5,
             "combat": 50,
+            "cooking": 40,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "item_task": 1,
+            "jewelrycrafting": 5,
+            "mining": 50,
             "npc_task": 1,
-            "item_task": 1
+            "weaponcrafting": 5,
+            "woodcutting": 50
           },
           "orderBoard": {
             "enabled": true
           },
-          "craftBlacklist": {},
-          "taskCollection": {}
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "alchemy": 1,
+            "combat": 1,
+            "cooking": 3,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 0,
+            "woodcutting": 0
+          }
         }
       ]
     },
@@ -107,48 +107,48 @@
       "name": "GenoDev3",
       "routines": [
         {
-          "type": "rest",
+          "targetPct": 80,
           "triggerPct": 40,
-          "targetPct": 80
+          "type": "rest"
         },
         {
-          "type": "depositBank",
-          "threshold": 0.5,
+          "depositGold": true,
           "sellOnGE": true,
-          "depositGold": true
+          "threshold": 0.5,
+          "type": "depositBank"
         },
         {
-          "type": "skillRotation",
-          "weights": {
-            "mining": 0,
-            "woodcutting": 0,
-            "fishing": 2,
-            "cooking": 5,
-            "alchemy": 0,
-            "weaponcrafting": 0,
-            "gearcrafting": 0,
-            "jewelrycrafting": 1,
-            "combat": 0,
-            "npc_task": 0,
-            "item_task": 0
-          },
+          "craftBlacklist": {},
           "goals": {
-            "mining": 50,
-            "woodcutting": 50,
-            "fishing": 50,
-            "cooking": 40,
             "alchemy": 10,
-            "weaponcrafting": 5,
-            "gearcrafting": 5,
-            "jewelrycrafting": 5,
             "combat": 50,
+            "cooking": 40,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "item_task": 1,
+            "jewelrycrafting": 5,
+            "mining": 50,
             "npc_task": 1,
-            "item_task": 1
+            "weaponcrafting": 5,
+            "woodcutting": 50
           },
           "orderBoard": {
             "enabled": true
           },
-          "craftBlacklist": {}
+          "type": "skillRotation",
+          "weights": {
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 5,
+            "fishing": 2,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 1,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 0,
+            "woodcutting": 0
+          }
         }
       ]
     },
@@ -156,48 +156,48 @@
       "name": "GenoDev4",
       "routines": [
         {
-          "type": "rest",
+          "targetPct": 80,
           "triggerPct": 40,
-          "targetPct": 80
+          "type": "rest"
         },
         {
-          "type": "depositBank",
-          "threshold": 0.5,
+          "depositGold": true,
           "sellOnGE": true,
-          "depositGold": true
+          "threshold": 0.5,
+          "type": "depositBank"
         },
         {
-          "type": "skillRotation",
-          "weights": {
-            "mining": 0,
-            "woodcutting": 0,
-            "fishing": 0,
-            "cooking": 0,
-            "alchemy": 0,
-            "weaponcrafting": 1,
-            "gearcrafting": 0,
-            "jewelrycrafting": 0,
-            "combat": 0,
-            "npc_task": 0,
-            "item_task": 0
-          },
+          "craftBlacklist": {},
           "goals": {
-            "mining": 50,
-            "woodcutting": 50,
-            "fishing": 50,
-            "cooking": 40,
             "alchemy": 10,
-            "weaponcrafting": 5,
-            "gearcrafting": 5,
-            "jewelrycrafting": 5,
             "combat": 50,
+            "cooking": 40,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "item_task": 1,
+            "jewelrycrafting": 5,
+            "mining": 50,
             "npc_task": 1,
-            "item_task": 1
+            "weaponcrafting": 5,
+            "woodcutting": 50
           },
           "orderBoard": {
             "enabled": true
           },
-          "craftBlacklist": {}
+          "type": "skillRotation",
+          "weights": {
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 0,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 1,
+            "woodcutting": 0
+          }
         }
       ]
     },
@@ -205,48 +205,48 @@
       "name": "GenoDev5",
       "routines": [
         {
-          "type": "rest",
+          "targetPct": 80,
           "triggerPct": 40,
-          "targetPct": 80
+          "type": "rest"
         },
         {
-          "type": "depositBank",
-          "threshold": 0.5,
+          "depositGold": true,
           "sellOnGE": true,
-          "depositGold": true
+          "threshold": 0.5,
+          "type": "depositBank"
         },
         {
-          "type": "skillRotation",
-          "weights": {
-            "mining": 0,
-            "woodcutting": 0,
-            "fishing": 0,
-            "cooking": 0,
-            "alchemy": 0,
-            "weaponcrafting": 0,
-            "gearcrafting": 1,
-            "jewelrycrafting": 0,
-            "combat": 0,
-            "npc_task": 0,
-            "item_task": 0
-          },
+          "craftBlacklist": {},
           "goals": {
-            "mining": 50,
-            "woodcutting": 50,
-            "fishing": 50,
-            "cooking": 40,
             "alchemy": 10,
-            "weaponcrafting": 5,
-            "gearcrafting": 5,
-            "jewelrycrafting": 5,
             "combat": 50,
+            "cooking": 40,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "item_task": 1,
+            "jewelrycrafting": 5,
+            "mining": 50,
             "npc_task": 1,
-            "item_task": 1
+            "weaponcrafting": 5,
+            "woodcutting": 50
           },
           "orderBoard": {
             "enabled": true
           },
-          "craftBlacklist": {}
+          "type": "skillRotation",
+          "weights": {
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 0,
+            "fishing": 0,
+            "gearcrafting": 1,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 0,
+            "woodcutting": 0
+          }
         }
       ]
     }
