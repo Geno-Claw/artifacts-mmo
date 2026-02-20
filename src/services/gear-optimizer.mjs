@@ -15,6 +15,7 @@ import { calcTurnDamage, simulateCombat } from './combat-simulator.mjs';
 import * as gameData from './game-data.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
 import { bankCount } from './inventory-manager.mjs';
+import { TOOL_EFFECT_BY_SKILL } from './tool-policy.mjs';
 import * as log from '../log.mjs';
 
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
@@ -477,16 +478,6 @@ export async function findBestCombatTarget(ctx) {
 
 // --- Gathering gear optimizer ---
 
-/**
- * Skill-to-tool-effect mapping.
- * Tools are weapons (subtype "tool") whose effects include the gathering skill name.
- */
-const SKILL_TO_TOOL_EFFECT = {
-  mining: 'mining',
-  woodcutting: 'woodcutting',
-  fishing: 'fishing',
-  alchemy: 'alchemy',
-};
 
 const NON_WEAPON_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'ring1', 'ring2', 'amulet'];
 
@@ -513,7 +504,7 @@ function getProspecting(item) {
  * @returns {{ item: object, source: string } | null}
  */
 function findBestTool(ctx, skill, bankItems) {
-  const effectName = SKILL_TO_TOOL_EFFECT[skill];
+  const effectName = TOOL_EFFECT_BY_SKILL[skill];
   if (!effectName) return null;
 
   const charLevel = ctx.get().level;

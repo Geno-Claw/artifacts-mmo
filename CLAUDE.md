@@ -33,13 +33,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 
 **API client (`src/api.mjs`):** Auto-retries on cooldown (code 499) and gateway errors. All actions return results with cooldown info — use `waitForCooldown(result)` after every action.
 
-**Helpers (`src/helpers.mjs`):** DRY wrappers that handle cooldown waits and state refresh internally — `moveTo`, `fightOnce`, `gatherOnce`, `equipForCombat`, `depositAll`, `withdrawItem`, etc.
+**Helpers (`src/helpers.mjs`):** Thin action wrappers that handle cooldown waits and state refresh internally — `moveTo`, `fightOnce`, `gatherOnce`, `swapEquipment`, `depositAll`, `withdrawItem`, etc. Gear loadout logic lives in `services/gear-loadout.mjs`, food/healing in `services/food-manager.mjs` (both re-exported from helpers for backward compat).
 
 ## Key Patterns
 
 - **Inventory capacity** is total item COUNT (`inventory_max_items`), not slot count. Use `ctx.inventoryCount()` / `ctx.inventoryCapacity()` / `ctx.inventoryFull()`.
-- **Bank operations** go through `services/bank-ops.mjs` with reservation-aware concurrency control. Never call `api.withdrawBank()` directly.
-- **Gear ownership** tracked in `services/gear-state.mjs` — prevents selling/recycling items assigned to characters or orders.
+- **Bank operations** go through `services/bank-ops.mjs` with reservation-aware concurrency control. Bank travel (tile discovery, teleport potions) is in `services/bank-travel.mjs`. Never call `api.withdrawBank()` directly.
+- **Gear ownership** tracked in `services/gear-state.mjs` — prevents selling/recycling items assigned to characters or orders. Requirements computation in `gear-requirements.mjs`, fallback claims in `gear-fallback.mjs`, loadout application in `gear-loadout.mjs`.
+- **Equipment utilities** shared across gear modules live in `services/equipment-utils.mjs` (item classification, equipped counts).
 - **Order board** (`services/order-board.mjs`) coordinates multi-character crafting with claims, leases, and item deposits.
 - **Item types** use slot name directly (e.g., `type: "boots"`), NOT `type: "equipment"` with a subtype.
 - **Equipment scoring** uses weighted effect sums (`data/scoring-weights.mjs`), but gear optimizer uses combat simulation for actual decisions.

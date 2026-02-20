@@ -4,7 +4,8 @@
 import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
-import { moveTo, gatherOnce, equipForGathering, NoPathError } from '../../helpers.mjs';
+import { moveTo, gatherOnce, NoPathError } from '../../helpers.mjs';
+import { equipForGathering } from '../../services/gear-loadout.mjs';
 
 export async function executeGathering(ctx, routine) {
   let claim = await routine._ensureOrderClaim(ctx, 'gather');

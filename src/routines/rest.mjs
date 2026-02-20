@@ -1,5 +1,5 @@
 import { BaseRoutine } from './base.mjs';
-import { canUseRestAction, hasHealingFood, restUntil } from '../helpers.mjs';
+import { canUseRestAction, hasHealingFood, restUntil } from '../services/food-manager.mjs';
 
 export class RestRoutine extends BaseRoutine {
   constructor({ triggerPct = 40, targetPct = 80, priority = 100 } = {}) {

@@ -5,7 +5,7 @@ import { createOrMergeOrder, getOrderBoardSnapshot } from './order-board.mjs';
 import { globalCount, getCharacterLevelsSnapshot } from './inventory-manager.mjs';
 
 const TOOL_SKILLS = Object.freeze(['mining', 'woodcutting', 'fishing', 'alchemy']);
-const TOOL_EFFECT_BY_SKILL = Object.freeze({
+export const TOOL_EFFECT_BY_SKILL = Object.freeze({
   mining: 'mining',
   woodcutting: 'woodcutting',
   fishing: 'fishing',

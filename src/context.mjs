@@ -3,7 +3,7 @@
  * Replaces the singleton state.mjs — one instance per character.
  */
 import { getCharacter } from './api.mjs';
-import { clearGearCache } from './helpers.mjs';
+import { clearGearCache } from './services/gear-loadout.mjs';
 import { updateCharacter } from './services/inventory-manager.mjs';
 import { recordCharacterSnapshot } from './services/ui-state.mjs';
 

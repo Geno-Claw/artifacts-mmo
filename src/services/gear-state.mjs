@@ -8,30 +8,20 @@ import * as gameData from './game-data.mjs';
 import { optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
 import { getBankRevision, globalCount } from './inventory-manager.mjs';
-import { EQUIPMENT_SLOTS } from './game-data.mjs';
 import { getBestToolForSkillAtLevel } from './tool-policy.mjs';
+import {
+  mapToObject as _mapToObject,
+  equipmentCountsOnCharacter as _equipmentCountsOnCharacter,
+  isToolItem as _isToolItem,
+} from './equipment-utils.mjs';
+import {
+  computeCharacterRequirements as _computeCharacterRequirements,
+  maxMergeCounts as _maxMergeCounts,
+} from './gear-requirements.mjs';
+import { computeFallbackClaims as _computeFallbackClaims } from './gear-fallback.mjs';
 
 const DEFAULT_GEAR_STATE_PATH = './report/gear-state.json';
 const STATE_VERSION = 2;
-const RESERVED_FREE_SLOTS = 10;
-const CARRY_SLOT_PRIORITY = ['weapon', 'shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'bag', 'amulet', 'ring1', 'ring2'];
-const OWNED_EQUIPMENT_SLOTS = [...new Set([...EQUIPMENT_SLOTS, 'bag'])];
-const UTILITY_SLOTS = ['utility1_slot', 'utility2_slot'];
-const TOOL_SKILLS = ['mining', 'woodcutting', 'fishing', 'alchemy'];
-const FALLBACK_EQUIPPED_SLOTS = [
-  { key: 'weapon_slot', category: 'weapon', quantityKey: null },
-  { key: 'shield_slot', category: 'shield', quantityKey: null },
-  { key: 'helmet_slot', category: 'helmet', quantityKey: null },
-  { key: 'body_armor_slot', category: 'body_armor', quantityKey: null },
-  { key: 'leg_armor_slot', category: 'leg_armor', quantityKey: null },
-  { key: 'boots_slot', category: 'boots', quantityKey: null },
-  { key: 'ring1_slot', category: 'ring', quantityKey: null },
-  { key: 'ring2_slot', category: 'ring', quantityKey: null },
-  { key: 'amulet_slot', category: 'amulet', quantityKey: null },
-  { key: 'bag_slot', category: 'bag', quantityKey: null },
-  { key: 'utility1_slot', category: 'utility', quantityKey: 'utility1_slot_quantity' },
-  { key: 'utility2_slot', category: 'utility', quantityKey: 'utility2_slot_quantity' },
-];
 
 let initialized = false;
 let gearStatePath = process.env.GEAR_STATE_PATH || DEFAULT_GEAR_STATE_PATH;
@@ -71,9 +61,7 @@ function nowMs() {
 }
 
 function mapToObject(map) {
-  const entries = [...map.entries()].filter(([, qty]) => qty > 0);
-  entries.sort(([a], [b]) => a.localeCompare(b));
-  return Object.fromEntries(entries);
+  return _mapToObject(map);
 }
 
 function objectToMap(value) {
@@ -265,205 +253,9 @@ async function loadPersistedState(targetPath, atMs) {
   }
 }
 
-function countMapTotal(map) {
-  let total = 0;
-  for (const qty of map.values()) total += qty;
-  return total;
-}
-
-function maxMergeCounts(target, source) {
-  for (const [code, qty] of source.entries()) {
-    const current = target.get(code) || 0;
-    if (qty > current) target.set(code, qty);
-  }
-}
-
-function incrementCount(map, code, qty = 1) {
-  const n = toPositiveInt(qty);
-  if (!code || n <= 0) return;
-  map.set(code, (map.get(code) || 0) + n);
-}
-
-function loadoutCodeForSlot(loadout, slot, fallbackChar = null) {
-  if (loadout?.has(slot)) return loadout.get(slot) || null;
-  if (slot === 'bag') return fallbackChar?.bag_slot || null;
-  return null;
-}
-
-function countsFromLoadout(loadout, fallbackChar = null) {
-  const counts = new Map();
-  for (const slot of CARRY_SLOT_PRIORITY) {
-    const code = loadoutCodeForSlot(loadout, slot, fallbackChar);
-    if (!code) continue;
-    incrementCount(counts, code, 1);
-  }
-  return counts;
-}
-
-function countsFromTrimmedLoadout(loadout, budget, fallbackChar = null) {
-  const counts = new Map();
-  let used = 0;
-
-  for (const slot of CARRY_SLOT_PRIORITY) {
-    if (used >= budget) break;
-    const code = loadoutCodeForSlot(loadout, slot, fallbackChar);
-    if (!code) continue;
-    incrementCount(counts, code, 1);
-    used += 1;
-  }
-
-  return counts;
-}
-
-function isCovered(required, owned) {
-  for (const [code, qty] of required.entries()) {
-    if ((owned.get(code) || 0) < qty) return false;
-  }
-  return true;
-}
-
-function extraNeeded(current, required) {
-  const extra = new Map();
-  for (const [code, qty] of required.entries()) {
-    const have = current.get(code) || 0;
-    if (have >= qty) continue;
-    extra.set(code, qty - have);
-  }
-  return extra;
-}
-
-function mergeExtra(current, extra) {
-  for (const [code, qty] of extra.entries()) {
-    current.set(code, (current.get(code) || 0) + qty);
-  }
-}
-
-function compareMonsterRecords(a, b) {
-  if (a.level !== b.level) return b.level - a.level;
-  if (a.turns !== b.turns) return a.turns - b.turns;
-  return b.remainingHp - a.remainingHp;
-}
-
-function computePotionRequirements(ctx, cfg) {
-  const required = new Map();
-  if (!cfg?.potionEnabled || !cfg?.potionTargetQty) return required;
-
-  const char = ctx.get();
-  for (const slot of UTILITY_SLOTS) {
-    const code = char[slot] || null;
-    if (!code) continue;
-    incrementCount(required, code, cfg.potionTargetQty);
-  }
-
-  return required;
-}
-
-function computeToolRequirements(level) {
-  const required = new Map();
-  const charLevel = toPositiveInt(level);
-  if (charLevel <= 0) return required;
-
-  for (const skill of TOOL_SKILLS) {
-    const tool = _deps.getBestToolForSkillAtLevelFn(skill, charLevel);
-    if (!tool?.code) continue;
-    incrementCount(required, tool.code, 1);
-  }
-
-  return required;
-}
 
 export function equipmentCountsOnCharacter(ctx) {
-  const char = ctx.get();
-  const counts = new Map();
-  for (const slot of OWNED_EQUIPMENT_SLOTS) {
-    const code = char[`${slot}_slot`] || null;
-    if (!code || code === 'none') continue;
-    incrementCount(counts, code, 1);
-  }
-  for (const slot of UTILITY_SLOTS) {
-    const code = char[slot] || null;
-    if (!code || code === 'none') continue;
-    const qty = Math.max(1, toPositiveInt(char[`${slot}_quantity`], 1));
-    incrementCount(counts, code, qty);
-  }
-  return counts;
-}
-
-function carriedCountForCode(ctx, equipmentCounts, code) {
-  return (ctx.itemCount(code) || 0) + (equipmentCounts.get(code) || 0);
-}
-
-function categoryFromItem(item) {
-  const type = `${item?.type || ''}`.trim();
-  if (!type) return null;
-  if (type === 'weapon') {
-    return item?.subtype === 'tool' ? 'tool' : 'weapon';
-  }
-  if (type === 'shield') return 'shield';
-  if (type === 'helmet') return 'helmet';
-  if (type === 'body_armor') return 'body_armor';
-  if (type === 'leg_armor') return 'leg_armor';
-  if (type === 'boots') return 'boots';
-  if (type === 'ring') return 'ring';
-  if (type === 'amulet') return 'amulet';
-  if (type === 'bag') return 'bag';
-  if (type === 'utility') return 'utility';
-  return null;
-}
-
-function fallbackCategoryForCode(ctx, code) {
-  if (!ctx || !code) return null;
-  const item = _deps.gameDataSvc.getItem(code);
-  const byType = categoryFromItem(item);
-  if (byType) return byType;
-
-  const char = ctx.get();
-  for (const slot of FALLBACK_EQUIPPED_SLOTS) {
-    if (`${char[slot.key] || ''}`.trim() !== code) continue;
-    return slot.category;
-  }
-  return null;
-}
-
-function isToolItem(item) {
-  return item?.type === 'weapon' && item?.subtype === 'tool';
-}
-
-function addFallbackCandidate(candidatesByCategory, category, row) {
-  if (!category || !row?.code) return;
-  if (!candidatesByCategory.has(category)) candidatesByCategory.set(category, []);
-  candidatesByCategory.get(category).push(row);
-}
-
-function fallbackPriority(row) {
-  const equipped = row?.source === 'equipped';
-  const tool = row?.isTool === true;
-  if (equipped && !tool) return 0;
-  if (!equipped && !tool) return 1;
-  if (equipped && tool) return 2;
-  return 3;
-}
-
-function compareFallbackRows(a, b) {
-  const aPriority = fallbackPriority(a);
-  const bPriority = fallbackPriority(b);
-  if (aPriority !== bPriority) return aPriority - bPriority;
-  if (a.level !== b.level) return b.level - a.level;
-  const byCode = a.code.localeCompare(b.code);
-  if (byCode !== 0) return byCode;
-  return `${a.sourceTag || ''}`.localeCompare(`${b.sourceTag || ''}`);
-}
-
-function computeMissingByCategory(ctx, desired) {
-  const missing = new Map();
-  for (const [code, qty] of desired.entries()) {
-    const need = toPositiveInt(qty);
-    if (!code || need <= 0) continue;
-    const category = fallbackCategoryForCode(ctx, code);
-    if (!category) continue;
-    missing.set(category, (missing.get(category) || 0) + need);
-  }
-  return missing;
+  return _equipmentCountsOnCharacter(ctx);
 }
 
 function summarizeMap(map, limit = 8) {
@@ -489,308 +281,14 @@ function summarizeCategoryMap(map) {
   return entries.map(([category, qty]) => `${category}:${qty}`).join(', ');
 }
 
-function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new Map(), sharedAvailability = null) {
-  if (!ctx) {
-    return {
-      fallbackClaims: new Map(),
-      missingByCategory: new Map(),
-      addedByCategory: new Map(),
-    };
-  }
-
-  const missingByCategory = computeMissingByCategory(ctx, desired);
-  if (missingByCategory.size === 0) {
-    return {
-      fallbackClaims: new Map(),
-      missingByCategory,
-      addedByCategory: new Map(),
-    };
-  }
-
-  const char = ctx.get();
-  const equipmentCounts = equipmentCountsOnCharacter(ctx);
-  const candidatesByCategory = new Map();
-
-  // Keep currently-equipped items first so we never discard what the character can wear now.
-  for (const slot of FALLBACK_EQUIPPED_SLOTS) {
-    const code = `${char[slot.key] || ''}`.trim();
-    if (!code || code === 'none') continue;
-
-    const qty = slot.quantityKey
-      ? Math.max(1, toPositiveInt(char[slot.quantityKey], 1))
-      : 1;
-    if (qty <= 0) continue;
-
-    const item = _deps.gameDataSvc.getItem(code);
-    const category = categoryFromItem(item) || slot.category;
-    if (!category) continue;
-    if ((missingByCategory.get(category) || 0) <= 0) continue;
-
-    addFallbackCandidate(candidatesByCategory, category, {
-      code,
-      qty,
-      source: 'equipped',
-      sourceTag: slot.key,
-      isTool: isToolItem(item),
-      level: toPositiveInt(item?.level, 0),
-    });
-  }
-
-  // Inventory fallback: only known wearable/utility types.
-  for (const slot of char.inventory || []) {
-    const code = `${slot?.code || ''}`.trim();
-    const qty = toPositiveInt(slot?.quantity);
-    if (!code || qty <= 0) continue;
-
-    const item = _deps.gameDataSvc.getItem(code);
-    const category = categoryFromItem(item);
-    if (!category) continue; // Unknown inventory items are not fallback candidates.
-    if ((missingByCategory.get(category) || 0) <= 0) continue;
-
-    addFallbackCandidate(candidatesByCategory, category, {
-      code,
-      qty,
-      source: 'inventory',
-      sourceTag: 'inventory',
-      isTool: isToolItem(item),
-      level: toPositiveInt(item?.level, 0),
-    });
-  }
-
-  // Preserve previous-cycle claims that still exist account-wide and are no longer carried.
-  for (const [code, rawQty] of previousAvailable.entries()) {
-    const prevQty = toPositiveInt(rawQty);
-    if (!code || prevQty <= 0) continue;
-
-    const item = _deps.gameDataSvc.getItem(code);
-    const category = categoryFromItem(item);
-    if (!category) continue; // Unknown stale claims are intentionally dropped.
-    if ((missingByCategory.get(category) || 0) <= 0) continue;
-
-    const carried = carriedCountForCode(ctx, equipmentCounts, code);
-    const remainingClaim = Math.max(0, prevQty - carried);
-    if (remainingClaim <= 0) continue;
-
-    const globalQty = Math.max(0, toPositiveInt(_deps.globalCountFn(code), 0));
-    const offCharacterQty = Math.max(0, globalQty - carried);
-    const qty = Math.min(remainingClaim, offCharacterQty);
-    if (qty <= 0) continue;
-
-    addFallbackCandidate(candidatesByCategory, category, {
-      code,
-      qty,
-      source: 'inventory',
-      sourceTag: 'previous_available',
-      isTool: isToolItem(item),
-      level: toPositiveInt(item?.level, 0),
-    });
-  }
-
-  const extraByCode = new Map();
-  const addedByCategory = new Map();
-  const categoryRows = [...missingByCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
-
-  for (const [category, needQty] of categoryRows) {
-    let remaining = needQty;
-    const rows = [...(candidatesByCategory.get(category) || [])].sort(compareFallbackRows);
-
-    for (const row of rows) {
-      if (remaining <= 0) break;
-
-      const alreadyExtra = extraByCode.get(row.code) || 0;
-      let roomForCode;
-      if (sharedAvailability) {
-        if (!sharedAvailability.has(row.code)) {
-          sharedAvailability.set(row.code, Math.max(0, toPositiveInt(_deps.globalCountFn(row.code), 0)));
-        }
-        roomForCode = Math.max(0, sharedAvailability.get(row.code) - alreadyExtra);
-      } else {
-        const assignedQty = assigned.get(row.code) || 0;
-        const globalQty = Math.max(0, toPositiveInt(_deps.globalCountFn(row.code), 0));
-        roomForCode = Math.max(0, globalQty - assignedQty - alreadyExtra);
-      }
-      if (roomForCode <= 0) continue;
-
-      const takeQty = Math.min(remaining, row.qty, roomForCode);
-      if (takeQty <= 0) continue;
-
-      extraByCode.set(row.code, alreadyExtra + takeQty);
-      if (sharedAvailability) {
-        const cur = sharedAvailability.get(row.code) || 0;
-        sharedAvailability.set(row.code, Math.max(0, cur - takeQty));
-      }
-      remaining -= takeQty;
-    }
-
-    const added = needQty - remaining;
-    if (added > 0) addedByCategory.set(category, added);
-  }
-
-  const fallbackClaims = new Map();
-  for (const [code, extraQty] of extraByCode.entries()) {
-    const assignedQty = assigned.get(code) || 0;
-    const targetQty = assignedQty + extraQty;
-    if (targetQty > assignedQty) fallbackClaims.set(code, targetQty);
-  }
-
-  return {
-    fallbackClaims,
-    missingByCategory,
-    addedByCategory,
-  };
-}
-
 async function computeCharacterRequirements(name, ctx) {
   const cfg = characterConfig.get(name) || { potionEnabled: false, potionTargetQty: 0 };
-  const char = ctx.get();
-  const level = toPositiveInt(char.level);
-  const capacity = Math.max(0, toPositiveInt(ctx.inventoryCapacity()));
-  const carryBudget = Math.max(0, capacity - RESERVED_FREE_SLOTS);
-
-  const allRecords = [];
-  const monsters = _deps.gameDataSvc.findMonstersByLevel(level);
-  for (const monster of monsters) {
-    const result = await _deps.optimizeForMonsterFn(ctx, monster.code, {
-      includeCraftableUnavailable: true,
-    });
-    if (!result?.simResult?.win) continue;
-    if (result.simResult.hpLostPercent > 90) continue;
-
-    allRecords.push({
-      monsterCode: monster.code,
-      level: toPositiveInt(monster.level),
-      turns: toPositiveInt(result.simResult.turns),
-      remainingHp: Number(result.simResult.remainingHp) || 0,
-      loadout: result.loadout,
-      counts: countsFromLoadout(result.loadout, char),
-    });
-  }
-
-  allRecords.sort(compareMonsterRecords);
-
-  const required = new Map();
-  for (const record of allRecords) {
-    maxMergeCounts(required, record.counts);
-  }
-
-  const potionRequired = computePotionRequirements(ctx, cfg);
-  maxMergeCounts(required, potionRequired);
-  const toolRequired = computeToolRequirements(level);
-  maxMergeCounts(required, toolRequired);
-
-  const selected = new Map();
-  const selectedMonsters = [];
-  let bestTarget = null;
-
-  if (allRecords.length > 0 && carryBudget > 0) {
-    const best = allRecords[0];
-    bestTarget = best.monsterCode;
-
-    const baseCounts = countMapTotal(best.counts) > carryBudget
-      ? countsFromTrimmedLoadout(best.loadout, carryBudget, char)
-      : new Map(best.counts);
-
-    maxMergeCounts(selected, baseCounts);
-
-    const covered = new Set();
-    for (const record of allRecords) {
-      if (isCovered(record.counts, selected)) covered.add(record.monsterCode);
-    }
-
-    while (true) {
-      const currentTotal = countMapTotal(selected);
-      if (currentTotal >= carryBudget) break;
-
-      let bestChoice = null;
-      let bestExtra = null;
-      let bestCoverage = -1;
-      let bestExtraCost = Number.POSITIVE_INFINITY;
-
-      for (const record of allRecords) {
-        if (covered.has(record.monsterCode)) continue;
-
-        const extra = extraNeeded(selected, record.counts);
-        const extraCost = countMapTotal(extra);
-        if (extraCost <= 0) {
-          covered.add(record.monsterCode);
-          continue;
-        }
-        if ((currentTotal + extraCost) > carryBudget) continue;
-
-        const trial = new Map(selected);
-        mergeExtra(trial, extra);
-
-        let coverageGain = 0;
-        for (const candidate of allRecords) {
-          if (covered.has(candidate.monsterCode)) continue;
-          if (isCovered(candidate.counts, trial)) coverageGain += 1;
-        }
-
-        const better =
-          coverageGain > bestCoverage ||
-          (coverageGain === bestCoverage && record.level > (bestChoice?.level || 0)) ||
-          (coverageGain === bestCoverage && record.level === (bestChoice?.level || 0) && extraCost < bestExtraCost);
-
-        if (better) {
-          bestChoice = record;
-          bestExtra = extra;
-          bestCoverage = coverageGain;
-          bestExtraCost = extraCost;
-        }
-      }
-
-      if (!bestChoice || !bestExtra) break;
-
-      mergeExtra(selected, bestExtra);
-      for (const record of allRecords) {
-        if (covered.has(record.monsterCode)) continue;
-        if (isCovered(record.counts, selected)) covered.add(record.monsterCode);
-      }
-    }
-
-    for (const record of allRecords) {
-      if (isCovered(record.counts, selected)) selectedMonsters.push(record.monsterCode);
-    }
-  }
-
-  // Potions are lower priority than gear but still part of desired ownership when room allows.
-  if (carryBudget > 0) {
-    const currentTotal = () => countMapTotal(selected);
-    const potionEntries = [...potionRequired.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    for (const [code, qty] of potionEntries) {
-      const have = selected.get(code) || 0;
-      const need = Math.max(0, qty - have);
-      if (need <= 0) continue;
-
-      const remaining = Math.max(0, carryBudget - currentTotal());
-      if (remaining <= 0) break;
-
-      const addQty = Math.min(need, remaining);
-      if (addQty <= 0) continue;
-      selected.set(code, have + addQty);
-    }
-  }
-
-  maxMergeCounts(selected, toolRequired);
-  const selectedTotal = countMapTotal(selected);
-  if (selectedTotal > carryBudget) {
-    log.warn(
-      `[GearState] ${name}: selected ownership exceeds carry budget ` +
-      `(${selectedTotal} > ${carryBudget}) after tool requirements`,
-    );
-  }
-
-  if (!bestTarget && allRecords.length > 0) {
-    bestTarget = allRecords[0].monsterCode;
-  }
-
-  return {
-    selected,
-    required,
-    selectedMonsters,
-    bestTarget,
-    level,
-  };
+  return _computeCharacterRequirements(name, ctx, cfg, {
+    gameDataSvc: _deps.gameDataSvc,
+    optimizeForMonsterFn: _deps.optimizeForMonsterFn,
+    getBestToolForSkillAtLevelFn: _deps.getBestToolForSkillAtLevelFn,
+    logFn: (...args) => log.warn(...args),
+  });
 }
 
 function resolveCraftDesiredOrder(itemCode) {
@@ -947,10 +445,13 @@ export async function refreshGearState(opts = {}) {
       fallbackClaims,
       missingByCategory,
       addedByCategory,
-    } = computeFallbackClaims(ctx, desired, assigned, previousAvailable, availability);
+    } = _computeFallbackClaims(ctx, desired, assigned, previousAvailable, availability, {
+      getItemFn: (code) => _deps.gameDataSvc.getItem(code),
+      globalCountFn: _deps.globalCountFn,
+    });
 
     const available = new Map(assigned);
-    maxMergeCounts(available, fallbackClaims);
+    _maxMergeCounts(available, fallbackClaims);
 
     if (ctx) {
       log.info(
@@ -1064,7 +565,7 @@ export function getOwnedDeficitRequests(ctx) {
   const requests = [];
 
   for (const [code, qty] of owned.entries()) {
-    const carried = carriedCountForCode(ctx, eqCounts, code);
+    const carried = (ctx.itemCount(code) || 0) + (eqCounts.get(code) || 0);
     const missing = Math.max(0, qty - carried);
     if (missing <= 0) continue;
     requests.push({ code, quantity: missing });
@@ -1112,7 +613,7 @@ export function publishDesiredOrdersForCharacter(name) {
     const missingQty = toPositiveInt(qty);
     if (missingQty <= 0) continue;
     const item = _deps.gameDataSvc.getItem(itemCode);
-    if (isToolItem(item)) continue;
+    if (_isToolItem(item)) continue;
 
     const source = resolveCraftDesiredOrder(itemCode);
     if (!source) continue;

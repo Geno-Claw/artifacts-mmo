@@ -17,7 +17,7 @@ src/
   bot.mjs               Entry point — loads config, inits game data, starts all characters
   scheduler.mjs          The "brain" — picks and runs routines per character
   context.mjs            CharacterContext — per-character state wrapper
-  helpers.mjs            Reusable action patterns (moveTo, equipForCombat, depositAll, etc.)
+  helpers.mjs            Thin action wrappers (moveTo, fightOnce, gatherOnce, swapEquipment, etc.)
   api.mjs                HTTP client for all API calls, auto-retry on cooldown
   log.mjs                Timestamped console logging
   data/
@@ -27,7 +27,18 @@ src/
     game-data.mjs        Static game data cache (items, monsters, resources, recipes)
     combat-simulator.mjs Pure math fight predictor using game damage formulas
     gear-optimizer.mjs   Simulation-based equipment optimizer (3-phase greedy)
+    gear-state.mjs       Cross-character gear ownership tracking, scarcity allocation, persistence
+    gear-requirements.mjs  Per-character gear requirements computation (knapsack packing)
+    gear-fallback.mjs    Fallback claims algorithm for filling category-level gear gaps
+    gear-loadout.mjs     Gear loadout application — equip swaps, bank withdrawal, caching
+    equipment-utils.mjs  Shared equipment classification utilities (categoryFromItem, isToolItem, etc.)
+    food-manager.mjs     Food/healing management — scoring, eating, bank withdrawal for fights
+    bank-ops.mjs         Reservation-aware bank withdrawal/deposit coordination
+    bank-travel.mjs      Bank tile discovery, travel-method selection, teleport potion routing
+    inventory-manager.mjs  Bank state cache, reservation system, character tracking
+    tool-policy.mjs      Tool requirements computation and order placement
     potion-manager.mjs   Combat utility potion selection + refill manager
+    order-board.mjs      Multi-character crafting coordination (claims, leases, deposits)
     ge-seller.mjs        Grand Exchange selling flow (whitelist-only, pricing, order mgmt)
     recycler.mjs         Equipment recycling at workshops (surplus → crafting materials)
     skill-rotation.mjs   State machine for multi-skill cycling
@@ -146,25 +157,25 @@ Per-character state wrapper (replaces old singleton `state.mjs`). One instance p
 
 **Level-up behavior:** On level-up, all loss counters reset and the gear cache is cleared, so the bot retries previously-failed monsters and re-evaluates equipment.
 
-### Helpers
+### Helpers (`helpers.mjs`)
 
-DRY wrappers that handle `waitForCooldown` + `ctx.refresh()` internally:
+Thin action wrappers that handle `waitForCooldown` + `ctx.refresh()` internally. After refactoring, helpers.mjs contains only core action primitives and bank convenience wrappers. Gear, food, and loadout logic live in dedicated service modules.
 
 | Helper | What it does |
 |--------|-------------|
 | `moveTo(ctx, x, y)` | Move if not already there |
-| `restUntil(ctx, pct)` | Eat food first, then rest API until HP% |
-| `restBeforeFight(ctx, monster)` | Rest to minimum HP needed for a fight |
 | `fightOnce(ctx)` | Single fight, returns result |
 | `gatherOnce(ctx)` | Single gather, returns result |
 | `swapEquipment(ctx, slot, code)` | Unequip + equip in one slot |
-| `equipForCombat(ctx, monster)` | Full gear optimization with caching |
 | `parseFightResult(result, ctx)` | Extract win/xp/gold/drops from fight |
 | `depositAll(ctx)` | Move to bank, deposit all inventory |
 | `withdrawItem(ctx, code, qty)` | Move to bank, withdraw via reservation-backed bank ops |
 | `withdrawPlanFromBank(ctx, plan)` | Withdraw items for a crafting plan |
 | `rawMaterialNeeded(ctx, plan, code)` | Remaining material needed for a plan |
-| `clearGearCache(charName)` | Reset gear cache (called on level-up) |
+
+The following are re-exported from their dedicated modules for backward compatibility:
+- `equipForCombat`, `equipForGathering`, `clearGearCache` → from `services/gear-loadout.mjs`
+- `restUntil`, `restBeforeFight`, `withdrawFoodForFights`, `hasHealingFood`, `canUseRestAction` → from `services/food-manager.mjs`
 
 ## Services
 
@@ -185,13 +196,64 @@ Simulation-based equipment selection. Three-phase greedy approach:
 
 Considers items from bank, inventory, and currently equipped. Handles ring deduplication.
 
+### Gear State (`services/gear-state.mjs`)
+Cross-character gear ownership coordination and persistence. Orchestrates the gear planning pipeline:
+- Runs per-character requirements computation (delegated to `gear-requirements.mjs`)
+- Performs scarcity allocation when multiple characters need the same items
+- Fills category-level gaps via fallback claims (delegated to `gear-fallback.mjs`)
+- Publishes desired item orders to the order board for crafting
+- Persists ownership state to `./report/` with atomic writes
+- Query functions: `getOwnedMap`, `getAssignedMap`, `getDesiredMap`, `getClaimedTotal`, `getOwnedKeepByCodeForInventory`
+
+### Gear Requirements (`services/gear-requirements.mjs`)
+Per-character gear requirements computation — a pure algorithm with no module-level state:
+- Runs the gear optimizer against all reachable monsters for the character's level
+- Uses greedy knapsack packing to select gear subsets that fit the carry budget while maximizing monster coverage
+- Includes potion and tool requirements in the carry plan
+- All external services passed via `deps` parameter for testability
+
+### Gear Fallback (`services/gear-fallback.mjs`)
+Fallback claims algorithm for filling category-level gear gaps:
+- When desired gear isn't fully available, fills gaps (e.g. "I need *some* ring") using equipped items, inventory, or previous claims
+- Prioritizes non-tool equipped items over inventory items over tools
+- Pure algorithm — external lookups passed via `deps` parameter
+
+### Gear Loadout (`services/gear-loadout.mjs`)
+Equipment application subsystem shared by combat and gathering routines:
+- `applyGearLoadout()` — compute slot changes, withdraw missing items from bank, perform swaps, deposit old gear
+- `equipForCombat(ctx, monsterCode)` — cached simulation-based optimizer for combat
+- `equipForGathering(ctx, skill)` — cached optimizer for gathering (tool + prospecting)
+- `clearGearCache(charName)` — reset caches on level-up
+
+### Equipment Utils (`services/equipment-utils.mjs`)
+Shared pure utility functions for equipment classification:
+- `categoryFromItem(item)` — classify an item into a gear category (weapon, shield, ring, etc.)
+- `isToolItem(item)` — check if an item is a gathering tool
+- `equipmentCountsOnCharacter(ctx)` — count all items currently equipped
+- `mapToObject(map)` — convert a Map to a sorted object (for persistence/logging)
+
+### Food Manager (`services/food-manager.mjs`)
+Food and healing management:
+- `scoreHealingItems()` — score and rank consumables by HP restore potency
+- `restUntil(ctx, hpPct)` — eat inventory food first, then fall back to rest API
+- `restBeforeFight(ctx, monsterCode)` — surgical heal to exact minimum HP for a specific fight
+- `withdrawFoodForFights(ctx, monsterCode, numFights)` — calculate total healing needed via combat sim, withdraw optimal food from bank
+
 ### Bank Ops (`services/bank-ops.mjs`)
-Shared item-withdraw service used by helpers, recycler, and GE seller:
-- Centralizes all `api.withdrawBank` calls in one place
+Reservation-aware bank withdrawal and deposit coordination:
+- Centralizes all `api.withdrawBank` / `api.depositBank` calls in one place
 - Uses reservation-aware availability (`availableBankCount` + `reserveMany`)
 - Supports partial-fill defaults, one forced refresh retry, and per-item fallback
 - Applies immediate bank deltas (`applyBankDelta`) after successful withdrawals
-- Handles smart travel to the nearest accessible bank and can optionally consume teleport potions when modeled travel time is lower than direct movement
+- Delegates travel to `bank-travel.mjs` (see below)
+
+### Bank Travel (`services/bank-travel.mjs`)
+Bank tile discovery, travel-method selection, and movement:
+- Discovers accessible bank tiles via the maps API (cached 5 minutes)
+- `ensureAtBank(ctx)` — moves to the nearest bank, optionally using teleport potions
+- `chooseTravelMethod()` — models travel time for direct move vs recall/forest bank potions, picks the fastest option above a configurable savings threshold
+- Fallback to default bank coordinates when API discovery fails
+- Settings: `ctx.settings().potions.bankTravel` controls potion allowlist and minimum savings
 
 ### Potion Manager (`services/potion-manager.mjs`)
 Combat utility automation service:

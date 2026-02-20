@@ -18,7 +18,6 @@ import { BaseRoutine } from '../base.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { SkillRotation } from '../../services/skill-rotation.mjs';
-import { equipForCombat } from '../../helpers.mjs';
 import { MAX_LOSSES_DEFAULT } from '../../data/locations.mjs';
 import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
 import { GATHERING_SKILLS, CRAFTING_SKILLS } from './constants.mjs';

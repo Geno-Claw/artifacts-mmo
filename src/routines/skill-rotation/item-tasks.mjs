@@ -6,7 +6,8 @@
 import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
-import { moveTo, gatherOnce, equipForGathering } from '../../helpers.mjs';
+import { moveTo, gatherOnce } from '../../helpers.mjs';
+import { equipForGathering } from '../../services/gear-loadout.mjs';
 import { withdrawBankItems } from '../../services/bank-ops.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
 

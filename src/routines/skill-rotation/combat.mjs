@@ -3,7 +3,9 @@
  */
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
-import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, withdrawFoodForFights, NoPathError } from '../../helpers.mjs';
+import { moveTo, fightOnce, parseFightResult, NoPathError } from '../../helpers.mjs';
+import { restBeforeFight, withdrawFoodForFights } from '../../services/food-manager.mjs';
+import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
 export async function executeCombat(ctx, routine) {

@@ -5,7 +5,9 @@
 import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
-import { moveTo, gatherOnce, fightOnce, restBeforeFight, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded, equipForCombat, equipForGathering } from '../../helpers.mjs';
+import { moveTo, gatherOnce, fightOnce, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
+import { restBeforeFight } from '../../services/food-manager.mjs';
+import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { depositBankItems } from '../../services/bank-ops.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { RESERVE_PCT, RESERVE_MIN, RESERVE_MAX } from './constants.mjs';
