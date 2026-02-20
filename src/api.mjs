@@ -227,11 +227,19 @@ export async function buyGE(id, quantity, name = CHARACTER) {
 }
 
 export async function sellGE(code, quantity, price, name = CHARACTER) {
-  return request('POST', `/my/${name}/action/grandexchange/sell`, { code, quantity, price });
+  return request('POST', `/my/${name}/action/grandexchange/create-sell-order`, { code, quantity, price });
 }
 
 export async function cancelGE(id, name = CHARACTER) {
   return request('POST', `/my/${name}/action/grandexchange/cancel`, { id });
+}
+
+export async function createBuyOrderGE(code, quantity, price, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/grandexchange/create-buy-order`, { code, quantity, price });
+}
+
+export async function fillBuyOrderGE(id, quantity, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/grandexchange/fill`, { id, quantity });
 }
 
 // --- Gold banking ---
@@ -259,6 +267,17 @@ export async function getMyGEHistory(params = {}) {
 export async function getAllGEOrders(params = {}) {
   const qs = new URLSearchParams(params).toString();
   return request('GET', `/grandexchange/orders${qs ? '?' + qs : ''}`);
+}
+
+// --- Pending items ---
+
+export async function getPendingItems(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/my/pending-items${qs ? '?' + qs : ''}`);
+}
+
+export async function claimPendingItem(id, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/claim_item/${id}`);
 }
 
 export async function getAccountAchievements(account, params = {}) {

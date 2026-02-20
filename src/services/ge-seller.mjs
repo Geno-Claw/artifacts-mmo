@@ -95,7 +95,7 @@ export async function determinePrice(code) {
   const minPrice = sellRules?.minPrice || 1;
 
   try {
-    const result = await api.getAllGEOrders({ code, size: 100 });
+    const result = await api.getAllGEOrders({ code, type: 'sell', size: 100 });
     const listings = Array.isArray(result) ? result : [];
 
     if (listings.length > 0) {
