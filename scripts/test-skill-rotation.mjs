@@ -1,12 +1,24 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
+const orderBoard = await import('../src/services/order-board.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');
 const inventoryManager = await import('../src/services/inventory-manager.mjs');
+
+const {
+  _resetOrderBoardForTests: resetOrderBoardForTests,
+  createOrMergeOrder,
+  getOrderBoardSnapshot,
+  initializeOrderBoard,
+  listClaimableOrders,
+} = orderBoard;
 
 const {
   _setApiClientForTests: setBankOpsApiForTests,
@@ -67,6 +79,19 @@ function makeRecipe(code, skill, level) {
       _testCode: code,
     },
   };
+}
+
+async function withTempOrderBoard(testFn) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'skill-rotation-order-board-'));
+  const boardPath = join(tempDir, 'order-board.json');
+  try {
+    resetOrderBoardForTests();
+    await initializeOrderBoard({ path: boardPath });
+    await testFn({ boardPath });
+  } finally {
+    resetOrderBoardForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function testAlchemyFallbackToGatherAtLevel1() {
@@ -423,6 +448,289 @@ async function testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop() {
   assert.equal(createdOrders[0].quantity, 2);
 }
 
+async function testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'cheese',
+      itemCode: 'cheese',
+      sourceType: 'craft',
+      sourceCode: 'cheese',
+      craftSkill: 'alchemy',
+      sourceLevel: 1,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getCraftClaimBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'cheese',
+      craft: { skill: 'alchemy', level: 1, items: [] },
+    });
+    routine._resolveCraftClaimPlan = () => [
+      {
+        type: 'fight',
+        itemCode: 'milk_bucket',
+        quantity: 1,
+        monster: { code: 'cow', level: 8 },
+      },
+    ];
+    routine._canFulfillCraftClaimPlan = () => true;
+    let simCalls = 0;
+    routine._simulateClaimFight = async () => {
+      simCalls += 1;
+      return { simResult: { win: false, hpLostPercent: 100 } };
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { alchemy: 10 } }),
+      'alchemy',
+    );
+
+    assert.equal(claim, null, 'unwinnable craft claim should be skipped');
+    assert.equal(simCalls, 1, 'fight simulation should run once for required fight step');
+    assert.equal(
+      listClaimableOrders({ sourceType: 'craft', craftSkill: 'alchemy', charName: 'Tester' }).length,
+      0,
+      'skipped order should be blocked for this character',
+    );
+
+    const snapshot = getOrderBoardSnapshot();
+    const blockedUntil = Number(snapshot.orders[0]?.blockedByChar?.Tester || 0);
+    assert.ok(blockedUntil > Date.now(), 'blocked retry timestamp should be set for char');
+  });
+}
+
+async function testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'rare_potion',
+      itemCode: 'rare_potion',
+      sourceType: 'craft',
+      sourceCode: 'rare_potion',
+      craftSkill: 'alchemy',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getCraftClaimBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'rare_potion',
+      craft: { skill: 'alchemy', level: 1, items: [] },
+    });
+    routine._resolveCraftClaimPlan = () => [
+      { type: 'bank', itemCode: 'event_core', quantity: 1 },
+    ];
+    routine._canFulfillCraftClaimPlan = () => true;
+    let simCalls = 0;
+    routine._simulateClaimFight = async () => {
+      simCalls += 1;
+      return { simResult: { win: true, hpLostPercent: 20 } };
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { alchemy: 10 } }),
+      'alchemy',
+    );
+
+    assert.equal(claim, null, 'claim should be skipped when bank dependency is missing');
+    assert.equal(simCalls, 0, 'fight simulation should not run when bank step already fails');
+    assert.equal(
+      listClaimableOrders({ sourceType: 'craft', craftSkill: 'alchemy', charName: 'Tester' }).length,
+      0,
+      'skipped order should be blocked for this character',
+    );
+  });
+}
+
+async function testAcquireCraftClaimSucceedsWhenPrechecksPass() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'fang_elixir',
+      itemCode: 'fang_elixir',
+      sourceType: 'craft',
+      sourceCode: 'fang_elixir',
+      craftSkill: 'alchemy',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getCraftClaimBankItems = async () => new Map([['empty_vial', 1]]);
+    routine._getCraftClaimItem = () => ({
+      code: 'fang_elixir',
+      craft: { skill: 'alchemy', level: 1, items: [] },
+    });
+    routine._resolveCraftClaimPlan = () => [
+      {
+        type: 'gather',
+        itemCode: 'herb',
+        quantity: 1,
+        resource: { code: 'herb_patch', skill: 'alchemy', level: 1 },
+      },
+      { type: 'bank', itemCode: 'empty_vial', quantity: 1 },
+      {
+        type: 'fight',
+        itemCode: 'wolf_fang',
+        quantity: 1,
+        monster: { code: 'wolf', level: 5 },
+      },
+    ];
+    routine._canFulfillCraftClaimPlan = () => true;
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 40 } });
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { alchemy: 10 } }),
+      'alchemy',
+    );
+
+    assert.ok(claim, 'precheck-passing craft order should be claimed');
+    assert.equal(claim?.sourceType, 'craft');
+    assert.equal(claim?.craftSkill, 'alchemy');
+  });
+}
+
+async function testCraftFightStepSkipsCombatWhenSimUnwinnable() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => null;
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'cheese', craft: { skill: 'alchemy', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'fight',
+      itemCode: 'milk_bucket',
+      quantity: 1,
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+    }],
+    bankChecked: true,
+    forceRotate: async () => null,
+    blockCurrentRecipe: () => true,
+  };
+
+  let handledArgs = null;
+  routine._equipForCraftFight = async () => ({ simResult: { win: false, hpLostPercent: 100 } });
+  routine._handleUnwinnableCraftFight = async (_ctx, args) => {
+    handledArgs = args;
+    return true;
+  };
+
+  const result = await routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+  });
+
+  assert.equal(result, true);
+  assert.ok(handledArgs, 'unwinnable handler should be called');
+  assert.equal(handledArgs.monsterCode, 'cow');
+  assert.equal(handledArgs.itemCode, 'milk_bucket');
+}
+
+async function testHandleUnwinnableCraftFightBlocksRecipeAndRotates() {
+  const routine = new SkillRotationRoutine();
+  let blockCalls = 0;
+  let rotateCalls = 0;
+  let claimBlockCalls = 0;
+
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    blockCurrentRecipe: () => {
+      blockCalls += 1;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+  routine._blockAndReleaseClaim = async () => {
+    claimBlockCalls += 1;
+  };
+
+  const result = await routine._handleUnwinnableCraftFight(
+    { name: 'Tester' },
+    {
+      monsterCode: 'cow',
+      itemCode: 'milk_bucket',
+      recipeCode: 'cheese',
+      claimMode: false,
+      simResult: { win: false, hpLostPercent: 100 },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(blockCalls, 1, 'recipe should be blocked for non-claim crafting');
+  assert.equal(rotateCalls, 1, 'non-claim path should rotate away');
+  assert.equal(claimBlockCalls, 0, 'non-claim path should not block/release a claim');
+}
+
+async function testHandleUnwinnableCraftFightBlocksAndReleasesClaim() {
+  const routine = new SkillRotationRoutine();
+  let blockCalls = 0;
+  let rotateCalls = 0;
+  let claimReason = null;
+
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    blockCurrentRecipe: () => {
+      blockCalls += 1;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    claimReason = reason;
+  };
+
+  const result = await routine._handleUnwinnableCraftFight(
+    { name: 'Tester' },
+    {
+      monsterCode: 'cow',
+      itemCode: 'milk_bucket',
+      recipeCode: 'cheese',
+      claimMode: true,
+      simResult: { win: false, hpLostPercent: 100 },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(claimReason, 'combat_not_viable', 'claim mode should block and release claim');
+  assert.equal(blockCalls, 0, 'claim mode should not block recipe');
+  assert.equal(rotateCalls, 0, 'claim mode should not rotate');
+}
+
 async function testRoutineCanDisableOrderFulfillment() {
   const routine = new SkillRotationRoutine({
     orderBoard: {
@@ -653,6 +961,12 @@ async function run() {
   await testOrderBoardCreatesGatherOrderForUnmetGatherSkill();
   await testOrderBoardCanDisableOrderCreation();
   await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();
+  await testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar();
+  await testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar();
+  await testAcquireCraftClaimSucceedsWhenPrechecksPass();
+  await testCraftFightStepSkipsCombatWhenSimUnwinnable();
+  await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
+  await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
   await testRoutineCanDisableOrderFulfillment();
   await testRoutineRoutesCraftClaimsBySkill();
   await testRoutineCraftingFallsBackWhenNoCraftClaim();

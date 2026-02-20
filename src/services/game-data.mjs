@@ -201,6 +201,7 @@ const SLOT_TO_TYPE = {
   ring1:      [{ type: 'ring' }],
   ring2:      [{ type: 'ring' }],
   amulet:     [{ type: 'amulet' }],
+  bag:        [{ type: 'bag' }],
 };
 
 export function getEquipmentForSlot(slot, charLevel) {
@@ -235,7 +236,7 @@ export function scoreItem(item) {
 
 export const EQUIPMENT_SLOTS = [
   'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet',
+  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet', 'bag',
 ];
 
 // --- Bank items ---
@@ -274,7 +275,7 @@ export function getGELocation() {
 
 const EQUIPMENT_TYPES = new Set([
   'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring', 'amulet',
+  'leg_armor', 'boots', 'ring', 'amulet', 'bag',
 ]);
 
 export function isEquipmentType(item) {

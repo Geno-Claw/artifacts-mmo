@@ -5,10 +5,11 @@
  * the optimal loadout for a specific monster. Replaces the old static-weight
  * scoring system with fight-outcome-driven gear selection.
  *
- * Three-phase greedy approach:
+ * Four-phase greedy approach:
  *   1. Weapon — maximize outgoing DPS (calcTurnDamage)
  *   2. Defensive slots — maximize survivability (simulateCombat → remainingHp)
  *   3. Accessories — maximize survivability (simulateCombat → remainingHp)
+ *   4. Bag — maximize inventory space
  */
 import { calcTurnDamage, simulateCombat } from './combat-simulator.mjs';
 import * as gameData from './game-data.mjs';
@@ -18,6 +19,20 @@ import * as log from '../log.mjs';
 
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
 const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2'];
+
+let _deps = {
+  calcTurnDamageFn: calcTurnDamage,
+  simulateCombatFn: simulateCombat,
+  getMonsterFn: (code) => gameData.getMonster(code),
+  getMonsterLocationFn: (code) => gameData.getMonsterLocation(code),
+  findMonstersByLevelFn: (maxLevel) => gameData.findMonstersByLevel(maxLevel),
+  getBankItemsFn: (forceRefresh = false) => gameData.getBankItems(forceRefresh),
+  getItemFn: (code) => gameData.getItem(code),
+  getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
+  findItemsFn: (filters) => gameData.findItems(filters),
+  scoreItemFn: (item) => gameData.scoreItem(item),
+  bankCountFn: (code) => bankCount(code),
+};
 
 // --- Base stats computation ---
 
@@ -33,7 +48,7 @@ function getBaseStats(ctx) {
     const itemCode = c[`${slot}_slot`] || null;
     if (!itemCode) continue;
 
-    const item = gameData.getItem(itemCode);
+    const item = _deps.getItemFn(itemCode);
     if (!item?.effects) continue;
 
     for (const effect of item.effects) {
@@ -73,6 +88,53 @@ function buildStats(baseStats, gearSet) {
   return stats;
 }
 
+function getEffectValue(item, effectCode) {
+  if (!item?.effects) return 0;
+  for (const effect of item.effects) {
+    if ((effect.name || effect.code) !== effectCode) continue;
+    return Number(effect.value) || 0;
+  }
+  return 0;
+}
+
+function getInventorySpace(item) {
+  return getEffectValue(item, 'inventory_space');
+}
+
+function isBetterBagItem(candidate, currentBest) {
+  if (!candidate?.item) return false;
+  if (!currentBest?.item) return true;
+
+  const a = candidate.item;
+  const b = currentBest.item;
+
+  const invA = getInventorySpace(a);
+  const invB = getInventorySpace(b);
+  if (invA !== invB) return invA > invB;
+
+  const levelA = Number(a.level) || 0;
+  const levelB = Number(b.level) || 0;
+  if (levelA !== levelB) return levelA > levelB;
+
+  const scoreA = Number(_deps.scoreItemFn(a)) || 0;
+  const scoreB = Number(_deps.scoreItemFn(b)) || 0;
+  if (scoreA !== scoreB) return scoreA > scoreB;
+
+  const codeA = `${a.code || ''}`;
+  const codeB = `${b.code || ''}`;
+  return codeA.localeCompare(codeB) < 0;
+}
+
+function chooseBestBagCandidate(candidates = []) {
+  let best = null;
+  for (const candidate of candidates) {
+    if (isBetterBagItem(candidate, best)) {
+      best = candidate;
+    }
+  }
+  return best;
+}
+
 // --- Candidate collection ---
 
 /**
@@ -88,12 +150,12 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
   // Currently equipped
   const equippedCode = char[`${slot}_slot`] || null;
   if (equippedCode) {
-    const item = gameData.getItem(equippedCode);
+    const item = _deps.getItemFn(equippedCode);
     if (item) candidates.set(item.code, { item, source: 'equipped' });
   }
 
   // All items that fit this slot up to character level
-  const allForSlot = gameData.getEquipmentForSlot(slot, charLevel);
+  const allForSlot = _deps.getEquipmentForSlotFn(slot, charLevel);
 
   for (const item of allForSlot) {
     if (candidates.has(item.code)) continue;
@@ -105,7 +167,7 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
     }
 
     // Check bank
-    const inBank = Math.max(bankCount(item.code), bankItems?.get(item.code) || 0);
+    const inBank = Math.max(_deps.bankCountFn(item.code), bankItems?.get(item.code) || 0);
     if (inBank >= 1) {
       candidates.set(item.code, { item, source: 'bank' });
       continue;
@@ -157,7 +219,7 @@ function deduplicateRingCandidates(candidates, ring1Item, ctx, bankItems, opts =
     const equippedCount = [c.ring1_slot, c.ring2_slot]
       .filter(code => code === item.code).length;
     const inInventory = ctx.itemCount(item.code);
-    const inBank = Math.max(bankCount(item.code), bankItems?.get(item.code) || 0);
+    const inBank = Math.max(_deps.bankCountFn(item.code), bankItems?.get(item.code) || 0);
     return (equippedCount + inInventory + inBank) >= 2;
   });
 }
@@ -176,17 +238,17 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
   const candidateOpts = {
     includeCraftableUnavailable: opts.includeCraftableUnavailable === true,
   };
-  const monster = gameData.getMonster(monsterCode);
+  const monster = _deps.getMonsterFn(monsterCode);
   if (!monster) return null;
 
-  const bankItems = await gameData.getBankItems();
+  const bankItems = await _deps.getBankItemsFn();
   const baseStats = getBaseStats(ctx);
 
   // Start with current gear as baseline
   const loadout = new Map();
   for (const slot of EQUIPMENT_SLOTS) {
     const code = ctx.get()[`${slot}_slot`] || null;
-    loadout.set(slot, code ? gameData.getItem(code) : null);
+    loadout.set(slot, code ? _deps.getItemFn(code) : null);
   }
 
   // --- Phase 1: Weapon (maximize outgoing DPS) ---
@@ -198,7 +260,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const testLoadout = new Map(loadout);
     testLoadout.set('weapon', item);
     const hypo = buildStats(baseStats, testLoadout);
-    const dmg = calcTurnDamage(hypo, monster);
+    const dmg = _deps.calcTurnDamageFn(hypo, monster);
     if (dmg > bestWeaponDmg) {
       bestWeaponDmg = dmg;
       bestWeapon = item;
@@ -216,7 +278,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = simulateCombat(hypo, monster);
+      const result = _deps.simulateCombatFn(hypo, monster);
       if (isBetterResult(result, bestResult)) {
         bestResult = result;
         bestItem = item;
@@ -227,7 +289,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = simulateCombat(emptyHypo, monster);
+    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster);
     if (isBetterResult(emptyResult, bestResult)) {
       bestItem = null;
     }
@@ -251,7 +313,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = simulateCombat(hypo, monster);
+      const result = _deps.simulateCombatFn(hypo, monster);
       if (isBetterResult(result, bestResult)) {
         bestResult = result;
         bestItem = item;
@@ -262,7 +324,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = simulateCombat(emptyHypo, monster);
+    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster);
     if (isBetterResult(emptyResult, bestResult)) {
       bestItem = null;
     }
@@ -270,9 +332,16 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     loadout.set(slot, bestItem);
   }
 
+  // --- Phase 4: Bag (maximize inventory space) ---
+  const bagCandidates = getCandidatesForSlot(ctx, 'bag', bankItems, candidateOpts);
+  const bestBag = chooseBestBagCandidate(bagCandidates);
+  if (bestBag?.item) {
+    loadout.set('bag', bestBag.item);
+  }
+
   // --- Final validation ---
   const finalStats = buildStats(baseStats, loadout);
-  const finalResult = simulateCombat(finalStats, monster);
+  const finalResult = _deps.simulateCombatFn(finalStats, monster);
 
   // Convert to slot → itemCode map
   const codeLoadout = new Map();
@@ -306,13 +375,13 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
  */
 export async function findBestCombatTarget(ctx) {
   const level = ctx.get().level;
-  const monsters = gameData.findMonstersByLevel(level);
+  const monsters = _deps.findMonstersByLevelFn(level);
   if (monsters.length === 0) return null;
 
   let bestTarget = null;
 
   for (const monster of monsters) {
-    const loc = await gameData.getMonsterLocation(monster.code);
+    const loc = await _deps.getMonsterLocationFn(monster.code);
     if (!loc) continue;
 
     const result = await optimizeForMonster(ctx, monster.code);
@@ -389,7 +458,7 @@ function findBestTool(ctx, skill, bankItems) {
   if (!effectName) return null;
 
   const charLevel = ctx.get().level;
-  const tools = gameData.findItems({ type: 'weapon', subtype: 'tool', maxLevel: charLevel })
+  const tools = _deps.findItemsFn({ type: 'weapon', subtype: 'tool', maxLevel: charLevel })
     .filter(item => item.effects?.some(e => (e.name || e.code) === effectName));
 
   if (tools.length === 0) return null;
@@ -402,7 +471,7 @@ function findBestTool(ctx, skill, bankItems) {
   for (const tool of tools) {
     if (equippedWeapon === tool.code) return { item: tool, source: 'equipped' };
     if (ctx.hasItem(tool.code)) return { item: tool, source: 'inventory' };
-    if (Math.max(bankCount(tool.code), bankItems?.get(tool.code) || 0) >= 1) return { item: tool, source: 'bank' };
+    if (Math.max(_deps.bankCountFn(tool.code), bankItems?.get(tool.code) || 0) >= 1) return { item: tool, source: 'bank' };
   }
 
   return null;
@@ -411,14 +480,15 @@ function findBestTool(ctx, skill, bankItems) {
 /**
  * Find the optimal gathering loadout for a skill.
  * Weapon: best available tool for the skill.
- * All other slots: maximize total prospecting stat.
+ * Non-bag slots: maximize total prospecting stat.
+ * Bag: maximize inventory_space.
  *
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {string} skill — gathering skill (mining, woodcutting, fishing, alchemy)
  * @returns {Promise<{ loadout: Map<string, string|null> } | null>}
  */
 export async function optimizeForGathering(ctx, skill) {
-  const bankItems = await gameData.getBankItems();
+  const bankItems = await _deps.getBankItemsFn();
 
   const toolResult = findBestTool(ctx, skill, bankItems);
   if (!toolResult) {
@@ -439,7 +509,7 @@ export async function optimizeForGathering(ctx, skill) {
 
     // Check current item's prospecting first
     if (currentCode) {
-      const currentItem = gameData.getItem(currentCode);
+      const currentItem = _deps.getItemFn(currentCode);
       bestProspecting = getProspecting(currentItem);
       bestCode = currentCode;
     }
@@ -463,10 +533,18 @@ export async function optimizeForGathering(ctx, skill) {
     const char = ctx.get();
     const equippedCount = [char.ring1_slot, char.ring2_slot].filter(c => c === ring1Code).length;
     const inInventory = ctx.itemCount(ring1Code);
-    const inBank = Math.max(bankCount(ring1Code), bankItems.get(ring1Code) || 0);
+    const inBank = Math.max(_deps.bankCountFn(ring1Code), bankItems.get(ring1Code) || 0);
     if (equippedCount + inInventory + inBank < 2) {
       loadout.set('ring2', char.ring2_slot || null);
     }
+  }
+
+  const bagCandidates = getCandidatesForSlot(ctx, 'bag', bankItems);
+  const bestBag = chooseBestBagCandidate(bagCandidates);
+  if (bestBag?.item?.code) {
+    loadout.set('bag', bestBag.item.code);
+  } else {
+    loadout.set('bag', ctx.get().bag_slot || null);
   }
 
   // Log changes
@@ -484,4 +562,33 @@ export async function optimizeForGathering(ctx, skill) {
   }
 
   return { loadout };
+}
+
+export function _chooseBestBagCandidateForTests(candidates = []) {
+  const best = chooseBestBagCandidate(candidates);
+  return best ? { ...best } : null;
+}
+
+export function _setDepsForTests(overrides = {}) {
+  const input = overrides && typeof overrides === 'object' ? overrides : {};
+  _deps = {
+    ..._deps,
+    ...input,
+  };
+}
+
+export function _resetDepsForTests() {
+  _deps = {
+    calcTurnDamageFn: calcTurnDamage,
+    simulateCombatFn: simulateCombat,
+    getMonsterFn: (code) => gameData.getMonster(code),
+    getMonsterLocationFn: (code) => gameData.getMonsterLocation(code),
+    findMonstersByLevelFn: (maxLevel) => gameData.findMonstersByLevel(maxLevel),
+    getBankItemsFn: (forceRefresh = false) => gameData.getBankItems(forceRefresh),
+    getItemFn: (code) => gameData.getItem(code),
+    getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
+    findItemsFn: (filters) => gameData.findItems(filters),
+    scoreItemFn: (item) => gameData.scoreItem(item),
+    bankCountFn: (code) => bankCount(code),
+  };
 }

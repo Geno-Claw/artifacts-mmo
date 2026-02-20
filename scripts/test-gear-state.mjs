@@ -43,6 +43,7 @@ function makeCtx({
     ring1_slot: equipped.ring1 || 'none',
     ring2_slot: equipped.ring2 || 'none',
     amulet_slot: equipped.amulet || 'none',
+    bag_slot: equipped.bag || 'none',
     utility1_slot: utility.utility1 || '',
     utility1_slot_quantity: Number(utility.utility1Qty) || 0,
     utility2_slot: utility.utility2 || '',
@@ -178,6 +179,63 @@ async function testRequiredMultiplicityDesiredAndPotionCarryAccounting(basePath)
 
   bankRevision += 1;
   await refreshGearState();
+  await flushGearState();
+}
+
+async function testBagIncludedInOwnedDeficitRequests(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'Bagger',
+    level: 10,
+    capacity: 30,
+  });
+
+  _setDepsForTests({
+    gameDataSvc: createBaseGameData([{ code: 'slime', level: 1 }]),
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'starter_sword',
+        bag: 'adventurer_bag',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 5,
+        turns: 2,
+        remainingHp: 99,
+      },
+    }),
+    getBankRevisionFn: () => 4,
+    globalCountFn: (code) => {
+      if (code === 'starter_sword') return 1;
+      if (code === 'adventurer_bag') return 1;
+      return 0;
+    },
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-bag-deficit.json'),
+    characters: [{
+      name: 'Bagger',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Bagger');
+  assert.ok(state, 'character state should exist');
+  assert.equal(state.required.adventurer_bag, 1, 'required should include bag slot item');
+  assert.equal(state.owned.adventurer_bag, 1, 'owned should claim available bag slot item');
+
+  const deficits = getOwnedDeficitRequests(ctx);
+  assert.deepEqual(
+    deficits.find(row => row.code === 'adventurer_bag'),
+    { code: 'adventurer_bag', quantity: 1 },
+    'deficits should request owned bag item when not carried',
+  );
+
   await flushGearState();
 }
 
@@ -552,6 +610,7 @@ async function run() {
   const tempDir = mkdtempSync(join(tmpdir(), 'gear-state-test-'));
   try {
     await testRequiredMultiplicityDesiredAndPotionCarryAccounting(tempDir);
+    await testBagIncludedInOwnedDeficitRequests(tempDir);
     await testTrimToFitReservesTenSlots(tempDir);
     await testScarcityAssignmentUsesCharacterOrder(tempDir);
     await testRecomputeTriggersOnRevisionAndLevel(tempDir);

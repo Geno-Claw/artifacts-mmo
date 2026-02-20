@@ -237,7 +237,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     });
 
     for (const order of orders) {
-      const sim = await optimizeForMonster(ctx, order.sourceCode);
+      const sim = await this._simulateClaimFight(ctx, order.sourceCode);
       if (!sim || !sim.simResult?.win || sim.simResult.hpLostPercent > 90) continue;
 
       const active = this._claimOrderForChar(ctx, order);
@@ -246,18 +246,109 @@ export class SkillRotationRoutine extends BaseRoutine {
     return null;
   }
 
+  _simulateClaimFight(ctx, monsterCode) {
+    return optimizeForMonster(ctx, monsterCode);
+  }
+
+  _getCraftClaimItem(order) {
+    return gameData.getItem(order?.itemCode || order?.sourceCode);
+  }
+
+  _resolveCraftClaimPlan(craft) {
+    return gameData.resolveRecipeChain(craft);
+  }
+
+  _canFulfillCraftClaimPlan(plan, ctx) {
+    return gameData.canFulfillPlan(plan, ctx);
+  }
+
+  async _getCraftClaimBankItems() {
+    return gameData.getBankItems();
+  }
+
+  _blockUnclaimableOrderForChar(order, ctx, reason = 'cannot_complete') {
+    try {
+      markCharBlocked(order.id, {
+        charName: ctx.name,
+        blockedRetryMs: this.orderBoard.blockedRetryMs,
+      });
+      log.info(`[${ctx.name}] Order claim skipped (${reason}): ${order.itemCode} via ${order.sourceType}:${order.sourceCode}`);
+    } catch (err) {
+      log.warn(`[${ctx.name}] Could not block unclaimable order ${order?.id || 'unknown'}: ${err?.message || String(err)}`);
+    }
+  }
+
+  async _canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache) {
+    const item = this._getCraftClaimItem(order);
+    if (!item?.craft?.skill) {
+      return { ok: false, reason: 'invalid_craft_order' };
+    }
+    if (item.craft.skill !== craftSkill) {
+      return { ok: false, reason: 'wrong_craft_skill' };
+    }
+    if (item.craft.level > ctx.skillLevel(craftSkill)) {
+      return { ok: false, reason: 'insufficient_craft_level' };
+    }
+
+    const plan = this._resolveCraftClaimPlan(item.craft);
+    if (!plan || plan.length === 0) {
+      return { ok: false, reason: 'unresolvable_recipe_chain' };
+    }
+
+    if (!this._canFulfillCraftClaimPlan(plan, ctx)) {
+      return { ok: false, reason: 'insufficient_gather_skill' };
+    }
+
+    const bankItems = bank instanceof Map ? bank : new Map();
+
+    for (const step of plan) {
+      if (step.type !== 'bank') continue;
+      const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+      if (have < step.quantity) {
+        return { ok: false, reason: `missing_bank_dependency:${step.itemCode}` };
+      }
+    }
+
+    for (const step of plan) {
+      if (step.type !== 'fight') continue;
+
+      const monsterCode = step.monster?.code;
+      if (!monsterCode) {
+        return { ok: false, reason: `invalid_fight_step:${step.itemCode || 'unknown'}` };
+      }
+
+      const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+      if (have >= step.quantity) continue;
+
+      if (!simCache.has(monsterCode)) {
+        simCache.set(monsterCode, await this._simulateClaimFight(ctx, monsterCode));
+      }
+
+      const sim = simCache.get(monsterCode);
+      const simResult = sim?.simResult;
+      if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+        return { ok: false, reason: `combat_not_viable:${monsterCode}` };
+      }
+    }
+
+    return { ok: true, reason: '' };
+  }
+
   async _acquireCraftOrderClaim(ctx, craftSkill) {
     const orders = listClaimableOrders({
       sourceType: 'craft',
       craftSkill,
       charName: ctx.name,
     });
+    const bank = await this._getCraftClaimBankItems();
+    const simCache = new Map();
 
     for (const order of orders) {
-      const item = gameData.getItem(order.itemCode || order.sourceCode);
-      if (!item?.craft?.skill) continue;
-      if (item.craft.skill !== craftSkill) continue;
-      if (item.craft.level > ctx.skillLevel(craftSkill)) continue;
+      const viability = await this._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
+      if (!viability.ok) {
+        this._blockUnclaimableOrderForChar(order, ctx, viability.reason);
+        continue;
+      }
 
       const active = this._claimOrderForChar(ctx, order);
       if (active) return active;
@@ -633,7 +724,7 @@ export class SkillRotationRoutine extends BaseRoutine {
 
         // Find monster location
         const monsterCode = step.monster.code;
-        const monsterLoc = await gameData.getMonsterLocation(monsterCode);
+        const monsterLoc = step.monsterLoc || await gameData.getMonsterLocation(monsterCode);
         if (!monsterLoc) {
           if (claimMode) {
             await this._blockAndReleaseClaim(ctx, 'missing_fight_location');
@@ -645,7 +736,18 @@ export class SkillRotationRoutine extends BaseRoutine {
         }
 
         // Equip for combat against this monster
-        await equipForCombat(ctx, monsterCode);
+        const { simResult } = await this._equipForCraftFight(ctx, monsterCode);
+        if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+          await this._handleUnwinnableCraftFight(ctx, {
+            monsterCode,
+            itemCode: step.itemCode,
+            recipeCode: recipe.code,
+            claimMode,
+            simResult,
+          });
+          return true;
+        }
+
         await prepareCombatPotions(ctx, monsterCode);
 
         // Try to rest first, but don't skip crafting if rest is unavailable.
@@ -752,6 +854,31 @@ export class SkillRotationRoutine extends BaseRoutine {
     // If we get here, couldn't make progress — try next iteration
     // (bank deposit may have freed inventory, or we already have materials)
     return !ctx.inventoryFull();
+  }
+
+  _equipForCraftFight(ctx, monsterCode) {
+    return equipForCombat(ctx, monsterCode);
+  }
+
+  async _handleUnwinnableCraftFight(ctx, { monsterCode, itemCode, recipeCode, claimMode, simResult } = {}) {
+    const hpLost = Number.isFinite(simResult?.hpLostPercent)
+      ? `${Math.round(simResult.hpLostPercent)}%`
+      : 'n/a';
+    const simOutcome = simResult?.win ? 'win' : 'loss';
+
+    log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: skipping ${recipeCode || 'recipe'} fight step ${monsterCode} -> ${itemCode || 'drop'} (sim ${simOutcome}, hpLost ${hpLost})`);
+
+    if (claimMode) {
+      await this._blockAndReleaseClaim(ctx, 'combat_not_viable');
+      return true;
+    }
+
+    this.rotation.blockCurrentRecipe({
+      reason: `combat not viable vs ${monsterCode}`,
+      ctx,
+    });
+    await this.rotation.forceRotate(ctx);
+    return true;
   }
 
   // --- Batch size calculation ---

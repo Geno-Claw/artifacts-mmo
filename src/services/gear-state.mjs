@@ -12,7 +12,8 @@ import { EQUIPMENT_SLOTS } from './game-data.mjs';
 const DEFAULT_GEAR_STATE_PATH = './report/gear-state.json';
 const STATE_VERSION = 1;
 const RESERVED_FREE_SLOTS = 10;
-const CARRY_SLOT_PRIORITY = ['weapon', 'shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'amulet', 'ring1', 'ring2'];
+const CARRY_SLOT_PRIORITY = ['weapon', 'shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'bag', 'amulet', 'ring1', 'ring2'];
+const OWNED_EQUIPMENT_SLOTS = [...new Set([...EQUIPMENT_SLOTS, 'bag'])];
 const UTILITY_SLOTS = ['utility1_slot', 'utility2_slot'];
 
 let initialized = false;
@@ -255,23 +256,29 @@ function incrementCount(map, code, qty = 1) {
   map.set(code, (map.get(code) || 0) + n);
 }
 
-function countsFromLoadout(loadout) {
+function loadoutCodeForSlot(loadout, slot, fallbackChar = null) {
+  if (loadout?.has(slot)) return loadout.get(slot) || null;
+  if (slot === 'bag') return fallbackChar?.bag_slot || null;
+  return null;
+}
+
+function countsFromLoadout(loadout, fallbackChar = null) {
   const counts = new Map();
   for (const slot of CARRY_SLOT_PRIORITY) {
-    const code = loadout?.get(slot) || null;
+    const code = loadoutCodeForSlot(loadout, slot, fallbackChar);
     if (!code) continue;
     incrementCount(counts, code, 1);
   }
   return counts;
 }
 
-function countsFromTrimmedLoadout(loadout, budget) {
+function countsFromTrimmedLoadout(loadout, budget, fallbackChar = null) {
   const counts = new Map();
   let used = 0;
 
   for (const slot of CARRY_SLOT_PRIORITY) {
     if (used >= budget) break;
-    const code = loadout?.get(slot) || null;
+    const code = loadoutCodeForSlot(loadout, slot, fallbackChar);
     if (!code) continue;
     incrementCount(counts, code, 1);
     used += 1;
@@ -326,7 +333,7 @@ function computePotionRequirements(ctx, cfg) {
 function equipmentCountsOnCharacter(ctx) {
   const char = ctx.get();
   const counts = new Map();
-  for (const slot of EQUIPMENT_SLOTS) {
+  for (const slot of OWNED_EQUIPMENT_SLOTS) {
     const code = char[`${slot}_slot`] || null;
     if (!code || code === 'none') continue;
     incrementCount(counts, code, 1);
@@ -346,7 +353,8 @@ function carriedCountForCode(ctx, equipmentCounts, code) {
 
 async function computeCharacterRequirements(name, ctx) {
   const cfg = characterConfig.get(name) || { potionEnabled: false, potionTargetQty: 0 };
-  const level = toPositiveInt(ctx.get().level);
+  const char = ctx.get();
+  const level = toPositiveInt(char.level);
   const capacity = Math.max(0, toPositiveInt(ctx.inventoryCapacity()));
   const carryBudget = Math.max(0, capacity - RESERVED_FREE_SLOTS);
 
@@ -365,7 +373,7 @@ async function computeCharacterRequirements(name, ctx) {
       turns: toPositiveInt(result.simResult.turns),
       remainingHp: Number(result.simResult.remainingHp) || 0,
       loadout: result.loadout,
-      counts: countsFromLoadout(result.loadout),
+      counts: countsFromLoadout(result.loadout, char),
     });
   }
 
@@ -388,7 +396,7 @@ async function computeCharacterRequirements(name, ctx) {
     bestTarget = best.monsterCode;
 
     const baseCounts = countMapTotal(best.counts) > carryBudget
-      ? countsFromTrimmedLoadout(best.loadout, carryBudget)
+      ? countsFromTrimmedLoadout(best.loadout, carryBudget, char)
       : new Map(best.counts);
 
     maxMergeCounts(selected, baseCounts);
