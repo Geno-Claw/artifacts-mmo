@@ -1167,6 +1167,162 @@ async function testRoutineDispatchesAlchemyCraftingMode() {
   assert.equal(harness.rotateCalls(), 0);
 }
 
+async function testBatchSizeRespectsInventoryReserve() {
+  const routine = new SkillRotationRoutine();
+  routine.rotation = {
+    goalTarget: 50,
+    goalProgress: 0,
+    productionPlan: [
+      { type: 'gather', itemCode: 'ash_wood', quantity: 10 },
+    ],
+  };
+
+  const batchSize = routine._batchSize({
+    inventoryCapacity: () => 120,
+    inventoryCount: () => 7,
+  });
+
+  assert.equal(
+    batchSize,
+    10,
+    'batch size should use reserve-aware usable space (101 usable / 10 mats per craft)',
+  );
+}
+
+async function testItemTaskWithdrawRespectsReserveCap() {
+  const state = {
+    bank: new Map([
+      ['ash_wood', 200],
+    ]),
+    withdrawCalls: [],
+  };
+
+  const fakeApi = {
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move() {
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const entry of items) {
+        const code = entry?.code;
+        const qty = Number(entry?.quantity) || 0;
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const next = have - qty;
+        if (next > 0) state.bank.set(code, next);
+        else state.bank.delete(code);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    const ctx = {
+      name: 'Tester',
+      isAt: () => true,
+      inventoryCapacity: () => 120,
+      inventoryCount: () => 105,
+      itemCount: () => 0,
+      refresh: async () => {},
+    };
+
+    const withdrawn = await routine._withdrawForItemTask(ctx, 'ash_wood', 50);
+    assert.equal(withdrawn, 3, 'withdraw should be capped by reserve-aware usable space');
+    assert.deepEqual(state.withdrawCalls, [{ code: 'ash_wood', quantity: 3 }]);
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
+async function testItemTaskReserveOverflowUsesCraftTradeFallback() {
+  const routine = new SkillRotationRoutine();
+  let fallbackCalls = 0;
+
+  routine._withdrawForItemTask = async () => 0;
+  routine._craftAndTradeItemTaskFromInventory = async () => {
+    fallbackCalls += 1;
+    return { progressed: true, crafted: true, traded: false };
+  };
+
+  const item = {
+    code: 'ash_plank',
+    craft: {
+      skill: 'weaponcrafting',
+      quantity: 1,
+      items: [{ code: 'ash_wood', quantity: 5 }],
+    },
+  };
+  const plan = [{
+    type: 'gather',
+    itemCode: 'ash_wood',
+    quantity: 5,
+    resource: { code: 'ash_tree', skill: 'woodcutting', level: 1 },
+  }];
+  const ctx = {
+    name: 'Tester',
+    inventoryCapacity: () => 120,
+    inventoryCount: () => 110,
+    inventoryFull: () => false,
+    itemCount: () => 0,
+  };
+
+  const result = await routine._craftForItemTask(ctx, 'ash_plank', item, plan, 24);
+  assert.equal(result, true, 'overflow fallback should keep item-task flow progressing');
+  assert.equal(fallbackCalls, 1, 'craft/trade fallback should be attempted before gathering');
+}
+
+async function testItemTaskReserveOverflowYieldsWhenNoFallbackProgress() {
+  const routine = new SkillRotationRoutine();
+  let fallbackCalls = 0;
+
+  routine._withdrawForItemTask = async () => 0;
+  routine._craftAndTradeItemTaskFromInventory = async () => {
+    fallbackCalls += 1;
+    return { progressed: false, crafted: false, traded: false };
+  };
+
+  const item = {
+    code: 'ash_plank',
+    craft: {
+      skill: 'weaponcrafting',
+      quantity: 1,
+      items: [{ code: 'ash_wood', quantity: 5 }],
+    },
+  };
+  const plan = [{
+    type: 'gather',
+    itemCode: 'ash_wood',
+    quantity: 5,
+    resource: { code: 'ash_tree', skill: 'woodcutting', level: 1 },
+  }];
+  const ctx = {
+    name: 'Tester',
+    inventoryCapacity: () => 120,
+    inventoryCount: () => 110,
+    inventoryFull: () => false,
+    itemCount: () => 0,
+  };
+
+  const result = await routine._craftForItemTask(ctx, 'ash_plank', item, plan, 24);
+  assert.equal(result, false, 'overflow with no craft/trade progress should yield');
+  assert.equal(fallbackCalls, 1, 'fallback should be attempted once before yielding');
+}
+
 async function testCraftingWithdrawSkipsFinalRecipeOutput() {
   const state = {
     bank: new Map([
@@ -1235,6 +1391,86 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
     assert.deepEqual(
       state.withdrawCalls.map(row => row.code),
       ['fire_string', 'ash_wood'],
+    );
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
+async function testCraftingWithdrawHonorsReserveMaxUnits() {
+  const state = {
+    bank: new Map([
+      ['fire_bow', 7],
+      ['fire_string', 4],
+      ['ash_wood', 12],
+    ]),
+    withdrawCalls: [],
+  };
+
+  const fakeApi = {
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move() {
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const entry of items) {
+        const code = entry?.code;
+        const qty = Number(entry?.quantity) || 0;
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const next = have - qty;
+        if (next > 0) state.bank.set(code, next);
+        else state.bank.delete(code);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    routine.rotation = {
+      productionPlan: [
+        { type: 'bank', itemCode: 'ash_wood', quantity: 2 },
+        { type: 'craft', itemCode: 'fire_string', quantity: 1, recipe: { items: [] } },
+        { type: 'craft', itemCode: 'fire_bow', quantity: 1, recipe: { items: [] } },
+      ],
+      recipe: { code: 'fire_bow' },
+    };
+
+    const ctx = {
+      name: 'Tester',
+      isAt: () => true,
+      inventoryCapacity: () => 120,
+      inventoryCount: () => 107,
+      itemCount: () => 0,
+      refresh: async () => {},
+    };
+
+    await routine._withdrawFromBank(ctx, routine.rotation.productionPlan, routine.rotation.recipe.code, 1);
+
+    assert.equal(
+      state.withdrawCalls.reduce((sum, row) => sum + row.quantity, 0),
+      1,
+      'reserve-aware maxUnits should cap total crafting withdrawal to one unit',
+    );
+    assert.deepEqual(
+      state.withdrawCalls.map(row => row.code),
+      ['fire_string'],
+      'when capped, withdrawal should prioritize higher-value reversed plan step',
     );
   } finally {
     resetInventoryForTests();
@@ -1502,10 +1738,15 @@ async function run() {
   await testRoutineSkipsGoalProgressWhileOrderClaimIsActive();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
+  await testBatchSizeRespectsInventoryReserve();
+  await testItemTaskWithdrawRespectsReserveCap();
+  await testItemTaskReserveOverflowUsesCraftTradeFallback();
+  await testItemTaskReserveOverflowYieldsWhenNoFallbackProgress();
   await testRoutineTriggersProactiveExchangeBeforeSkillDispatch();
   await testTaskExchangeLockPreventsConcurrentRuns();
   await testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards();
   await testCraftingWithdrawSkipsFinalRecipeOutput();
+  await testCraftingWithdrawHonorsReserveMaxUnits();
   resetOrderPriorityForTests();
   console.log('skill-rotation tests passed');
 }

@@ -398,15 +398,23 @@ export function rawMaterialNeeded(ctx, plan, itemCode, batchSize = 1) {
  * @param {Array} plan — array of { itemCode, quantity, ... } steps
  * @param {object} opts
  * @param {string[]} opts.excludeCodes - item codes to skip during withdrawal planning
+ * @param {number} opts.maxUnits - optional cap for total units to withdraw
  * @returns {string[]} — list of "itemCode xN" descriptions for logging
  */
 export async function withdrawPlanFromBank(ctx, plan, batchSize = 1, opts = {}) {
   const withdrawn = [];
   const excluded = new Set(opts.excludeCodes || []);
+  const parsedMaxUnits = Number(opts.maxUnits);
+  const maxUnits = Number.isFinite(parsedMaxUnits) && parsedMaxUnits >= 0
+    ? Math.floor(parsedMaxUnits)
+    : null;
   const stepsReversed = [...plan].reverse();
 
   const plannedByCode = new Map();
-  let remainingSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
+  let remainingSpace = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
+  if (maxUnits !== null) {
+    remainingSpace = Math.min(remainingSpace, maxUnits);
+  }
 
   for (const step of stepsReversed) {
     if (remainingSpace <= 0) break;

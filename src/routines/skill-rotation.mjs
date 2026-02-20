@@ -37,6 +37,9 @@ const DEFAULT_ORDER_BOARD = Object.freeze({
 const TASK_COIN_CODE = 'tasks_coin';
 const TASK_EXCHANGE_COST = 6;
 const PROACTIVE_EXCHANGE_BACKOFF_MS = 60_000;
+const RESERVE_PCT = 0.10;
+const RESERVE_MIN = 8;
+const RESERVE_MAX = 20;
 
 let taskExchangeLockHolder = null;
 
@@ -723,6 +726,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     // Walk through production plan steps
+    let reserveGatherBlocked = false;
     for (let i = 0; i < plan.length; i++) {
       const step = plan[i];
 
@@ -754,6 +758,17 @@ export class SkillRotationRoutine extends BaseRoutine {
         // Check if we already have enough (accounting for batch + intermediates)
         const needed = rawMaterialNeeded(ctx, plan, step.itemCode, this._currentBatch);
         if (ctx.itemCount(step.itemCode) >= needed) continue;
+
+        const usableSpace = this._usableInventorySpace(ctx);
+        if (usableSpace <= 0) {
+          const reserve = this._inventoryReserve(ctx);
+          log.info(
+            `[${ctx.name}] ${this.rotation.currentSkill}: gather paused for ${step.itemCode}; ` +
+            `inventory reserve reached (${ctx.inventoryCount()}/${ctx.inventoryCapacity()}, reserve ${reserve})`,
+          );
+          reserveGatherBlocked = true;
+          continue;
+        }
 
         // Gather one batch from the resource
         const loc = await gameData.getResourceLocation(step.resource.code);
@@ -915,6 +930,11 @@ export class SkillRotationRoutine extends BaseRoutine {
       }
     }
 
+    if (reserveGatherBlocked) {
+      log.info(`[${ctx.name}] ${this.rotation.currentSkill}: reserve pressure blocked gathering; yielding to allow bank/deposit routines`);
+      return false;
+    }
+
     // If we get here, couldn't make progress — try next iteration
     // (bank deposit may have freed inventory, or we already have materials)
     return !ctx.inventoryFull();
@@ -945,6 +965,22 @@ export class SkillRotationRoutine extends BaseRoutine {
     return true;
   }
 
+  _inventoryReserve(ctx) {
+    const capacity = Math.max(0, Number(ctx.inventoryCapacity()) || 0);
+    if (capacity <= 1) return 0;
+
+    const percentReserve = Math.ceil(capacity * RESERVE_PCT);
+    const reserve = Math.max(RESERVE_MIN, percentReserve);
+    return Math.min(RESERVE_MAX, reserve, capacity - 1);
+  }
+
+  _usableInventorySpace(ctx) {
+    const capacity = Math.max(0, Number(ctx.inventoryCapacity()) || 0);
+    const used = Math.max(0, Number(ctx.inventoryCount()) || 0);
+    const reserve = this._inventoryReserve(ctx);
+    return Math.max(0, capacity - used - reserve);
+  }
+
   // --- Batch size calculation ---
 
   _batchSize(ctx) {
@@ -963,8 +999,8 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
     if (materialsPerCraft === 0) materialsPerCraft = 1;
 
-    // Cap by available inventory space
-    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+    // Cap by reserve-aware inventory space
+    const space = this._usableInventorySpace(ctx);
     const spaceLimit = Math.floor(space / materialsPerCraft);
 
     return Math.max(1, Math.min(remaining, spaceLimit));
@@ -975,8 +1011,14 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _withdrawFromBank(ctx, plan, finalRecipeCode, batchSize = 1) {
     if (!plan) return;
 
+    const maxUnits = this._usableInventorySpace(ctx);
+    if (maxUnits <= 0) {
+      log.info(`[${ctx.name}] Rotation crafting: skipping bank withdrawal (inventory reserve reached)`);
+      return;
+    }
+
     const excludeCodes = finalRecipeCode ? [finalRecipeCode] : [];
-    const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSize, { excludeCodes });
+    const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSize, { excludeCodes, maxUnits });
     if (withdrawn.length > 0) {
       log.info(`[${ctx.name}] Rotation crafting: withdrew from bank: ${withdrawn.join(', ')}`);
     }
@@ -1264,15 +1306,33 @@ export class SkillRotationRoutine extends BaseRoutine {
     // Each craft produces item.craft.quantity units
     const craftYield = item.craft.quantity || 1;
     const haveItem = ctx.itemCount(itemCode);
-    const craftRounds = Math.ceil((needed - haveItem) / craftYield);
-    if (craftRounds <= 0) {
+    const roundsRemaining = Math.ceil((needed - haveItem) / craftYield);
+    if (roundsRemaining <= 0) {
       // Already have enough — trade them
       return this._tradeItemTask(ctx, itemCode, Math.min(haveItem, needed));
     }
 
+    let materialsPerRound = 0;
+    for (const step of plan) {
+      if (step.type !== 'craft') {
+        materialsPerRound += Math.max(0, Number(step.quantity) || 0);
+      }
+    }
+    if (materialsPerRound <= 0) materialsPerRound = 1;
+
+    const usableSpace = this._usableInventorySpace(ctx);
+    const spaceLimit = Math.floor(usableSpace / materialsPerRound);
+    const batchRounds = Math.max(1, Math.min(roundsRemaining, spaceLimit));
+    if (batchRounds < roundsRemaining) {
+      log.info(
+        `[${ctx.name}] Item Task craft: batching ${itemCode} to ${batchRounds}/${roundsRemaining} ` +
+        `round(s) (usable space ${usableSpace}, mats/round ${materialsPerRound})`,
+      );
+    }
+
     // Process each step in the recipe chain
     for (const step of plan) {
-      const stepNeeded = step.quantity * craftRounds;
+      const stepNeeded = step.quantity * batchRounds;
       const stepHave = ctx.itemCount(step.itemCode);
 
       if (stepHave >= stepNeeded) continue; // already have enough
@@ -1282,8 +1342,23 @@ export class SkillRotationRoutine extends BaseRoutine {
       if (step.type === 'gather') {
         // Try bank first
         if (!ctx.inventoryFull()) {
-          const bankResult = await this._withdrawForItemTask(ctx, step.itemCode, deficit);
+          await this._withdrawForItemTask(ctx, step.itemCode, deficit, { maxQuantity: deficit });
           if (ctx.itemCount(step.itemCode) >= stepNeeded) continue;
+        }
+
+        const usableNow = this._usableInventorySpace(ctx);
+        if (usableNow <= 0) {
+          const reserve = this._inventoryReserve(ctx);
+          log.info(
+            `[${ctx.name}] Item Task craft: reserve pressure before gathering ${step.itemCode} ` +
+            `(${ctx.inventoryCount()}/${ctx.inventoryCapacity()}, reserve ${reserve}) — craft/trade fallback`,
+          );
+          const fallback = await this._craftAndTradeItemTaskFromInventory(ctx, itemCode, item, needed, {
+            reason: `reserve pressure while gathering ${step.itemCode}`,
+          });
+          if (fallback.progressed) return true;
+          log.info(`[${ctx.name}] Item Task craft: reserve pressure and no craft/trade progress, yielding`);
+          return false;
         }
 
         // Gather the rest
@@ -1337,39 +1412,70 @@ export class SkillRotationRoutine extends BaseRoutine {
       }
     }
 
-    // All materials ready — craft the final item
-    const canCraftFinal = Math.min(
-      ...item.craft.items.map(mat =>
-        Math.floor(ctx.itemCount(mat.code) / mat.quantity)
-      )
-    );
-    if (canCraftFinal <= 0) {
-      // Shouldn't happen if steps above ran correctly, but safety check
-      log.warn(`[${ctx.name}] Item Task craft: have all steps but can't craft ${itemCode}?`);
-      return true;
+    const finalPass = await this._craftAndTradeItemTaskFromInventory(ctx, itemCode, item, needed);
+    if (finalPass.progressed) return true;
+
+    // Shouldn't happen if steps above ran correctly, but safety check
+    log.warn(`[${ctx.name}] Item Task craft: have all steps but can't craft ${itemCode}?`);
+    return true;
+  }
+
+  async _craftAndTradeItemTaskFromInventory(ctx, itemCode, item, needed, opts = {}) {
+    if (!item?.craft) return { progressed: false, crafted: false, traded: false };
+
+    let crafted = false;
+    let traded = false;
+    const craftYield = item.craft.quantity || 1;
+    const recipeItems = Array.isArray(item.craft.items) ? item.craft.items : [];
+
+    if (recipeItems.length > 0) {
+      const canCraftFinal = Math.min(
+        ...recipeItems.map(mat =>
+          Math.floor(ctx.itemCount(mat.code) / mat.quantity)
+        )
+      );
+
+      if (canCraftFinal > 0) {
+        const currentHave = ctx.itemCount(itemCode);
+        const remainingNeeded = Math.max(0, needed - currentHave);
+        let toCraft = canCraftFinal;
+        if (remainingNeeded > 0) {
+          toCraft = Math.min(toCraft, Math.ceil(remainingNeeded / craftYield));
+        }
+
+        if (toCraft > 0) {
+          const workshops = await gameData.getWorkshops();
+          const ws = workshops[item.craft.skill];
+          if (!ws) {
+            log.warn(`[${ctx.name}] Item Task craft: no workshop for ${item.craft.skill}`);
+            return { progressed: false, crafted: false, traded: false };
+          }
+
+          await moveTo(ctx, ws.x, ws.y);
+          const result = await api.craft(itemCode, toCraft, ctx.name);
+          await api.waitForCooldown(result);
+          await ctx.refresh();
+          const produced = toCraft * craftYield;
+          log.info(`[${ctx.name}] Item Task craft: crafted ${itemCode} x${produced}${opts.reason ? ` (${opts.reason})` : ''}`);
+          crafted = true;
+        }
+      }
     }
 
-    const toCraft = Math.min(canCraftFinal, craftRounds);
-    const workshops = await gameData.getWorkshops();
-    const ws = workshops[item.craft.skill];
-    if (!ws) {
-      log.warn(`[${ctx.name}] Item Task craft: no workshop for ${item.craft.skill}`);
-      return true;
-    }
-
-    await moveTo(ctx, ws.x, ws.y);
-    const result = await api.craft(itemCode, toCraft, ctx.name);
-    await api.waitForCooldown(result);
-    await ctx.refresh();
-    const produced = toCraft * craftYield;
-    log.info(`[${ctx.name}] Item Task craft: crafted ${itemCode} x${produced}`);
-
-    // Trade what we have
     const tradeQty = Math.min(ctx.itemCount(itemCode), needed);
     if (tradeQty > 0) {
-      return this._tradeItemTask(ctx, itemCode, tradeQty);
+      if (opts.reason) {
+        log.info(`[${ctx.name}] Item Task craft: ${opts.reason} — trading ${itemCode} x${tradeQty}`);
+      }
+      await this._tradeItemTask(ctx, itemCode, tradeQty);
+      traded = true;
     }
-    return true;
+
+    return {
+      progressed: crafted || traded,
+      crafted,
+      traded,
+    };
   }
 
   async _placeOrderAndCancel(ctx, itemCode, needed, masterLoc) {
@@ -1426,15 +1532,31 @@ export class SkillRotationRoutine extends BaseRoutine {
     log.info(`[${ctx.name}] Item Task: cancelled`);
   }
 
-  async _withdrawForItemTask(ctx, itemCode, needed) {
+  async _withdrawForItemTask(ctx, itemCode, needed, opts = {}) {
+    const neededQty = Math.max(0, Math.floor(Number(needed) || 0));
+    if (neededQty <= 0) return 0;
+
     const bank = await gameData.getBankItems(true);
     const inBank = bank.get(itemCode) || 0;
-    log.info(`[${ctx.name}] Item Task: bank check for ${itemCode} — ${inBank} in bank, need ${needed}`);
+    log.info(`[${ctx.name}] Item Task: bank check for ${itemCode} — ${inBank} in bank, need ${neededQty}`);
     if (inBank <= 0) return 0;
 
-    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
-    const toWithdraw = Math.min(inBank, needed, space);
-    if (toWithdraw <= 0) return 0;
+    const rawMaxQuantity = Number(opts.maxQuantity);
+    const maxQuantity = Number.isFinite(rawMaxQuantity)
+      ? Math.max(0, Math.floor(rawMaxQuantity))
+      : Number.POSITIVE_INFINITY;
+    const usableSpace = this._usableInventorySpace(ctx);
+    const toWithdraw = Math.min(inBank, neededQty, usableSpace, maxQuantity);
+    if (toWithdraw <= 0) {
+      if (usableSpace <= 0) {
+        const reserve = this._inventoryReserve(ctx);
+        log.info(
+          `[${ctx.name}] Item Task: withdrawal deferred for ${itemCode}; ` +
+          `reserve reached (${ctx.inventoryCount()}/${ctx.inventoryCapacity()}, reserve ${reserve})`,
+        );
+      }
+      return 0;
+    }
 
     try {
       const result = await withdrawBankItems(ctx, [{ code: itemCode, quantity: toWithdraw }], {
