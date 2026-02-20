@@ -20,16 +20,35 @@ import {
 import { getOwnedKeepByCodeForInventory } from './services/gear-state.mjs';
 import { logWithdrawalWarnings } from './utils.mjs';
 
+/** Error thrown when the API returns 595 — no path to destination. */
+export class NoPathError extends Error {
+  constructor(x, y, originalMessage) {
+    super(`No path available to (${x},${y})`);
+    this.name = 'NoPathError';
+    this.x = x;
+    this.y = y;
+    this.originalMessage = originalMessage;
+  }
+}
+
 /** Move to (x,y) if not already there. No-ops if already at target. */
 export async function moveTo(ctx, x, y) {
   if (ctx.isAt(x, y)) return null;
 
   const c = ctx.get();
   log.info(`[${ctx.name}] Moving (${c.x},${c.y}) → (${x},${y})`);
-  const result = await api.move(x, y, ctx.name);
-  await api.waitForCooldown(result);
-  await ctx.refresh();
-  return result;
+  try {
+    const result = await api.move(x, y, ctx.name);
+    await api.waitForCooldown(result);
+    await ctx.refresh();
+    return result;
+  } catch (err) {
+    if (err.code === 595) {
+      log.warn(`[${ctx.name}] No path to (${x},${y}): ${err.message}`);
+      throw new NoPathError(x, y, err.message);
+    }
+    throw err;
+  }
 }
 
 /**

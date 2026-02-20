@@ -439,6 +439,7 @@ export async function findBestCombatTarget(ctx) {
   let bestTarget = null;
 
   for (const monster of monsters) {
+    if (gameData.isLocationUnreachable('monster', monster.code)) continue;
     const loc = await _deps.getMonsterLocationFn(monster.code);
     if (!loc) continue;
 

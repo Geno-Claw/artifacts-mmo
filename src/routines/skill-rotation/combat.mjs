@@ -3,7 +3,7 @@
  */
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
-import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, withdrawFoodForFights } from '../../helpers.mjs';
+import { moveTo, fightOnce, restBeforeFight, parseFightResult, equipForCombat, withdrawFoodForFights, NoPathError } from '../../helpers.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
 export async function executeCombat(ctx, routine) {
@@ -50,7 +50,17 @@ export async function executeCombat(ctx, routine) {
     routine._foodWithdrawn = true;
   }
 
-  await moveTo(ctx, loc.x, loc.y);
+  try {
+    await moveTo(ctx, loc.x, loc.y);
+  } catch (err) {
+    if (err instanceof NoPathError) {
+      log.warn(`[${ctx.name}] Cannot reach ${monsterCode} at (${loc.x},${loc.y}), marking unreachable`);
+      gameData.markLocationUnreachable('monster', monsterCode);
+      await routine.rotation.forceRotate(ctx);
+      return true;
+    }
+    throw err;
+  }
   if (!(await restBeforeFight(ctx, monsterCode))) {
     const context = claim ? 'order fight' : 'combat';
     log.warn(`[${ctx.name}] ${context}: can't rest before fighting ${monsterCode}, attempting fight anyway`);

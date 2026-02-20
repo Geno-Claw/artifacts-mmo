@@ -153,6 +153,10 @@ export async function move(x, y, name = CHARACTER) {
   return request('POST', `/my/${name}/action/move`, { x, y });
 }
 
+export async function transition(name = CHARACTER) {
+  return request('POST', `/my/${name}/action/transition`);
+}
+
 export async function fight(name = CHARACTER) {
   return request('POST', `/my/${name}/action/fight`);
 }

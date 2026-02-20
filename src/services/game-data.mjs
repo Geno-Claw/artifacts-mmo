@@ -22,6 +22,9 @@ let geLocationCache = null;     // { x, y } or null
 let taskRewardsCache = null;    // Array of reward objects
 let taskRewardCodes = null;     // Set<itemCode> for fast lookup
 
+// --- Unreachable location tracking (session-scoped) ---
+const unreachableLocations = new Set(); // "monster:frost_slime", "resource:iron_rocks"
+
 // --- Initialization ---
 
 export async function initialize() {
@@ -40,6 +43,9 @@ export async function initialize() {
   const typeStr = [...types.entries()].map(([k, v]) => `${k}(${v})`).join(', ');
   log.info(`[GameData] Loaded ${itemsCache.size} items, ${monstersCache.size} monsters, ${resourcesCache.size} resources`);
   log.info(`[GameData] Item types: ${typeStr}`);
+
+  // Discover transition tiles (informational — logged but not used for navigation yet)
+  await discoverTransitionTiles();
 }
 
 async function loadAllItems() {
@@ -159,17 +165,51 @@ export function getTaskRewards() {
   return taskRewardsCache || [];
 }
 
+// --- Accessible tile filtering ---
+
+/**
+ * Pick the first freely-accessible tile from a list of map tiles.
+ * Tiles with non-empty access.conditions (seasonal areas, locked zones) are excluded.
+ * Same pattern as bank-ops.mjs isAccessibleBankTile.
+ */
+function pickAccessibleTile(tiles) {
+  for (const t of tiles) {
+    const conds = t.access?.conditions;
+    if (!Array.isArray(conds) || conds.length === 0) return t;
+  }
+  return null;
+}
+
+/**
+ * Mark a location as unreachable (e.g. after receiving error 595).
+ * Invalidates the cached location so the next lookup re-fetches and re-filters.
+ */
+export function markLocationUnreachable(contentType, code) {
+  const key = `${contentType}:${code}`;
+  unreachableLocations.add(key);
+  if (contentType === 'monster') delete monsterLocationCache[code];
+  if (contentType === 'resource') delete resourceLocationCache[code];
+  log.warn(`[GameData] Marked ${key} as unreachable`);
+}
+
+export function isLocationUnreachable(contentType, code) {
+  return unreachableLocations.has(`${contentType}:${code}`);
+}
+
 /**
  * Get the map location for a resource. Fetched on first call and cached.
+ * Filters to accessible tiles only (no access conditions).
  */
 export async function getResourceLocation(resourceCode) {
+  if (unreachableLocations.has(`resource:${resourceCode}`)) return null;
   if (resourceLocationCache[resourceCode]) return resourceLocationCache[resourceCode];
 
   const maps = await api.getMaps({ content_type: 'resource', content_code: resourceCode });
   const list = Array.isArray(maps) ? maps : [];
-  if (list.length === 0) return null;
+  const tile = pickAccessibleTile(list);
+  if (!tile) return null;
 
-  resourceLocationCache[resourceCode] = { x: list[0].x, y: list[0].y };
+  resourceLocationCache[resourceCode] = { x: tile.x, y: tile.y };
   return resourceLocationCache[resourceCode];
 }
 
@@ -269,6 +309,37 @@ async function discoverGELocation() {
 
 export function getGELocation() {
   return geLocationCache;
+}
+
+// --- Transition tile discovery ---
+
+let transitionTilesCache = null; // Array of { x, y, layer, name, access }
+
+async function discoverTransitionTiles() {
+  try {
+    const maps = await api.getMaps({ content_type: 'portal', size: 100 });
+    const list = Array.isArray(maps) ? maps : [];
+    transitionTilesCache = list.map(t => ({
+      x: t.x,
+      y: t.y,
+      layer: t.layer || 'unknown',
+      name: t.name || '',
+      conditions: t.access?.conditions || [],
+    }));
+    if (transitionTilesCache.length > 0) {
+      const summary = transitionTilesCache.map(t => `${t.name || '?'} (${t.x},${t.y}) [${t.layer}]`).join(', ');
+      log.info(`[GameData] Found ${transitionTilesCache.length} transition tiles: ${summary}`);
+    } else {
+      log.info('[GameData] No transition tiles found (tried content_type=portal)');
+    }
+  } catch (err) {
+    log.warn(`[GameData] Could not discover transition tiles: ${err.message}`);
+    transitionTilesCache = [];
+  }
+}
+
+export function getTransitionTiles() {
+  return transitionTilesCache || [];
 }
 
 // --- Equipment type helpers ---
@@ -401,16 +472,21 @@ export function findMonstersByLevel(maxLevel) {
   return results.sort((a, b) => b.level - a.level);
 }
 
-/** Get the map location for a monster. Fetched on first call and cached. */
+/**
+ * Get the map location for a monster. Fetched on first call and cached.
+ * Filters to accessible tiles only (no access conditions).
+ */
 const monsterLocationCache = {};
 export async function getMonsterLocation(monsterCode) {
+  if (unreachableLocations.has(`monster:${monsterCode}`)) return null;
   if (monsterLocationCache[monsterCode]) return monsterLocationCache[monsterCode];
 
   const maps = await api.getMaps({ content_type: 'monster', content_code: monsterCode });
   const list = Array.isArray(maps) ? maps : [];
-  if (list.length === 0) return null;
+  const tile = pickAccessibleTile(list);
+  if (!tile) return null;
 
-  monsterLocationCache[monsterCode] = { x: list[0].x, y: list[0].y };
+  monsterLocationCache[monsterCode] = { x: tile.x, y: tile.y };
   return monsterLocationCache[monsterCode];
 }
 

@@ -4,7 +4,7 @@
 import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
-import { moveTo, gatherOnce, equipForGathering } from '../../helpers.mjs';
+import { moveTo, gatherOnce, equipForGathering, NoPathError } from '../../helpers.mjs';
 
 export async function executeGathering(ctx, routine) {
   let claim = await routine._ensureOrderClaim(ctx, 'gather');
@@ -48,7 +48,18 @@ export async function executeGathering(ctx, routine) {
   // Equip optimal gathering gear (tool + prospecting)
   await equipForGathering(ctx, resource?.skill || routine.rotation.currentSkill);
 
-  await moveTo(ctx, loc.x, loc.y);
+  try {
+    await moveTo(ctx, loc.x, loc.y);
+  } catch (err) {
+    if (err instanceof NoPathError) {
+      const resourceCode = resource?.code || 'unknown';
+      log.warn(`[${ctx.name}] Cannot reach ${resourceCode} at (${loc.x},${loc.y}), marking unreachable`);
+      gameData.markLocationUnreachable('resource', resourceCode);
+      await routine.rotation.forceRotate(ctx);
+      return true;
+    }
+    throw err;
+  }
   const result = await gatherOnce(ctx);
 
   const items = result.details?.items || [];
