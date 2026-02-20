@@ -20,6 +20,30 @@ function emitActionEvent(evt) {
   }
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseJsonSafely(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function bodySnippet(raw, maxLen = 180) {
+  const compact = `${raw || ''}`.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  if (compact.length <= maxLen) return compact;
+  return `${compact.slice(0, maxLen - 3)}...`;
+}
+
+function isRetryableGatewayStatus(status) {
+  return status === 502 || status === 503 || status === 504;
+}
+
 async function request(method, path, body = null) {
   const opts = {
     method,
@@ -32,10 +56,34 @@ async function request(method, path, body = null) {
   if (body) opts.body = JSON.stringify(body);
 
   for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch(`${API}${path}`, opts);
-    const json = await res.json();
+    let res;
+    try {
+      res = await fetch(`${API}${path}`, opts);
+    } catch (err) {
+      if (attempt < 4) {
+        await sleep((attempt + 1) * 1000);
+        continue;
+      }
+      const networkErr = new Error(`Network error for ${method} ${path}: ${err?.message || String(err)}`);
+      networkErr.code = 'network_error';
+      throw networkErr;
+    }
+
+    const raw = await res.text();
+    const json = parseJsonSafely(raw);
 
     if (res.ok) {
+      if (!json || typeof json !== 'object' || !('data' in json)) {
+        const invalidBody = bodySnippet(raw);
+        const err = new Error(
+          invalidBody
+            ? `Unexpected API response format (HTTP ${res.status}): ${invalidBody}`
+            : `Unexpected API response format (HTTP ${res.status})`,
+        );
+        err.code = res.status;
+        throw err;
+      }
+
       if (method === 'POST') {
         const actionMatch = path.match(/^\/my\/([^/]+)\/action\/(.+)$/);
         if (actionMatch) {
@@ -54,24 +102,33 @@ async function request(method, path, body = null) {
       return json.data;
     }
 
-    const code = json.error?.code || res.status;
-    const message = json.error?.message || `HTTP ${res.status}`;
+    const code = Number(json?.error?.code) || res.status;
+    const fallbackBody = bodySnippet(raw);
+    const message = json?.error?.message
+      || (fallbackBody ? `HTTP ${res.status}: ${fallbackBody}` : `HTTP ${res.status}`);
 
     // Auto-retry on cooldown (code 499)
     if (code === 499) {
       const match = message.match(/([\d.]+)\s*seconds?\s*remaining/);
       const wait = match ? parseFloat(match[1]) * 1000 + 500 : 3000;
-      await new Promise(r => setTimeout(r, wait));
+      await sleep(wait);
+      continue;
+    }
+
+    // Transient upstream/gateway errors often return non-JSON bodies.
+    if (isRetryableGatewayStatus(res.status) && attempt < 4) {
+      await sleep((attempt + 1) * 1000);
       continue;
     }
 
     const err = new Error(message);
     err.code = code;
-    err.data = json.error?.data;
+    err.data = json?.error?.data;
+    err.status = res.status;
     throw err;
   }
 
-  throw new Error(`Still in cooldown after 5 retries: ${method} ${path}`);
+  throw new Error(`Request failed after 5 attempts: ${method} ${path}`);
 }
 
 // --- Character endpoints ---

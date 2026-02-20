@@ -259,8 +259,9 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .orders-panel-title {
@@ -277,6 +278,36 @@ body::before {
   text-transform: uppercase;
 }
 
+.orders-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.orders-filter-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(42, 36, 32, 0.05);
+  border: none;
+  padding: 6px 8px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.18);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.orders-filter-btn:hover {
+  background: rgba(42, 36, 32, 0.12);
+}
+
+.orders-filter-btn.is-active {
+  background: rgba(42, 36, 32, 0.22);
+  color: var(--paper);
+}
+
 .orders-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -291,7 +322,9 @@ body::before {
 }
 
 .order-row[data-status=\"claimed\"] {
-  border-left-color: rgba(200, 48, 40, 0.85);
+  background: rgba(200, 48, 40, 0.16);
+  border-left-color: rgba(200, 48, 40, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(200, 48, 40, 0.25);
 }
 
 .order-row[data-status=\"fulfilled\"] {
@@ -302,6 +335,25 @@ body::before {
   font-size: 6px;
   line-height: 1.4;
   color: var(--ink);
+}
+
+.order-item-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.order-claim-badge {
+  display: inline-block;
+  font-size: 5px;
+  letter-spacing: 1px;
+  line-height: 1;
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(200, 48, 40, 0.45);
+  padding: 3px 5px 2px;
+  white-space: nowrap;
 }
 
 .order-meta {
@@ -317,6 +369,18 @@ body::before {
   font-size: 6px;
   color: var(--ink-faint);
   letter-spacing: 1px;
+}
+
+.orders-panel.is-collapsed {
+  padding-bottom: 8px;
+}
+
+.orders-panel.is-collapsed .orders-filter-group {
+  margin-bottom: 0;
+}
+
+.orders-panel.is-collapsed .orders-list {
+  display: none;
 }
 
 /* Brush stroke divider */
@@ -1192,6 +1256,15 @@ body::before {
   .dashboard-control-status-grid {
     grid-template-columns: 1fr;
   }
+
+  .orders-filter-group {
+    width: 100%;
+  }
+
+  .orders-filter-btn {
+    flex: 1 1 auto;
+    text-align: center;
+  }
 }
 
 /* ============================================================
@@ -1277,6 +1350,11 @@ body::before {
   <div class="orders-panel-header">
     <p class="orders-panel-title">Order Board</p>
     <p class="orders-panel-meta" id="ordersPanelMeta">0 active</p>
+  </div>
+  <div class="orders-filter-group" id="ordersFilterGroup" role="tablist" aria-label="Order filters">
+    <button type="button" class="orders-filter-btn is-active" data-order-filter="all">All Orders</button>
+    <button type="button" class="orders-filter-btn" data-order-filter="claimed">Claimed Orders</button>
+    <button type="button" class="orders-filter-btn" data-order-filter="hidden">Hide All Orders</button>
   </div>
   <div class="orders-list" id="ordersList"></div>
 </section>
@@ -1528,6 +1606,7 @@ const appState = {
   order: [],
   characters: new Map(),
   orders: [],
+  orderFilter: 'all',
 };
 
 const cardRefs = new Map();
@@ -1536,6 +1615,7 @@ const ordersRefs = {
   panel: null,
   list: null,
   meta: null,
+  filterGroup: null,
 };
 const CONFIG_MODAL_NAME = '__config__';
 const MODAL_KIND_LABELS = {
@@ -1551,6 +1631,11 @@ const ACHIEVEMENT_FILTER_LABELS = {
   completed: 'Completed',
   'in-progress': 'In Progress',
 };
+const ORDER_FILTER_LABELS = {
+  all: 'All Orders',
+  claimed: 'Claimed Orders',
+  hidden: 'Hide All Orders',
+};
 const CONTROL_ACTION_LABELS = {
   reload: 'Reload Config',
   restart: 'Restart Bot',
@@ -1561,6 +1646,7 @@ const CONTROL_ACTION_ENDPOINTS = {
 };
 const CONTROL_OPERATION_STATE_VALUES = new Set(['idle', 'in-flight', 'success', 'failure']);
 const CONTROL_STATUS_POLL_MS = 5000;
+const CONTROL_ACTION_REQUEST_TIMEOUT_MS = 30_000;
 const runtimeFeatures = {
   configEditorAvailable: false,
   controlPanelAvailable: false,
@@ -1888,6 +1974,12 @@ function normalizeOrderStatus(status) {
   return 'open';
 }
 
+function normalizeOrderFilter(value, fallback = 'all') {
+  const normalized = safeText(value, '').toLowerCase();
+  if (ORDER_FILTER_LABELS[normalized]) return normalized;
+  return ORDER_FILTER_LABELS[fallback] ? fallback : 'all';
+}
+
 function normalizeOrderRow(raw) {
   const itemCode = safeText(raw?.itemCode, '');
   const sourceType = safeText(raw?.sourceType, '');
@@ -1914,19 +2006,54 @@ function renderOrdersPanel() {
     .filter(order => order.status !== 'fulfilled' && order.remainingQty > 0)
     .sort((a, b) => a.createdAtMs - b.createdAtMs || a.id.localeCompare(b.id));
 
-  ordersRefs.meta.textContent = `${activeRows.length} active`;
+  const filter = normalizeOrderFilter(appState.orderFilter, 'all');
+  appState.orderFilter = filter;
 
-  if (activeRows.length === 0) {
-    ordersRefs.list.innerHTML = '<div class=\"orders-empty\">No active cross-character orders.</div>';
+  ordersRefs.panel.classList.toggle('is-collapsed', filter === 'hidden');
+  if (ordersRefs.panel) {
+    ordersRefs.panel.querySelectorAll('button[data-order-filter]').forEach((button) => {
+      const value = normalizeOrderFilter(button.dataset.orderFilter, '');
+      button.classList.toggle('is-active', value === filter);
+    });
+  }
+
+  if (filter === 'hidden') {
+    ordersRefs.meta.textContent = 'Orders hidden';
+    ordersRefs.list.innerHTML = '';
     return;
   }
 
-  ordersRefs.list.innerHTML = activeRows.map((row) => {
+  const visibleRows = filter === 'claimed'
+    ? activeRows.filter(row => row.status === 'claimed')
+    : activeRows;
+
+  if (filter === 'claimed') {
+    ordersRefs.meta.textContent = `${visibleRows.length} claimed`;
+  } else {
+    ordersRefs.meta.textContent = `${visibleRows.length} active`;
+  }
+
+  if (visibleRows.length === 0) {
+    ordersRefs.list.innerHTML = filter === 'claimed'
+      ? '<div class="orders-empty">No claimed orders right now.</div>'
+      : '<div class="orders-empty">No active cross-character orders.</div>';
+    return;
+  }
+
+  ordersRefs.list.innerHTML = visibleRows.map((row) => {
     const sourceLabel = `${row.sourceType}:${row.sourceCode}`;
     const claimer = row.claimer ? `claimer ${row.claimer}` : 'unclaimed';
+    const claimedBadge = row.status === 'claimed'
+      ? '<span class="order-claim-badge">CLAIMED</span>'
+      : '';
     return `
       <article class=\"order-row\" data-status=\"${escapeHtml(row.status)}\">
-        <div class=\"order-item\">${escapeHtml(row.itemCode)} · remaining ${escapeHtml(formatNumberish(row.remainingQty, '0'))}</div>
+        <div class=\"order-item\">
+          <div class="order-item-line">
+            <span>${escapeHtml(row.itemCode)} · remaining ${escapeHtml(formatNumberish(row.remainingQty, '0'))}</span>
+            ${claimedBadge}
+          </div>
+        </div>
         <div class=\"order-meta\">
           <div>${escapeHtml(sourceLabel)}</div>
           <div>${escapeHtml(claimer)}</div>
@@ -2058,7 +2185,10 @@ function normalizeControlStatusSnapshot(rawPayload) {
     || operationState === 'in-flight'
     || operationState === 'pending'
     || operationState === 'running'
-    || operationState === 'busy';
+    || operationState === 'busy'
+    || !!operationAction
+    || lifecycle === 'starting'
+    || lifecycle === 'stopping';
 
   const updatedAtMs = Math.max(0, toNumber(
     source.updatedAtMs
@@ -3138,7 +3268,7 @@ async function fetchControlStatus({ silentErrors = false } = {}) {
       signal: controller.signal,
     });
     const payloadRaw = await res.json().catch(() => null);
-    if (controlState.statusSeq !== seq) return;
+    if (controlState.statusSeq !== seq) return null;
 
     if (res.status === 404) {
       runtimeFeatures.controlPanelAvailable = false;
@@ -3148,7 +3278,7 @@ async function fetchControlStatus({ silentErrors = false } = {}) {
       setControlResultBanner('', '');
       stopControlStatusPolling();
       renderControlPanel();
-      return;
+      return null;
     }
 
     runtimeFeatures.controlPanelAvailable = true;
@@ -3167,15 +3297,16 @@ async function fetchControlStatus({ silentErrors = false } = {}) {
         setControlResultBanner('warning', `CONTROL STATUS FAILURE - ${message}`);
       }
       renderControlPanel();
-      return;
+      return controlState.statusSnapshot;
     }
 
     controlState.statusSnapshot = normalizeControlStatusSnapshot(payloadRaw);
     controlState.statusError = '';
     renderControlPanel();
+    return controlState.statusSnapshot;
   } catch (err) {
-    if (err?.name === 'AbortError') return;
-    if (controlState.statusSeq !== seq) return;
+    if (err?.name === 'AbortError') return null;
+    if (controlState.statusSeq !== seq) return null;
 
     controlState.statusError = safeText(err?.message, 'Control status request failed');
     if (!controlState.statusSnapshot) {
@@ -3191,6 +3322,7 @@ async function fetchControlStatus({ silentErrors = false } = {}) {
       setControlResultBanner('warning', `CONTROL STATUS FAILURE - ${controlState.statusError}`);
     }
     renderControlPanel();
+    return controlState.statusSnapshot;
   } finally {
     if (controlState.statusController === controller) {
       controlState.statusController = null;
@@ -3214,6 +3346,12 @@ async function runRuntimeControlAction(action) {
   }
   const controller = new AbortController();
   controlState.actionController = controller;
+  let requestTimedOut = false;
+  const requestTimeoutTimer = setTimeout(() => {
+    requestTimedOut = true;
+    controller.abort();
+  }, CONTROL_ACTION_REQUEST_TIMEOUT_MS);
+  requestTimeoutTimer.unref?.();
 
   const actionLabel = formatUpperToken(getControlActionLabel(normalizedAction, normalizedAction), 'CONTROL');
   setControlOperationState('in-flight', { action: normalizedAction });
@@ -3260,12 +3398,27 @@ async function runRuntimeControlAction(action) {
     renderControlPanel();
     await fetchControlStatus({ silentErrors: true });
   } catch (err) {
-    if (err?.name === 'AbortError') return;
+    if (err?.name === 'AbortError') {
+      if (requestTimedOut) {
+        const timeoutSeconds = Math.max(1, Math.floor(CONTROL_ACTION_REQUEST_TIMEOUT_MS / 1000));
+        setControlOperationState('idle');
+        setControlResultBanner(
+          'warning',
+          `${actionLabel} REQUEST TIMED OUT AFTER ${timeoutSeconds}S - operation may still be running; syncing status.`
+        );
+        renderControlPanel();
+        await fetchControlStatus({ silentErrors: true });
+      } else {
+        setControlOperationState('idle');
+      }
+      return;
+    }
     setControlOperationState('failure', { action: normalizedAction });
     setControlResultBanner('error', `${actionLabel} FAILURE - ${safeText(err?.message, 'Request failed')}`);
     renderControlPanel();
     await fetchControlStatus({ silentErrors: true });
   } finally {
+    clearTimeout(requestTimeoutTimer);
     if (controlState.actionController === controller) {
       controlState.actionController = null;
     }
@@ -3736,6 +3889,17 @@ function onRuntimeControlButtonClick(event) {
   runRuntimeControlAction(action);
 }
 
+function onOrdersPanelClick(event) {
+  const button = closestFromEventTarget(event, 'button[data-order-filter]');
+  if (!button || button.disabled || !ordersRefs.panel || !ordersRefs.panel.contains(button)) return;
+
+  const nextFilter = normalizeOrderFilter(button.dataset.orderFilter, appState.orderFilter);
+  if (nextFilter === appState.orderFilter) return;
+
+  appState.orderFilter = nextFilter;
+  renderOrdersPanel();
+}
+
 function onModalContentClick(event) {
   if (!isModalOpen() || modalState.status !== 'ready' || !modalRefs.content) return;
 
@@ -4010,6 +4174,10 @@ async function init() {
   ordersRefs.panel = document.getElementById('ordersPanel');
   ordersRefs.list = document.getElementById('ordersList');
   ordersRefs.meta = document.getElementById('ordersPanelMeta');
+  ordersRefs.filterGroup = document.getElementById('ordersFilterGroup');
+  if (ordersRefs.panel) {
+    ordersRefs.panel.addEventListener('click', onOrdersPanelClick);
+  }
   await Promise.all([
     probeConfigFeatureAvailability(),
     probeControlFeatureAvailability(),

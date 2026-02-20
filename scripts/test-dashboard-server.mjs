@@ -875,6 +875,41 @@ async function run() {
     const health = await fetch(`${baseUrl}/healthz`);
     assert.equal(health.status, 200);
 
+    const dashboardPageRes = await fetch(`${baseUrl}/`);
+    assert.equal(dashboardPageRes.status, 200, 'dashboard root should return HTML');
+    const dashboardHtml = await dashboardPageRes.text();
+    assert.equal(typeof dashboardHtml, 'string', 'dashboard root response should be text');
+    assert.equal(
+      dashboardHtml.includes('id="ordersPanel"'),
+      true,
+      'dashboard HTML should include ordersPanel',
+    );
+    assert.equal(
+      dashboardHtml.includes('id="ordersList"'),
+      true,
+      'dashboard HTML should include ordersList',
+    );
+    assert.equal(
+      dashboardHtml.includes('id="ordersPanelMeta"'),
+      true,
+      'dashboard HTML should include ordersPanelMeta',
+    );
+    assert.equal(
+      dashboardHtml.includes('data-order-filter="all"'),
+      true,
+      'dashboard HTML should include all orders filter control',
+    );
+    assert.equal(
+      dashboardHtml.includes('data-order-filter="claimed"'),
+      true,
+      'dashboard HTML should include claimed orders filter control',
+    );
+    assert.equal(
+      dashboardHtml.includes('data-order-filter="hidden"'),
+      true,
+      'dashboard HTML should include hide orders filter control',
+    );
+
     const snapshotRes = await fetch(`${baseUrl}/api/ui/snapshot`);
     assert.equal(snapshotRes.status, 200);
     const snapshot = await snapshotRes.json();
