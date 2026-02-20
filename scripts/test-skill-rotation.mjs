@@ -1023,6 +1023,113 @@ async function testHandleUnwinnableCraftFightBlocksAndReleasesClaim() {
   assert.equal(rotateCalls, 0, 'claim mode should not rotate');
 }
 
+async function testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => ({
+    orderId: 'order-99',
+    charName: 'Tester',
+    itemCode: 'cheese',
+    sourceType: 'craft',
+    sourceCode: 'cheese',
+    craftSkill: 'alchemy',
+    remainingQty: 5,
+    claim: {},
+  });
+  routine._getCraftClaimItem = () => ({
+    code: 'cheese',
+    craft: { skill: 'alchemy', level: 1, items: [] },
+  });
+  routine._resolveCraftClaimPlan = () => [{
+    type: 'fight',
+    itemCode: 'milk_bucket',
+    quantity: 1,
+    monster: { code: 'cow', level: 8 },
+    monsterLoc: { x: 2, y: 2 },
+  }];
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'cheese', craft: { skill: 'alchemy', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'fight',
+      itemCode: 'milk_bucket',
+      quantity: 1,
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+    }],
+    bankChecked: true,
+    forceRotate: async () => null,
+    blockCurrentRecipe: () => true,
+  };
+
+  routine._equipForCraftFight = async () => ({ simResult: null, ready: false });
+
+  let blockReason = null;
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    blockReason = reason;
+  };
+
+  const result = await routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+    skillLevel: () => 10,
+  });
+
+  assert.equal(result, true, 'should return true to avoid tight retry');
+  assert.equal(blockReason, 'combat_gear_not_ready:cow', 'should block claim with monster code');
+}
+
+async function testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => null;
+  let blockCalls = 0;
+  let rotateCalls = 0;
+  let blockArgs = null;
+
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'cheese', craft: { skill: 'alchemy', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'fight',
+      itemCode: 'milk_bucket',
+      quantity: 1,
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+    }],
+    bankChecked: true,
+    blockCurrentRecipe: (args) => {
+      blockCalls += 1;
+      blockArgs = args;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+
+  routine._equipForCraftFight = async () => ({ simResult: null, ready: false });
+
+  const result = await routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+  });
+
+  assert.equal(result, true, 'should return true to avoid tight retry');
+  assert.equal(blockCalls, 1, 'should block current recipe');
+  assert.ok(blockArgs?.reason?.includes('cow'), 'block reason should mention monster code');
+  assert.equal(rotateCalls, 1, 'should force rotate to next recipe');
+}
+
 async function testRoutineCanDisableOrderFulfillment() {
   const routine = new SkillRotationRoutine({
     orderBoard: {
@@ -1862,6 +1969,8 @@ async function run() {
   await testCraftFightStepSkipsCombatWhenSimUnwinnable();
   await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
   await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
+  await testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim();
+  await testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates();
   await testRoutineCanDisableOrderFulfillment();
   await testRoutineRoutesCraftClaimsBySkill();
   await testRoutineCraftingFallsBackWhenNoCraftClaim();

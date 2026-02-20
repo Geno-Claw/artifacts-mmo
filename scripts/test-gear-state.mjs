@@ -1110,6 +1110,85 @@ async function testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(basePath) {
   await flushGearState();
 }
 
+async function testFallbackOverClaimPreventedAcrossCharacters(basePath) {
+  _resetGearStateForTests();
+
+  // Both characters have sticky_sword equipped (globalCount=1).
+  // Optimizer wants mushstaff (globalCount=0) for both.
+  // Only one character should get sticky_sword as fallback, not both.
+  const alpha = makeCtx({
+    name: 'Alpha',
+    level: 18,
+    capacity: 30,
+    equipped: { weapon: 'sticky_sword' },
+  });
+  const beta = makeCtx({
+    name: 'Beta',
+    level: 18,
+    capacity: 30,
+    equipped: { weapon: 'sticky_sword' },
+  });
+
+  const itemsByCode = new Map([
+    ['sticky_sword', { code: 'sticky_sword', type: 'weapon', level: 8 }],
+    ['mushstaff', { code: 'mushstaff', type: 'weapon', level: 20, craft: { skill: 'weaponcrafting', level: 20 } }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'cow', level: 8 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({ weapon: 'mushstaff' }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: 4,
+        remainingHp: 120,
+      },
+    }),
+    getBankRevisionFn: () => 50,
+    globalCountFn: (code) => (code === 'sticky_sword' ? 1 : 0),
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-fallback-overclaim.json'),
+    characters: [
+      { name: 'Alpha', settings: {}, routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }] },
+      { name: 'Beta', settings: {}, routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }] },
+    ],
+  });
+  registerContext(alpha);
+  registerContext(beta);
+  await refreshGearState({ force: true });
+
+  const alphaState = getCharacterGearState('Alpha');
+  const betaState = getCharacterGearState('Beta');
+
+  assertOwnedMirrorsAvailable(alphaState, 'Alpha fallback');
+  assertOwnedMirrorsAvailable(betaState, 'Beta fallback');
+
+  // Both should want mushstaff
+  assert.equal(alphaState.desired.mushstaff, 1, 'Alpha should desire mushstaff');
+  assert.equal(betaState.desired.mushstaff, 1, 'Beta should desire mushstaff');
+
+  // Only first character should get sticky_sword fallback
+  assert.equal(alphaState.available.sticky_sword, 1, 'Alpha (first in config) should get scarce fallback weapon');
+  assert.equal(betaState.available.sticky_sword, undefined, 'Beta should NOT get fallback when Alpha already claimed the only copy');
+
+  // Total claimed should never exceed global count
+  assert.equal(
+    getClaimedTotal('sticky_sword'),
+    1,
+    'total fallback claims for scarce item should not exceed globalCount',
+  );
+
+  await flushGearState();
+}
+
 async function run() {
   const tempDir = mkdtempSync(join(tmpdir(), 'gear-state-test-'));
   try {
@@ -1128,6 +1207,7 @@ async function run() {
     await testPublishDesiredOrdersSkipsToolItems(tempDir);
     await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);
     await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
+    await testFallbackOverClaimPreventedAcrossCharacters(tempDir);
     console.log('test-gear-state: PASS');
   } finally {
     await flushGearState().catch(() => {});

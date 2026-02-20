@@ -686,7 +686,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     let claimGoal = 0;
 
     if (claim) {
-      const claimItem = gameData.getItem(claim.itemCode || claim.sourceCode);
+      const claimItem = this._getCraftClaimItem(claim);
       if (!claimItem?.craft?.skill) {
         await this._blockAndReleaseClaim(ctx, 'invalid_craft_order');
         return true;
@@ -700,7 +700,7 @@ export class SkillRotationRoutine extends BaseRoutine {
         return true;
       }
 
-      const claimPlan = gameData.resolveRecipeChain(claimItem.craft);
+      const claimPlan = this._resolveCraftClaimPlan(claimItem.craft);
       if (!claimPlan) {
         await this._blockAndReleaseClaim(ctx, 'unresolvable_recipe_chain');
         return true;
@@ -825,8 +825,18 @@ export class SkillRotationRoutine extends BaseRoutine {
         // Equip for combat against this monster
         const { simResult, ready = true } = await this._equipForCraftFight(ctx, monsterCode);
         if (!ready) {
-          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: combat gear not ready for ${monsterCode}, deferring recipe step`);
-          return false;
+          if (claimMode) {
+            log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: combat gear not ready for ${monsterCode}, blocking claim`);
+            await this._blockAndReleaseClaim(ctx, `combat_gear_not_ready:${monsterCode}`);
+            return true;
+          }
+          log.warn(`[${ctx.name}] ${this.rotation.currentSkill}: combat gear not ready for ${monsterCode}, blocking recipe and rotating`);
+          this.rotation.blockCurrentRecipe({
+            reason: `combat gear not ready vs ${monsterCode}`,
+            ctx,
+          });
+          await this.rotation.forceRotate(ctx);
+          return true;
         }
         if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
           await this._handleUnwinnableCraftFight(ctx, {

@@ -494,7 +494,7 @@ function summarizeCategoryMap(map) {
   return entries.map(([category, qty]) => `${category}:${qty}`).join(', ');
 }
 
-function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new Map()) {
+function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new Map(), sharedAvailability = null) {
   if (!ctx) {
     return {
       fallbackClaims: new Map(),
@@ -602,16 +602,28 @@ function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new M
     for (const row of rows) {
       if (remaining <= 0) break;
 
-      const assignedQty = assigned.get(row.code) || 0;
       const alreadyExtra = extraByCode.get(row.code) || 0;
-      const globalQty = Math.max(0, toPositiveInt(_deps.globalCountFn(row.code), 0));
-      const roomForCode = Math.max(0, globalQty - assignedQty - alreadyExtra);
+      let roomForCode;
+      if (sharedAvailability) {
+        if (!sharedAvailability.has(row.code)) {
+          sharedAvailability.set(row.code, Math.max(0, toPositiveInt(_deps.globalCountFn(row.code), 0)));
+        }
+        roomForCode = Math.max(0, sharedAvailability.get(row.code) - alreadyExtra);
+      } else {
+        const assignedQty = assigned.get(row.code) || 0;
+        const globalQty = Math.max(0, toPositiveInt(_deps.globalCountFn(row.code), 0));
+        roomForCode = Math.max(0, globalQty - assignedQty - alreadyExtra);
+      }
       if (roomForCode <= 0) continue;
 
       const takeQty = Math.min(remaining, row.qty, roomForCode);
       if (takeQty <= 0) continue;
 
       extraByCode.set(row.code, alreadyExtra + takeQty);
+      if (sharedAvailability) {
+        const cur = sharedAvailability.get(row.code) || 0;
+        sharedAvailability.set(row.code, Math.max(0, cur - takeQty));
+      }
       remaining -= takeQty;
     }
 
@@ -940,7 +952,7 @@ export async function refreshGearState(opts = {}) {
       fallbackClaims,
       missingByCategory,
       addedByCategory,
-    } = computeFallbackClaims(ctx, desired, assigned, previousAvailable);
+    } = computeFallbackClaims(ctx, desired, assigned, previousAvailable, availability);
 
     const available = new Map(assigned);
     maxMergeCounts(available, fallbackClaims);
