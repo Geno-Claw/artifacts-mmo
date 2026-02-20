@@ -528,7 +528,12 @@ export async function depositBankItems(ctx, items, opts = {}) {
       reason,
     });
     try {
-      recordDeposits({ charName: ctx.name, items: normalized });
+      const contributions = recordDeposits({ charName: ctx.name, items: normalized });
+      for (const entry of contributions) {
+        if (entry.opportunistic) {
+          log.info(`[${ctx.name}] Opportunistic order contribution: ${entry.itemCode} x${entry.quantity} → order ${entry.orderId} (${entry.status})`);
+        }
+      }
     } catch (err) {
       log.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`);
     }

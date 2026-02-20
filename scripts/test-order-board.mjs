@@ -87,22 +87,25 @@ async function run() {
     assert.ok(renewed, 'claimer should renew lease');
     assert.ok(renewed.claim.expiresAtMs > renewed.claim.claimedAtMs);
 
-    // Deposits from non-claimer do not advance order.
-    const ignored = recordDeposits({
+    // Deposits from non-claimer now advance order (opportunistic contribution).
+    const opportunistic = recordDeposits({
       charName: 'WorkerB',
       items: [{ code: 'copper_ore', quantity: 2 }],
     });
-    assert.equal(ignored.length, 0);
+    assert.equal(opportunistic.length, 1, 'non-claimer deposits should advance order');
+    assert.equal(opportunistic[0].quantity, 2);
+    assert.equal(opportunistic[0].opportunistic, true, 'non-claimer contribution should be flagged as opportunistic');
 
     const progressed = recordDeposits({
       charName: 'WorkerA',
       items: [{ code: 'copper_ore', quantity: 2 }],
     });
     assert.equal(progressed.length, 1, 'claimer deposits should advance order');
+    assert.equal(progressed[0].opportunistic, false, 'claimer contribution should not be opportunistic');
 
     let snapshot = getOrderBoardSnapshot();
     let order = snapshot.orders.find(row => row.id === first.id);
-    assert.equal(order.remainingQty, 7, 'remaining qty should decrease only by deposited amount');
+    assert.equal(order.remainingQty, 5, 'remaining qty should decrease by both deposits (9 - 2 - 2)');
     assert.equal(order.status, 'claimed');
 
     markCharBlocked(first.id, { charName: 'WorkerA', blockedRetryMs: 2_000 });
@@ -129,6 +132,77 @@ async function run() {
 
     const noneClaimable = listClaimableOrders({ sourceType: 'gather', gatherSkill: 'mining', charName: 'WorkerB' });
     assert.equal(noneClaimable.length, 0, 'fulfilled order should not be claimable');
+
+    // --- Opportunistic contributions: open (unclaimed) order ---
+    const openOrder = createOrMergeOrder({
+      requesterName: 'CrafterC',
+      recipeCode: 'wolf_hat',
+      itemCode: 'wolf_pelt',
+      sourceType: 'fight',
+      sourceCode: 'wolf',
+      sourceLevel: 20,
+      quantity: 5,
+    });
+    assert.ok(openOrder, 'open order for opportunistic test should be created');
+    assert.equal(openOrder.status, 'open');
+
+    const openContrib = recordDeposits({
+      charName: 'RandomChar',
+      items: [{ code: 'wolf_pelt', quantity: 3 }],
+    });
+    assert.equal(openContrib.length, 1, 'deposits against open order should count');
+    assert.equal(openContrib[0].opportunistic, true, 'open-order contribution should be opportunistic');
+    assert.equal(openContrib[0].quantity, 3);
+
+    snapshot = getOrderBoardSnapshot();
+    const openOrderAfter = snapshot.orders.find(row => row.id === openOrder.id);
+    assert.equal(openOrderAfter.remainingQty, 2, 'open order remaining should decrease (5 - 3)');
+
+    // --- Claimer priority: claimer's own order is filled before others ---
+    const priorityOrderA = createOrMergeOrder({
+      requesterName: 'ReqA',
+      recipeCode: 'test_recipe_a',
+      itemCode: 'test_gem',
+      sourceType: 'gather',
+      sourceCode: 'gem_rocks',
+      gatherSkill: 'mining',
+      sourceLevel: 30,
+      quantity: 5,
+    });
+    const priorityOrderB = createOrMergeOrder({
+      requesterName: 'ReqB',
+      recipeCode: 'test_recipe_b',
+      itemCode: 'test_gem',
+      sourceType: 'fight',
+      sourceCode: 'gem_golem',
+      sourceLevel: 30,
+      quantity: 5,
+    });
+    // Claim order B
+    const claimedB = claimOrder(priorityOrderB.id, { charName: 'PriorityWorker', leaseMs: 10_000 });
+    assert.ok(claimedB, 'PriorityWorker should claim order B');
+
+    // PriorityWorker deposits 3 test_gem — their claimed order B should be filled first
+    const priorityResult = recordDeposits({
+      charName: 'PriorityWorker',
+      items: [{ code: 'test_gem', quantity: 3 }],
+    });
+    assert.equal(priorityResult.length, 1, 'claimer deposit should match their own order first');
+    assert.equal(priorityResult[0].orderId, priorityOrderB.id, 'deposit should go to claimed order B');
+    assert.equal(priorityResult[0].opportunistic, false, 'deposit to own claimed order is not opportunistic');
+
+    // Now deposit more than order B needs — overflow should go to order A
+    const overflowResult = recordDeposits({
+      charName: 'PriorityWorker',
+      items: [{ code: 'test_gem', quantity: 10 }],
+    });
+    assert.equal(overflowResult.length, 2, 'overflow should fill both orders');
+    const ownOrderEntry = overflowResult.find(e => e.orderId === priorityOrderB.id);
+    const otherOrderEntry = overflowResult.find(e => e.orderId === priorityOrderA.id);
+    assert.ok(ownOrderEntry, 'own claimed order should be in results');
+    assert.equal(ownOrderEntry.opportunistic, false);
+    assert.ok(otherOrderEntry, 'other order should receive overflow');
+    assert.equal(otherOrderEntry.opportunistic, true);
 
     const craftOrder = createOrMergeOrder({
       requesterName: 'GenoClaw1',

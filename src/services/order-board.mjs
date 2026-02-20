@@ -496,8 +496,8 @@ export function markCharBlocked(orderId, blockOpts = {}) {
 export function recordDeposits({ charName, items } = {}) {
   if (!initialized) return [];
 
-  const claimer = `${charName || ''}`.trim();
-  if (!claimer) return [];
+  const depositor = `${charName || ''}`.trim();
+  if (!depositor) return [];
 
   const totals = new Map();
   for (const row of (Array.isArray(items) ? items : [])) {
@@ -510,24 +510,33 @@ export function recordDeposits({ charName, items } = {}) {
 
   const atMs = nowMs();
   const changed = [];
+  const sorted = getSortedOrders(atMs);
 
-  for (const order of getSortedOrders(atMs)) {
-    if (order.status === 'fulfilled') continue;
-    if (!order.claim || order.claim.charName !== claimer) continue;
+  function applyToOrders(filterFn, opportunistic) {
+    for (const order of sorted) {
+      if (order.status === 'fulfilled') continue;
+      if (!filterFn(order)) continue;
 
-    const available = totals.get(order.itemCode) || 0;
-    if (available <= 0) continue;
+      const available = totals.get(order.itemCode) || 0;
+      if (available <= 0) continue;
 
-    const consumed = Math.min(available, order.remainingQty);
-    if (consumed <= 0) continue;
+      const consumed = Math.min(available, order.remainingQty);
+      if (consumed <= 0) continue;
 
-    order.remainingQty -= consumed;
-    totals.set(order.itemCode, available - consumed);
-    order.updatedAtMs = atMs;
+      order.remainingQty -= consumed;
+      totals.set(order.itemCode, available - consumed);
+      order.updatedAtMs = atMs;
 
-    ensureStatus(order, atMs);
-    changed.push({ orderId: order.id, itemCode: order.itemCode, quantity: consumed, status: order.status });
+      ensureStatus(order, atMs);
+      changed.push({ orderId: order.id, itemCode: order.itemCode, quantity: consumed, status: order.status, opportunistic });
+    }
   }
+
+  // Pass 1: prioritize orders claimed by the depositor
+  applyToOrders(order => order.claim && order.claim.charName === depositor, false);
+
+  // Pass 2: remaining quantities go to any non-fulfilled order
+  applyToOrders(order => !order.claim || order.claim.charName !== depositor, true);
 
   if (changed.length > 0) {
     markUpdated(atMs);
