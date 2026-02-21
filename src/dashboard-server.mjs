@@ -745,10 +745,37 @@ export async function startDashboardServer({
       if (pathname === '/') {
         try {
           let html = readFileSync(htmlPath, 'utf-8');
-          // Inject basePath so frontend API calls and static asset URLs work behind a reverse proxy
+
+          // Inline CSS files referenced by relative href (skip external CDN links)
+          html = html.replace(
+            /<link\s+rel="stylesheet"\s+href="((?:css\/)[^"]+)"[^>]*>/g,
+            (match, relPath) => {
+              try {
+                const content = readFileSync(resolve(frontendDir, relPath), 'utf-8');
+                return `<style>\n${content}\n</style>`;
+              } catch {
+                return match;
+              }
+            }
+          );
+
+          // Inline JS files referenced by relative src
+          html = html.replace(
+            /<script\s+defer\s+src="((?:js\/)[^"]+)"><\/script>/g,
+            (match, relPath) => {
+              try {
+                const content = readFileSync(resolve(frontendDir, relPath), 'utf-8');
+                return `<script>\n${content}\n</script>`;
+              } catch {
+                return match;
+              }
+            }
+          );
+
+          // Only inject __BASE_PATH__ for API fetch calls (no <base> tag needed)
           html = html.replace('</head>',
-            `<base href="${prefix}/">\n` +
             `<script>window.__BASE_PATH__ = ${JSON.stringify(prefix)};</script>\n</head>`);
+
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
