@@ -60,7 +60,7 @@ function normalizeOrderBoardConfig(cfg = {}) {
 
 export class SkillRotationRoutine extends BaseRoutine {
   constructor({ priority = 5, maxLosses = MAX_LOSSES_DEFAULT, orderBoard = {}, ...rotationCfg } = {}) {
-    super({ name: 'Skill Rotation', priority, loop: true });
+    super({ name: 'Skill Rotation', priority, loop: true, type: rotationCfg.type });
     this.rotation = new SkillRotation({ ...rotationCfg, orderBoard });
     this.maxLosses = maxLosses;
     this.orderBoard = normalizeOrderBoardConfig(orderBoard);
@@ -68,6 +68,12 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._foodWithdrawn = false;
     this._activeOrderClaim = null;
     this._nextProactiveExchangeAt = 0;
+  }
+
+  updateConfig({ maxLosses, orderBoard, ...rotationCfg } = {}) {
+    if (maxLosses !== undefined) this.maxLosses = maxLosses;
+    if (orderBoard !== undefined) this.orderBoard = normalizeOrderBoardConfig(orderBoard);
+    this.rotation.updateConfig({ ...rotationCfg, orderBoard });
   }
 
   // --- Core routine interface ---

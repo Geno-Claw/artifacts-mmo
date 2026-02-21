@@ -14,6 +14,35 @@ export class Scheduler {
     this.runningPromise = null;
     this.sleepTimer = null;
     this.sleepResolver = null;
+    this._pendingConfig = null;
+  }
+
+  /**
+   * Queue a config update to be applied at the next loop iteration.
+   * Wakes the scheduler from sleep so it picks up the change promptly.
+   */
+  setPendingConfig(routineConfigs, settings) {
+    this._pendingConfig = { routineConfigs, settings };
+    this._interruptSleep();
+  }
+
+  _applyPendingConfig() {
+    const pending = this._pendingConfig;
+    if (!pending) return;
+    this._pendingConfig = null;
+
+    const { routineConfigs, settings } = pending;
+    if (settings) {
+      this.ctx.updateSettings(settings);
+    }
+
+    for (const routine of this.routines) {
+      if (!routine.configType) continue;
+      const match = routineConfigs.find(c => c.type === routine.configType);
+      if (match) routine.updateConfig(match);
+    }
+
+    log.info(`[${this.ctx.name}] Config hot-reloaded`);
   }
 
   /** Return the highest-priority routine whose canRun() passes. */
@@ -82,6 +111,8 @@ export class Scheduler {
     }
 
     while (!this.stopRequested) {
+      this._applyPendingConfig();
+
       await this.ctx.refresh();
       if (this.stopRequested) break;
 

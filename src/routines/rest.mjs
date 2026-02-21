@@ -2,10 +2,15 @@ import { BaseRoutine } from './base.mjs';
 import { canUseRestAction, hasHealingFood, restUntil } from '../services/food-manager.mjs';
 
 export class RestRoutine extends BaseRoutine {
-  constructor({ triggerPct = 40, targetPct = 80, priority = 100 } = {}) {
-    super({ name: 'Rest', priority, loop: false });
+  constructor({ triggerPct = 40, targetPct = 80, priority = 100, ...rest } = {}) {
+    super({ name: 'Rest', priority, loop: false, ...rest });
     this.triggerPct = triggerPct;
     this.targetPct = targetPct;
+  }
+
+  updateConfig({ triggerPct, targetPct } = {}) {
+    if (triggerPct !== undefined) this.triggerPct = triggerPct;
+    if (targetPct !== undefined) this.targetPct = targetPct;
   }
 
   canRun(ctx) {

@@ -7,10 +7,10 @@ import { BankExpansionRoutine } from './bank-expansion.mjs';
 import { SkillRotationRoutine } from './skill-rotation/index.mjs';
 
 const ROUTINE_TYPES = {
-  rest:              (cfg) => new RestRoutine(cfg),
-  depositBank:       (cfg) => new DepositBankRoutine(cfg),
-  bankExpansion:     (cfg) => new BankExpansionRoutine(cfg),
-  skillRotation:     (cfg) => new SkillRotationRoutine(cfg),
+  rest:              (cfg) => new RestRoutine({ ...cfg, type: 'rest' }),
+  depositBank:       (cfg) => new DepositBankRoutine({ ...cfg, type: 'depositBank' }),
+  bankExpansion:     (cfg) => new BankExpansionRoutine({ ...cfg, type: 'bankExpansion' }),
+  skillRotation:     (cfg) => new SkillRotationRoutine({ ...cfg, type: 'skillRotation' }),
 };
 
 export function buildRoutines(routineConfigs) {

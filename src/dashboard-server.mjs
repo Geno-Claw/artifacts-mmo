@@ -648,7 +648,7 @@ export async function startDashboardServer({
           sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
           return;
         }
-        if (!runtimeManager || typeof runtimeManager.reloadConfig !== 'function') {
+        if (!runtimeManager || typeof runtimeManager.hotReloadConfig !== 'function') {
           sendError(
             res,
             503,
@@ -660,11 +660,11 @@ export async function startDashboardServer({
         }
 
         try {
-          const status = await runtimeManager.reloadConfig();
+          runtimeManager.hotReloadConfig();
           sendJson(res, 200, {
             ok: true,
-            operation: 'reload_config',
-            status,
+            operation: 'hot_reload_config',
+            status: runtimeManager.getStatus(),
           });
         } catch (err) {
           sendRuntimeControlError(res, err, 'reload_config_failed');

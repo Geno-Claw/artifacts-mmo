@@ -23,11 +23,18 @@ export class BankExpansionRoutine extends BaseRoutine {
     checkIntervalMs = 300_000,
     maxGoldPct = 0.7,
     goldBuffer = 0,
+    ...rest
   } = {}) {
-    super({ name: 'Bank Expansion', priority, loop: false });
+    super({ name: 'Bank Expansion', priority, loop: false, ...rest });
     this.checkIntervalMs = checkIntervalMs;
     this.maxGoldPct = maxGoldPct;
     this.goldBuffer = goldBuffer;
+  }
+
+  updateConfig({ checkIntervalMs, maxGoldPct, goldBuffer } = {}) {
+    if (checkIntervalMs !== undefined) this.checkIntervalMs = checkIntervalMs;
+    if (maxGoldPct !== undefined) this.maxGoldPct = maxGoldPct;
+    if (goldBuffer !== undefined) this.goldBuffer = goldBuffer;
   }
 
   canRun(ctx) {

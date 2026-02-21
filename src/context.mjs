@@ -198,4 +198,8 @@ export class CharacterContext {
   settings() {
     return this._settings;
   }
+
+  updateSettings(settings = {}) {
+    this._settings = mergeSettings(settings);
+  }
 }

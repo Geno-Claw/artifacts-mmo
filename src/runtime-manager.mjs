@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, watch as fsWatch } from 'node:fs';
+import { resolve as pathResolve } from 'node:path';
 import { dirname } from 'node:path';
 import { Scheduler } from './scheduler.mjs';
 import { CharacterContext } from './context.mjs';
@@ -95,6 +96,7 @@ function extractLogDetail(type, content) {
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
 const ORDER_BOARD_ROLLOUT_MARKER = './report/.order-board-v2-rollout';
+const CONFIG_WATCH_DEBOUNCE_MS = 1_000;
 
 function withTimeout(promise, timeoutMs) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -168,6 +170,8 @@ export class RuntimeManager {
     this.updatedAtMs = Date.now();
     this.runSeq = 0;
     this.lastConfigPath = process.env.BOT_CONFIG || DEFAULT_CONFIG_PATH;
+    this._configWatcher = null;
+    this._configWatchDebounce = null;
   }
 
   _setState(nextState) {
@@ -379,6 +383,8 @@ export class RuntimeManager {
   async _cleanupRun(run) {
     if (!run) return;
 
+    this._stopConfigWatcher();
+
     try {
       releaseClaimsForChars(run.characterNames, 'runtime_cleanup');
     } catch (err) {
@@ -488,6 +494,7 @@ export class RuntimeManager {
       });
 
       this.activeRun = run;
+      this._startConfigWatcher(run.configPath);
       this._clearError();
       this._setState('running');
       return this.getStatus();
@@ -606,6 +613,63 @@ export class RuntimeManager {
 
   async stop(gracefulTimeoutMs = this.defaultStopTimeoutMs) {
     return this._runOperation('stop', () => this._stopInternal(gracefulTimeoutMs));
+  }
+
+  /**
+   * Hot-reload: re-read config from disk and push updates to running
+   * schedulers without stopping them.  Only patches existing routine
+   * instances (adding/removing routine types still needs a full restart).
+   */
+  hotReloadConfig() {
+    const run = this.activeRun;
+    if (!run || this.state !== 'running') return;
+
+    let config;
+    try {
+      ({ config } = this._loadRuntimeConfig());
+    } catch (err) {
+      log.warn(`[Runtime] Hot-reload failed to read config: ${err.message}`);
+      return;
+    }
+
+    for (const entry of run.schedulerEntries) {
+      const charCfg = config.characters.find(c => c.name === entry.name);
+      if (charCfg) {
+        entry.scheduler.setPendingConfig(charCfg.routines, charCfg.settings);
+      }
+    }
+    log.info(`[Runtime] Config hot-reload queued for ${run.schedulerEntries.length} character(s)`);
+  }
+
+  _startConfigWatcher(configPath) {
+    this._stopConfigWatcher();
+
+    const absPath = pathResolve(configPath);
+    try {
+      this._configWatcher = fsWatch(absPath, () => {
+        clearTimeout(this._configWatchDebounce);
+        this._configWatchDebounce = setTimeout(() => {
+          log.info('[Runtime] Config file changed on disk — hot-reloading');
+          this.hotReloadConfig();
+        }, CONFIG_WATCH_DEBOUNCE_MS);
+      });
+
+      this._configWatcher.on('error', (err) => {
+        log.warn(`[Runtime] Config file watcher error: ${err.message}`);
+      });
+      log.info(`[Runtime] Watching config file for changes: ${absPath}`);
+    } catch (err) {
+      log.warn(`[Runtime] Could not watch config file: ${err.message}`);
+    }
+  }
+
+  _stopConfigWatcher() {
+    clearTimeout(this._configWatchDebounce);
+    this._configWatchDebounce = null;
+    if (this._configWatcher) {
+      this._configWatcher.close();
+      this._configWatcher = null;
+    }
   }
 
   async reloadConfig() {

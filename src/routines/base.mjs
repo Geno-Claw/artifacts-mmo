@@ -6,10 +6,16 @@
  *   execute(char) → boolean — for loop routines: true=continue, false=stop
  */
 export class BaseRoutine {
-  constructor({ name, priority = 0, loop = false }) {
+  constructor({ name, type, priority = 0, loop = false }) {
     this.name = name;
+    this.configType = type || null;
     this.priority = priority;
     this.loop = loop;
+  }
+
+  /** Hot-reload: patch config fields in-place, preserving runtime state. */
+  updateConfig(_cfg) {
+    // Subclasses override to accept new config values.
   }
 
   canRun(_char) {

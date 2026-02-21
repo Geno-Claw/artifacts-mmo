@@ -22,12 +22,20 @@ export class DepositBankRoutine extends BaseRoutine {
     sellOnGE = true,
     recycleEquipment = true,
     depositGold = true,
+    ...rest
   } = {}) {
-    super({ name: 'Deposit to Bank', priority, loop: false });
+    super({ name: 'Deposit to Bank', priority, loop: false, ...rest });
     this.threshold = threshold;
     this.sellOnGE = sellOnGE;
     this.recycleEquipment = recycleEquipment;
     this.depositGold = depositGold;
+  }
+
+  updateConfig({ threshold, sellOnGE, recycleEquipment, depositGold } = {}) {
+    if (threshold !== undefined) this.threshold = threshold;
+    if (sellOnGE !== undefined) this.sellOnGE = sellOnGE;
+    if (recycleEquipment !== undefined) this.recycleEquipment = recycleEquipment;
+    if (depositGold !== undefined) this.depositGold = depositGold;
   }
 
   canRun(ctx) {

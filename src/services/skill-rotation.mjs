@@ -110,6 +110,27 @@ export class SkillRotation {
     this._bankChecked = false;  // whether bank withdrawal happened for current recipe
   }
 
+  /** Hot-reload: update config fields, preserving rotation state. */
+  updateConfig({ weights, skills, goals, craftBlacklist, taskCollection, orderBoard, recipeBlockMs } = {}) {
+    if (weights !== undefined) {
+      this.weights = weights && Object.keys(weights).length > 0 ? weights : null;
+      this.skills = this.weights
+        ? Object.keys(this.weights).filter(s => this.weights[s] > 0)
+        : (skills?.length > 0 ? skills : Object.keys(DEFAULT_GOALS));
+    } else if (skills !== undefined) {
+      this.skills = skills?.length > 0 ? skills : Object.keys(DEFAULT_GOALS);
+    }
+    if (goals !== undefined) this.goals = { ...DEFAULT_GOALS, ...goals };
+    if (craftBlacklist !== undefined) this.craftBlacklist = craftBlacklist;
+    if (taskCollection !== undefined) this.taskCollection = taskCollection;
+    if (orderBoard !== undefined) this.orderBoard = normalizeOrderBoardConfig(orderBoard);
+    if (recipeBlockMs !== undefined) {
+      const parsed = Number(recipeBlockMs);
+      this.recipeBlockMs = Number.isFinite(parsed) && parsed > 0
+        ? Math.floor(parsed) : DEFAULT_RECIPE_BLOCK_MS;
+    }
+  }
+
   isGoalComplete() {
     return this.currentSkill !== null && this.goalProgress >= this.goalTarget;
   }
