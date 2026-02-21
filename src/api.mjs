@@ -109,6 +109,11 @@ async function request(method, path, body = null) {
 
     // Auto-retry on cooldown (code 499)
     if (code === 499) {
+      if (isShuttingDown()) {
+        const err = new Error(message);
+        err.code = code;
+        throw err;
+      }
       const match = message.match(/([\d.]+)\s*seconds?\s*remaining/);
       const wait = match ? parseFloat(match[1]) * 1000 + 500 : 3000;
       await sleep(wait);
@@ -336,12 +341,43 @@ export async function getServerStatus() {
 
 // --- Utility ---
 
+let _cooldownAbort = new AbortController();
+
 export function waitForCooldown(actionResult) {
   const cd = actionResult?.cooldown?.remaining_seconds || actionResult?.cooldown?.total_seconds || 0;
-  if (cd > 0) {
-    return new Promise(resolve => setTimeout(resolve, cd * 1000 + 500));
-  }
-  return Promise.resolve();
+  if (cd <= 0) return Promise.resolve();
+
+  const signal = _cooldownAbort.signal;
+  if (signal.aborted) return Promise.resolve();
+
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, cd * 1000 + 500);
+
+    function onAbort() {
+      clearTimeout(timer);
+      resolve();
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** Abort all pending cooldown waits immediately. Called on shutdown. */
+export function abortAllCooldowns() {
+  _cooldownAbort.abort();
+}
+
+/** True when shutdown is in progress and loops should exit early. */
+export function isShuttingDown() {
+  return _cooldownAbort.signal.aborted;
+}
+
+/** Reset the abort controller for a fresh run. Called on startup/restart. */
+export function resetCooldownAbort() {
+  _cooldownAbort = new AbortController();
 }
 
 export function subscribeActionEvents(listener) {

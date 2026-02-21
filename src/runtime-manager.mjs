@@ -5,6 +5,7 @@ import { CharacterContext } from './context.mjs';
 import { buildRoutines } from './routines/factory.mjs';
 import * as log from './log.mjs';
 import { toPositiveInt } from './utils.mjs';
+import { abortAllCooldowns, resetCooldownAbort } from './api.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
 import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
@@ -446,6 +447,7 @@ export class RuntimeManager {
     }
 
     this._setState('starting');
+    resetCooldownAbort();
     let run = null;
 
     try {
@@ -518,6 +520,7 @@ export class RuntimeManager {
     for (const entry of run.schedulerEntries) {
       entry.scheduler.stop();
     }
+    abortAllCooldowns();
 
     const waitResult = await withTimeout(Promise.allSettled(run.loopPromises), timeoutMs);
     if (waitResult.timedOut) {

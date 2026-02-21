@@ -82,6 +82,7 @@ export async function restUntil(ctx, hpPct = 80) {
   // Phase 1: Eat food from inventory
   const foods = findHealingFood(ctx);
   for (const food of foods) {
+    if (api.isShuttingDown()) return false;
     if (ctx.hpPercent() >= hpPct) return true;
 
     const c = ctx.get();
@@ -111,7 +112,7 @@ export async function restUntil(ctx, hpPct = 80) {
   if (ctx.hpPercent() >= hpPct) return true;
 
   // Phase 2: Fall back to rest API for remaining HP deficit
-  while (ctx.hpPercent() < hpPct) {
+  while (ctx.hpPercent() < hpPct && !api.isShuttingDown()) {
     const c = ctx.get();
     log.info(`[${ctx.name}] Resting (${c.hp}/${c.max_hp} HP, want ${hpPct}%)`);
     try {
