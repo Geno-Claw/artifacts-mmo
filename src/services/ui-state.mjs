@@ -309,6 +309,22 @@ export function recordCharacterSnapshot(name, charData = {}) {
     label: taskLabel(charData.task || null, progress, total),
   };
 
+  // Extract cooldown from character data (API returns cooldown_expiration on GET /characters/{name}).
+  // Only overwrite if the API-reported cooldown is in the future and later than what we already have,
+  // so we don't clobber a more precise endsAtMs from a recent recordCooldown() action response.
+  const rawExpiration = charData.cooldown_expiration;
+  if (rawExpiration) {
+    const expirationMs = new Date(rawExpiration).getTime();
+    if (Number.isFinite(expirationMs) && expirationMs > nowMs() && expirationMs > char.cooldown.endsAtMs) {
+      const totalFromApi = Math.max(0, toNumber(charData.cooldown, 0));
+      char.cooldown = {
+        action: char.cooldown.action,
+        totalSeconds: totalFromApi || Math.ceil((expirationMs - nowMs()) / 1000),
+        endsAtMs: expirationMs,
+      };
+    }
+  }
+
   // Successful refresh indicates the routine state is no longer errored.
   if (char.routine.phase === 'error') {
     char.routine.phase = 'idle';

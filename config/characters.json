@@ -26,7 +26,7 @@
             "fishing": 0,
             "cooking": 1,
             "alchemy": 0,
-            "weaponcrafting": 2,
+            "weaponcrafting": 5,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 2,
@@ -101,10 +101,10 @@
             "fishing": 0,
             "cooking": 1,
             "alchemy": 1,
-            "weaponcrafting": 2,
+            "weaponcrafting": 5,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
-            "combat": 3,
+            "combat": 1,
             "npc_task": 1,
             "item_task": 0
           },
@@ -176,9 +176,9 @@
             "fishing": 0,
             "cooking": 1,
             "alchemy": 0,
-            "weaponcrafting": 1,
+            "weaponcrafting": 5,
             "gearcrafting": 0,
-            "jewelrycrafting": 1,
+            "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
             "item_task": 0
@@ -252,7 +252,7 @@
             "weaponcrafting": 5,
             "gearcrafting": 0,
             "jewelrycrafting": 1,
-            "combat": 1,
+            "combat": 0,
             "npc_task": 0,
             "item_task": 0
           },
@@ -325,7 +325,7 @@
             "weaponcrafting": 0,
             "gearcrafting": 5,
             "jewelrycrafting": 0,
-            "combat": 1,
+            "combat": 0,
             "npc_task": 0,
             "item_task": 0
           },
@@ -339,7 +339,7 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 25,
-            "npc_task": 1
+            "npc_task": 25
           },
           "orderBoard": {
             "enabled": true

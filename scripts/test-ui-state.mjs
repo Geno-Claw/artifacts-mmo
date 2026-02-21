@@ -307,6 +307,86 @@ async function run() {
   assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-74'), true);
   assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-0'), false);
 
+  // --- Cooldown extraction from character snapshot ---
+
+  _resetUiStateForTests();
+  initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+
+  // Future cooldown_expiration sets cooldown.endsAtMs
+  {
+    const futureMs = Date.now() + 15_000;
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown: 15,
+      cooldown_expiration: new Date(futureMs).toISOString(),
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.ok(snap.cooldown.endsAtMs > Date.now(), 'endsAtMs should be in the future');
+    assert.equal(snap.cooldown.totalSeconds, 15);
+  }
+
+  // Past cooldown_expiration does NOT update cooldown
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown: 0,
+      cooldown_expiration: new Date(Date.now() - 5000).toISOString(),
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.equal(snap.cooldown.endsAtMs, 0, 'past expiration should not set endsAtMs');
+  }
+
+  // Missing cooldown_expiration is harmless
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.equal(snap.cooldown.endsAtMs, 0, 'missing expiration should leave default');
+  }
+
+  // Invalid cooldown_expiration is harmless
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown_expiration: 'not-a-date',
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.equal(snap.cooldown.endsAtMs, 0, 'invalid expiration should leave default');
+  }
+
+  // recordCooldown with later expiration is NOT clobbered by earlier snapshot
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+
+    recordCooldown('CdChar', {
+      action: 'fight',
+      totalSeconds: 30,
+      remainingSeconds: 30,
+      observedAt: Date.now(),
+    });
+    const afterCd = getChar(getUiSnapshot(), 'CdChar');
+    const laterEndsAt = afterCd.cooldown.endsAtMs;
+
+    // Snapshot with an earlier expiration should not overwrite
+    const earlierMs = Date.now() + 10_000;
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown: 10,
+      cooldown_expiration: new Date(earlierMs).toISOString(),
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.ok(snap.cooldown.endsAtMs >= laterEndsAt - 100, 'should not clobber later cooldown');
+    assert.equal(snap.cooldown.action, 'fight', 'should preserve action from recordCooldown');
+  }
+
   console.log('test-ui-state: PASS');
 }
 

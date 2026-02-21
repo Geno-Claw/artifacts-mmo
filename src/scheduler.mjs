@@ -69,6 +69,18 @@ export class Scheduler {
     this.stopRequested = false;
     log.info(`[${this.ctx.name}] Bot loop started`);
 
+    // Wait out any active cooldown from a previous session.
+    {
+      await this.ctx.refresh();
+      if (this.stopRequested) return;
+      const remainingMs = this.ctx.cooldownRemainingMs();
+      if (remainingMs > 500) {
+        log.info(`[${this.ctx.name}] On cooldown — waiting ${(remainingMs / 1000).toFixed(1)}s`);
+        const slept = await this._sleep(remainingMs);
+        if (!slept) return;
+      }
+    }
+
     while (!this.stopRequested) {
       await this.ctx.refresh();
       if (this.stopRequested) break;

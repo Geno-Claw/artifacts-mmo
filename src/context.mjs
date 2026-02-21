@@ -162,6 +162,14 @@ export class CharacterContext {
     return this.get()[`${slot}_slot`] || null;
   }
 
+  /** Remaining cooldown in milliseconds, or 0 if not on cooldown. */
+  cooldownRemainingMs() {
+    const exp = this._char?.cooldown_expiration;
+    if (!exp) return 0;
+    const ms = new Date(exp).getTime();
+    return Number.isFinite(ms) ? Math.max(0, ms - Date.now()) : 0;
+  }
+
   // --- Loss tracking ---
 
   recordLoss(monsterCode) {
