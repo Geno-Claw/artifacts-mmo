@@ -16,6 +16,10 @@
           "depositGold": true
         },
         {
+          "type": "bankExpansion",
+          "slotThreshold": 5
+        },
+        {
           "type": "skillRotation",
           "weights": {
             "mining": 0,
@@ -86,6 +90,10 @@
           "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
+        },
+        {
+          "type": "bankExpansion",
+          "slotThreshold": 5
         },
         {
           "type": "skillRotation",
@@ -160,6 +168,10 @@
           "depositGold": true
         },
         {
+          "type": "bankExpansion",
+          "slotThreshold": 5
+        },
+        {
           "type": "skillRotation",
           "weights": {
             "mining": 0,
@@ -230,6 +242,10 @@
           "depositGold": true
         },
         {
+          "type": "bankExpansion",
+          "slotThreshold": 5
+        },
+        {
           "type": "skillRotation",
           "weights": {
             "mining": 0,
@@ -298,6 +314,10 @@
           "threshold": 0,
           "sellOnGE": true,
           "depositGold": true
+        },
+        {
+          "type": "bankExpansion",
+          "slotThreshold": 5
         },
         {
           "type": "skillRotation",

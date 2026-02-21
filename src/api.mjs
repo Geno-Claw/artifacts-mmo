@@ -296,6 +296,14 @@ export async function getBankItems(params = {}) {
   return request('GET', `/my/bank/items${qs ? '?' + qs : ''}`);
 }
 
+export async function getBankDetails() {
+  return request('GET', '/my/bank');
+}
+
+export async function buyBankExpansion(name = CHARACTER) {
+  return request('POST', `/my/${name}/action/bank/buy_expansion`);
+}
+
 // --- World data ---
 
 export async function getMaps(params = {}) {

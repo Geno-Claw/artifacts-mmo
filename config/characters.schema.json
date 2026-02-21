@@ -30,6 +30,7 @@
               "oneOf": [
                 { "$ref": "#/$defs/restRoutine" },
                 { "$ref": "#/$defs/depositBankRoutine" },
+                { "$ref": "#/$defs/bankExpansionRoutine" },
                 { "$ref": "#/$defs/skillRotationRoutine" },
                 { "$ref": "#/$defs/fightMonstersRoutine" },
                 { "$ref": "#/$defs/gatherResourceRoutine" },
@@ -124,6 +125,19 @@
         "sellOnGE": { "type": "boolean", "default": true, "description": "Sell whitelisted items on Grand Exchange during deposit (alwaysSell rules only)" },
         "recycleEquipment": { "type": "boolean", "default": true, "description": "Recycle surplus equipment at workshops during deposit" },
         "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" }
+      }
+    },
+
+    "bankExpansionRoutine": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "bankExpansion" },
+        "priority": { "type": "number", "default": 45, "description": "Execution priority (default 45, between depositBank and skillRotation)" },
+        "slotThreshold": { "type": "number", "default": 5, "minimum": 0, "description": "Purchase expansion when free bank slots drop to or below this number" },
+        "checkIntervalMs": { "type": "number", "default": 300000, "minimum": 10000, "description": "Minimum milliseconds between bank capacity checks (default 5 min)" },
+        "maxGoldPct": { "type": "number", "default": 0.7, "minimum": 0, "maximum": 1, "description": "Only buy expansion if cost <= this fraction of total gold (bank + character)" }
       }
     },
 
