@@ -213,9 +213,16 @@ function assertAccountSummaryShape(summary) {
 function assertAchievementShape(entry, label) {
   assert.ok(entry && typeof entry === 'object' && !Array.isArray(entry), `${label} must be an object`);
   const code = getFirstPresent(entry, ['code', 'id']);
-  const title = getFirstPresent(entry, ['title', 'name', 'label']);
+  const title = getFirstPresent(entry, ['name', 'title', 'label']);
   assert.equal(typeof code, 'string', `${label} missing code/id`);
-  assert.equal(typeof title, 'string', `${label} missing title/name`);
+  assert.equal(typeof title, 'string', `${label} missing name/title`);
+
+  if (Array.isArray(entry.objectives) && entry.objectives.length > 0) {
+    for (const [oi, obj] of entry.objectives.entries()) {
+      assert.equal(typeof obj.total, 'number', `${label}.objectives[${oi}] missing total`);
+    }
+    return;
+  }
 
   const completed = getFirstPresent(entry, ['completed', 'isCompleted', 'done']);
   const progress = getFirstPresent(entry, ['progress', 'current', 'value']);
@@ -380,23 +387,66 @@ function createArtifactsApiMock(baseUrl) {
   const summary = {
     account: 'qa-account',
     completed: 1,
-    total: 2,
-    inProgress: 1,
+    total: 3,
+    inProgress: 2,
   };
-  const achievements = [
+
+  const definitions = [
     {
       code: 'first_steps',
-      title: 'First Steps',
-      completed: true,
-      progress: 1,
-      total: 1,
+      name: 'First Steps',
+      description: 'Take your first steps in the world.',
+      points: 1,
+      objectives: [{ type: 'combat_level', target: null, total: 1 }],
+      rewards: { gold: 100, items: [] },
     },
     {
       code: 'ore_hoarder',
-      title: 'Ore Hoarder',
+      name: 'Ore Hoarder',
+      description: 'Collect ores from across the land.',
+      points: 2,
+      objectives: [{ type: 'gathering', target: 'copper_ore', total: 100 }],
+      rewards: { gold: 500, items: [{ code: 'copper_ore', quantity: 10 }] },
+    },
+    {
+      code: 'in_every_color',
+      name: 'In Every Color',
+      description: 'Hunt 50 of each slime color.',
+      points: 3,
+      objectives: [
+        { type: 'combat_kill', target: 'red_slime', total: 50 },
+        { type: 'combat_kill', target: 'blue_slime', total: 50 },
+        { type: 'combat_kill', target: 'yellow_slime', total: 50 },
+        { type: 'combat_kill', target: 'green_slime', total: 50 },
+      ],
+      rewards: { gold: 1000, items: [{ code: 'apple', quantity: 10 }] },
+    },
+  ];
+
+  const accountAchievements = [
+    {
+      code: 'first_steps',
+      name: 'First Steps',
+      completed: true,
+      completed_at: '2024-01-01T00:00:00Z',
+      objectives: [{ type: 'combat_level', target: null, total: 1, progress: 1 }],
+    },
+    {
+      code: 'ore_hoarder',
+      name: 'Ore Hoarder',
       completed: false,
-      progress: 12,
-      total: 100,
+      objectives: [{ type: 'gathering', target: 'copper_ore', total: 100, progress: 12 }],
+    },
+    {
+      code: 'in_every_color',
+      name: 'In Every Color',
+      completed: false,
+      objectives: [
+        { type: 'combat_kill', target: 'red_slime', total: 50, progress: 50 },
+        { type: 'combat_kill', target: 'blue_slime', total: 50, progress: 23 },
+        { type: 'combat_kill', target: 'yellow_slime', total: 50, progress: 0 },
+        { type: 'combat_kill', target: 'green_slime', total: 50, progress: 5 },
+      ],
     },
   ];
 
@@ -424,9 +474,20 @@ function createArtifactsApiMock(baseUrl) {
         });
       }
 
+      if (url.pathname === '/achievements') {
+        state.achievementCalls++;
+        return createJsonResponse(200, {
+          data: definitions,
+          total: definitions.length,
+          page: 1,
+          size: 100,
+          pages: 1,
+        });
+      }
+
       if (url.pathname.includes('/achievements')) {
         state.achievementCalls++;
-        return createJsonResponse(200, { data: achievements });
+        return createJsonResponse(200, { data: accountAchievements });
       }
 
       return createJsonResponse(404, {
@@ -970,6 +1031,19 @@ async function run() {
     assert.equal(accountAchievementsRes.status, 200, `Expected /api/ui/account/achievements 200, got ${accountAchievementsRes.status}`);
     const accountAchievementsPayload = await accountAchievementsRes.json();
     assertAccountAchievementsShape(accountAchievementsPayload);
+
+    // Verify per-objective progress is correctly propagated (beta API uses "progress" not "current")
+    const rows = accountAchievementsPayload.achievements || accountAchievementsPayload.data || [];
+    const slimeAch = rows.find(r => r.code === 'in_every_color');
+    assert.ok(slimeAch, 'Expected in_every_color achievement in response');
+    assert.ok(Array.isArray(slimeAch.objectives) && slimeAch.objectives.length === 4,
+      'Expected 4 objectives for in_every_color');
+    const redSlime = slimeAch.objectives.find(o => o.target === 'red_slime');
+    assert.equal(redSlime.current, 50, 'red_slime progress should be 50 (from API "progress" field)');
+    const blueSlime = slimeAch.objectives.find(o => o.target === 'blue_slime');
+    assert.equal(blueSlime.current, 23, 'blue_slime progress should be 23');
+    const greenSlime = slimeAch.objectives.find(o => o.target === 'green_slime');
+    assert.equal(greenSlime.current, 5, 'green_slime progress should be 5');
 
     assert.ok(apiMock.state.detailsCalls >= 1, 'Expected account summary endpoint to call upstream details at least once');
     assert.ok(apiMock.state.achievementCalls >= 1, 'Expected account achievements endpoint to call upstream achievements at least once');

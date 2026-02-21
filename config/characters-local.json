@@ -47,10 +47,10 @@
             "cooking": 1,
             "fishing": 0,
             "gearcrafting": 0,
-            "item_task": 0,
+            "item_task": 1,
             "jewelrycrafting": 0,
             "mining": 0,
-            "npc_task": 0,
+            "npc_task": 1,
             "weaponcrafting": 0,
             "woodcutting": 0
           }
@@ -207,10 +207,10 @@
             "cooking": 0,
             "fishing": 0,
             "gearcrafting": 0,
-            "item_task": 0,
+            "item_task": 1,
             "jewelrycrafting": 0,
             "mining": 0,
-            "npc_task": 0,
+            "npc_task": 1,
             "weaponcrafting": 1,
             "woodcutting": 0
           }
@@ -261,7 +261,7 @@
             "fishing": 0,
             "gearcrafting": 1,
             "item_task": 0,
-            "jewelrycrafting": 0,
+            "jewelrycrafting": 1,
             "mining": 0,
             "npc_task": 0,
             "weaponcrafting": 0,

@@ -18,7 +18,7 @@ Phase 1 is treated as complete baseline. Execution proceeds Phase 2 -> 3 -> 4 ->
 
 ## Team Topology Per Phase
 
-1. Team A (Frontend/UI): `frontend/dashboard-phase1.html`
+1. Team A (Frontend/UI): `frontend/dashboard.html`, `frontend/css/`, `frontend/js/`
 2. Team B (Runtime/API): `src/services/*`, `src/dashboard-server.mjs`, `src/api.mjs`, `src/bot.mjs`
 3. Team C (QA/Verification): `scripts/test-*.mjs`
 

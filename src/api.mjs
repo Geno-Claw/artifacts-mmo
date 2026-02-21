@@ -294,6 +294,11 @@ export async function getAccountAchievements(account, params = {}) {
   return request('GET', `/accounts/${safeAccount}/achievements${qs ? '?' + qs : ''}`);
 }
 
+export async function getAchievements(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/achievements${qs ? '?' + qs : ''}`);
+}
+
 // --- Bank data ---
 
 export async function getBankItems(params = {}) {

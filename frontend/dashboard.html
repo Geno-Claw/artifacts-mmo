@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artifacts MMO Bot Manager — Sumi-e Ink Wash</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/dashboard.css">
+<script defer src="js/constants.js"></script>
+<script defer src="js/state.js"></script>
+<script defer src="js/utils.js"></script>
+<script defer src="js/canvas.js"></script>
+<script defer src="js/normalizers.js"></script>
+<script defer src="js/cards.js"></script>
+<script defer src="js/panels.js"></script>
+<script defer src="js/modals.js"></script>
+<script defer src="js/api.js"></script>
+<script defer src="js/events.js"></script>
+<script defer src="js/init.js"></script>
+</head>
+<body>
+
+<!-- Floating petals + ink drops container -->
+<div class="petals-container" id="petalsContainer"></div>
+
+<!-- Header -->
+<header class="page-header">
+  <h1>ARTIFACTS MMO</h1>
+  <p class="subtitle">Bot Manager</p>
+  <div class="divider">
+    <span class="divider-line"></span>
+    <span class="divider-diamond"></span>
+    <span class="divider-line"></span>
+  </div>
+</header>
+
+<div class="dashboard-controls">
+  <button
+    class="action-btn dashboard-control-btn"
+    id="openConfigBtn"
+    type="button"
+    title="Config editor"
+    aria-haspopup="dialog"
+    hidden
+  >CONFIG</button>
+  <button
+    class="action-btn dashboard-control-btn"
+    id="restartBotBtn"
+    type="button"
+    title="Restart bot runtime"
+    data-runtime-control="restart"
+    hidden
+  >RESTART BOT</button>
+  <button
+    class="action-btn dashboard-control-btn"
+    id="clearOrderBoardBtn"
+    type="button"
+    title="Clear all crafting coordination orders. Characters will re-publish desired orders on the next gear state refresh cycle."
+    data-runtime-control="clear-order-board"
+    hidden
+  >RESET ORDERS</button>
+  <button
+    class="action-btn dashboard-control-btn"
+    id="clearGearStateBtn"
+    type="button"
+    title="Clear all gear assignments and desired items. The gear optimizer will recompute everything from scratch on the next refresh cycle."
+    data-runtime-control="clear-gear-state"
+    hidden
+  >RESET GEAR</button>
+</div>
+<section class="dashboard-control-status" id="controlStatusPanel" aria-live="polite" hidden>
+  <div class="dashboard-control-status-grid">
+    <article class="modal-stat">
+      <div class="modal-stat-label">Runtime</div>
+      <div class="modal-stat-value dashboard-control-status-value" id="controlRuntimeState">--</div>
+    </article>
+    <article class="modal-stat">
+      <div class="modal-stat-label">Operation</div>
+      <div class="modal-stat-value dashboard-control-status-value" id="controlOperationState">IDLE</div>
+    </article>
+    <article class="modal-stat">
+      <div class="modal-stat-label">Updated</div>
+      <div class="modal-stat-value dashboard-control-status-value" id="controlStatusUpdatedAt">--</div>
+    </article>
+  </div>
+</section>
+<div class="dashboard-control-banner" id="controlResultBanner" aria-live="polite" hidden></div>
+
+<section class="bank-status" id="bankStatusPanel" aria-live="polite">
+  <div class="bank-status-grid">
+    <article class="modal-stat">
+      <div class="modal-stat-label">Bank Gold</div>
+      <div class="modal-stat-value bank-status-value" id="bankGoldValue">--</div>
+    </article>
+    <article class="modal-stat">
+      <div class="modal-stat-label">Bank Slots</div>
+      <div class="modal-stat-value bank-status-value" id="bankSlotsValue">--</div>
+    </article>
+    <article class="modal-stat bank-status-btn-cell">
+      <button class="action-btn" type="button" id="openBankBtn" title="View bank contents" aria-haspopup="dialog">BANK</button>
+    </article>
+  </div>
+</section>
+
+<section class="orders-panel" id="ordersPanel" aria-live="polite">
+  <div class="orders-panel-header">
+    <p class="orders-panel-title">Order Board</p>
+    <p class="orders-panel-meta" id="ordersPanelMeta">0 active</p>
+  </div>
+  <div class="orders-filter-group" id="ordersFilterGroup" role="tablist" aria-label="Order filters">
+    <button type="button" class="orders-filter-btn is-active" data-order-filter="all">All Orders</button>
+    <button type="button" class="orders-filter-btn" data-order-filter="claimed">Claimed Orders</button>
+    <button type="button" class="orders-filter-btn" data-order-filter="hidden">Hide All Orders</button>
+  </div>
+  <div class="orders-list" id="ordersList"></div>
+</section>
+
+<!-- Cards -->
+<main class="cards-container" id="cardsContainer"></main>
+
+<!-- Character modal host -->
+<div class="modal-host" id="modalHost" hidden>
+  <div class="modal-scrim" id="modalScrim"></div>
+  <section
+    class="character-modal"
+    id="characterModal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modalTitle"
+    tabindex="-1"
+  >
+    <header class="modal-header">
+      <div>
+        <p class="modal-kind" id="modalKind">DETAIL</p>
+        <h2 class="modal-title" id="modalTitle">Character</h2>
+      </div>
+      <button type="button" class="modal-close" id="modalCloseBtn" aria-label="Close character detail modal">CLOSE</button>
+    </header>
+    <div class="modal-banner" id="modalBanner" hidden></div>
+    <div class="modal-content" id="modalContent"></div>
+  </section>
+</div>
+
+<!-- Footer -->
+<footer class="page-footer">
+  <div class="divider" style="margin-bottom: 12px;">
+    <span class="divider-line"></span>
+    <span class="divider-diamond"></span>
+    <span class="divider-line"></span>
+  </div>
+  <p>SUMI-E INK WASH v1.0</p>
+</footer>
+
+</body>
+</html>

@@ -465,6 +465,37 @@ export function canFulfillPlan(planSteps, ctx) {
   return true;
 }
 
+/**
+ * Bank-aware plan fulfillment check. For gather steps, skips the skill check
+ * when bank+inventory already covers the requirement. Also checks intermediate
+ * craft skill levels (which canFulfillPlan does not).
+ *
+ * @param {Array} planSteps - from resolveRecipeChain()
+ * @param {CharacterContext} ctx
+ * @param {Map} bankItems - Map<itemCode, quantity>
+ * @returns {{ ok: boolean, deficits: Array }} deficits = steps that can't be fulfilled
+ */
+export function canFulfillPlanWithBank(planSteps, ctx, bankItems) {
+  const bank = bankItems instanceof Map ? bankItems : new Map();
+  const deficits = [];
+
+  for (const step of planSteps) {
+    if (step.type === 'gather' && step.resource) {
+      if (ctx.skillLevel(step.resource.skill) >= step.resource.level) continue;
+      // Can't gather — check if bank+inventory covers the requirement
+      const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
+      if (have >= step.quantity) continue;
+      deficits.push(step);
+    }
+    if (step.type === 'craft' && step.recipe) {
+      if (ctx.skillLevel(step.recipe.skill) >= step.recipe.level) continue;
+      deficits.push(step);
+    }
+  }
+
+  return { ok: deficits.length === 0, deficits };
+}
+
 // --- Resource / Monster queries ---
 
 /** Find all resources matching a gathering skill, up to a max level. Sorted highest-level first. */

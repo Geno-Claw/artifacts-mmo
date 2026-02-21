@@ -1,0 +1,1458 @@
+/* ============================================================
+   SAKURA GARDEN — SUMI-E INK WASH VARIANT
+   Handmade washi paper + ink painting aesthetic
+   ============================================================ */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+:root {
+  --paper: #f4ece0;
+  --paper-warm: #f0e8d8;
+  --paper-dark: #e8dcc8;
+  --ink: #2a2420;
+  --ink-light: #584840;
+  --ink-faint: #8a7868;
+  --ink-ghost: rgba(42, 36, 32, 0.08);
+  --vermillion: #c83028;
+  --vermillion-dark: #a02820;
+  --vermillion-light: #e04838;
+  --indigo: #384878;
+  --indigo-light: #506090;
+  --ink-track: #3a3430;
+  --ready-green: #607848;
+  --petal-pink: #d88898;
+  --petal-light: #e8a8b0;
+  --petal-gray: #a09890;
+  --petal-gray-light: #b8b0a8;
+  --brush-dark: #382c28;
+  --branch-ink: #483830;
+  --branch-mid: #685848;
+  --blossom-yellow: #c8a850;
+}
+
+html {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+body {
+  min-height: 100vh;
+  /* Washi paper texture — layered noise simulation */
+  background:
+    /* Fine fiber grain */
+    repeating-linear-gradient(
+      87deg,
+      transparent 0px,
+      transparent 2px,
+      rgba(42, 36, 32, 0.012) 2px,
+      rgba(42, 36, 32, 0.012) 3px
+    ),
+    repeating-linear-gradient(
+      177deg,
+      transparent 0px,
+      transparent 3px,
+      rgba(42, 36, 32, 0.008) 3px,
+      rgba(42, 36, 32, 0.008) 4px
+    ),
+    /* Warm paper gradient — subtle tea stain effect */
+    radial-gradient(ellipse at 30% 20%, rgba(200, 168, 120, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(180, 148, 100, 0.06) 0%, transparent 50%),
+    linear-gradient(180deg, #f2e8d8 0%, var(--paper) 30%, #f0e4d4 70%, #ecdcc8 100%);
+  overflow-x: hidden;
+  position: relative;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+/* Additional paper fiber texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  /* Organic dot pattern — like paper fibers */
+  background-image:
+    radial-gradient(circle, rgba(42, 36, 32, 0.04) 0.5px, transparent 0.5px),
+    radial-gradient(circle, rgba(42, 36, 32, 0.03) 0.3px, transparent 0.3px);
+  background-size: 11px 13px, 7px 9px;
+  background-position: 0 0, 4px 5px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   PETAL + INK DROP ANIMATION
+   ============================================================ */
+.petals-container {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.petal {
+  position: absolute;
+  opacity: 0;
+  animation: petalFall linear infinite;
+}
+
+.petal--blossom {
+  width: 4px;
+  height: 4px;
+}
+
+.petal--ink {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+}
+
+@keyframes petalFall {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) translateX(0px) rotate(0deg);
+  }
+  5% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  95% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(100vh) translateX(60px) rotate(540deg);
+  }
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.page-header {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 40px 16px 8px;
+}
+
+.page-header h1 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--ink);
+  text-shadow: 1px 1px 0 rgba(244, 236, 224, 0.8);
+  margin-bottom: 6px;
+}
+
+.page-header .subtitle {
+  font-size: 7px;
+  color: var(--ink-faint);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+.dashboard-controls {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  padding: 2px 16px 14px;
+}
+
+.dashboard-control-btn {
+  min-width: 94px;
+}
+
+.dashboard-control-btn[data-runtime-control] {
+  min-width: 118px;
+}
+
+.dashboard-control-status {
+  position: relative;
+  z-index: 2;
+  width: min(620px, calc(100vw - 32px));
+  margin: 0 auto 10px;
+  padding: 0 2px;
+}
+
+.dashboard-control-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dashboard-control-status-value {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  word-break: break-word;
+}
+
+.dashboard-control-status-value.is-error {
+  color: #5a231e;
+}
+
+.bank-status {
+  position: relative;
+  z-index: 2;
+  width: min(620px, calc(100vw - 32px));
+  margin: 0 auto 10px;
+  padding: 0 2px;
+}
+
+.bank-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.bank-status-value {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  word-break: break-word;
+}
+
+.bank-status-btn-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+}
+
+.bank-status-btn-cell .action-btn {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.dashboard-control-banner {
+  position: relative;
+  z-index: 2;
+  width: min(620px, calc(100vw - 32px));
+  margin: 0 auto 12px;
+  font-size: 6px;
+  line-height: 1.4;
+  padding: 8px 12px;
+  letter-spacing: 1px;
+  border-left: 2px solid rgba(42, 36, 32, 0.18);
+  background: rgba(42, 36, 32, 0.08);
+  color: var(--ink);
+}
+
+.dashboard-control-banner.info {
+  color: #2f4732;
+  background: rgba(96, 120, 72, 0.14);
+}
+
+.dashboard-control-banner.success {
+  color: #2f4732;
+  background: rgba(96, 120, 72, 0.18);
+}
+
+.dashboard-control-banner.warning {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.14);
+}
+
+.dashboard-control-banner.error {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.18);
+}
+
+.orders-panel {
+  position: relative;
+  z-index: 2;
+  width: min(980px, calc(100vw - 32px));
+  margin: 0 auto 16px;
+  padding: 10px 12px;
+  background: rgba(42, 36, 32, 0.07);
+  border-left: 2px solid rgba(42, 36, 32, 0.24);
+}
+
+.orders-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.orders-panel-title {
+  font-size: 7px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.orders-panel-meta {
+  font-size: 6px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+.orders-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.orders-filter-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(42, 36, 32, 0.05);
+  border: none;
+  padding: 6px 8px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.18);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.orders-filter-btn:hover {
+  background: rgba(42, 36, 32, 0.12);
+}
+
+.orders-filter-btn.is-active {
+  background: rgba(42, 36, 32, 0.22);
+  color: var(--paper);
+}
+
+.orders-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px;
+}
+
+.order-row {
+  background: rgba(42, 36, 32, 0.08);
+  border-left: 2px solid rgba(42, 36, 32, 0.28);
+  padding: 6px 8px;
+  min-height: 60px;
+}
+
+.order-row[data-status=\"claimed\"] {
+  background: rgba(200, 48, 40, 0.16);
+  border-left-color: rgba(200, 48, 40, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(200, 48, 40, 0.25);
+}
+
+.order-row[data-status=\"fulfilled\"] {
+  border-left-color: rgba(96, 120, 72, 0.85);
+}
+
+.order-item {
+  font-size: 6px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.order-item-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.order-claim-badge {
+  display: inline-block;
+  font-size: 5px;
+  letter-spacing: 1px;
+  line-height: 1;
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(200, 48, 40, 0.45);
+  padding: 3px 5px 2px;
+  white-space: nowrap;
+}
+
+.order-meta {
+  margin-top: 4px;
+  font-size: 5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.orders-empty {
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 1px;
+}
+
+.orders-panel.is-collapsed {
+  padding-bottom: 8px;
+}
+
+.orders-panel.is-collapsed .orders-filter-group {
+  margin-bottom: 0;
+}
+
+.orders-panel.is-collapsed .orders-list {
+  display: none;
+}
+
+/* Brush stroke divider */
+.divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 16px auto;
+  max-width: 400px;
+}
+
+.divider-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(42, 36, 32, 0.15) 10%,
+    rgba(42, 36, 32, 0.4) 30%,
+    rgba(42, 36, 32, 0.5) 50%,
+    rgba(42, 36, 32, 0.4) 70%,
+    rgba(42, 36, 32, 0.15) 90%,
+    transparent);
+  /* Uneven ink wash stroke feel */
+  box-shadow:
+    0 -1px 0 rgba(42, 36, 32, 0.05),
+    0 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.divider-diamond {
+  width: 6px;
+  height: 6px;
+  background: var(--vermillion);
+  transform: rotate(45deg);
+  box-shadow: 0 0 0 1px rgba(42, 36, 32, 0.3);
+}
+
+/* ============================================================
+   CARDS CONTAINER
+   ============================================================ */
+.cards-container {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 24px;
+  padding: 16px 24px 48px;
+}
+
+/* ============================================================
+   CHARACTER CARD — rice paper sheet with brush stroke borders
+   ============================================================ */
+.card {
+  width: 280px;
+  background: var(--paper-warm);
+  position: relative;
+  padding: 0;
+  /* Brush stroke borders — uneven thickness like a real brush */
+  box-shadow:
+    /* Top edge: thick brush start */
+    0 -3px 0 0 var(--ink),
+    /* Right edge: thin upstroke */
+    1px 0 0 0 var(--ink),
+    /* Bottom edge: medium pressure */
+    0 2px 0 0 var(--ink),
+    /* Left edge: thin-to-medium */
+    -1px 0 0 0 var(--ink),
+    /* Ink bleed / paper shadow */
+    3px 4px 0 0 rgba(42, 36, 32, 0.06),
+    -1px -1px 0 0 rgba(42, 36, 32, 0.03);
+}
+
+.card.offline {
+  opacity: 0.72;
+  filter: saturate(0.5);
+}
+
+/* Ink splatter at top-right corner */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 3px;
+  height: 3px;
+  background: rgba(42, 36, 32, 0.15);
+  border-radius: 50%;
+  box-shadow:
+    4px 2px 0 0 rgba(42, 36, 32, 0.1),
+    -2px 4px 0 0 rgba(42, 36, 32, 0.08),
+    6px 5px 0 0 rgba(42, 36, 32, 0.06),
+    1px 6px 0 0 rgba(42, 36, 32, 0.12);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Ink splatter at bottom-left corner */
+.card::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  width: 2px;
+  height: 2px;
+  background: rgba(42, 36, 32, 0.12);
+  border-radius: 50%;
+  box-shadow:
+    3px -1px 0 0 rgba(42, 36, 32, 0.09),
+    -1px 3px 0 0 rgba(42, 36, 32, 0.07),
+    5px 2px 0 0 rgba(42, 36, 32, 0.05);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.card-inner {
+  position: relative;
+  z-index: 2;
+  padding: 0 16px 16px;
+}
+
+/* ============================================================
+   CHERRY BRANCH DECORATION (top of each card)
+   ============================================================ */
+.cherry-branch {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.cherry-branch canvas {
+  display: block;
+  width: 100%;
+  height: 40px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   CHARACTER NAME — vermillion ink
+   ============================================================ */
+.char-name {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--vermillion);
+  margin-bottom: 10px;
+  text-shadow: 1px 1px 0 rgba(244, 236, 224, 0.6);
+}
+
+/* ============================================================
+   PORTRAIT FRAME — ink border on paper
+   ============================================================ */
+.portrait-frame {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.portrait-border {
+  /* Brush stroke border — uneven like hand-drawn rectangle */
+  box-shadow:
+    0 -2px 0 0 var(--ink),
+    2px 0 0 0 var(--ink),
+    0 1px 0 0 var(--ink),
+    -1px 0 0 0 var(--ink),
+    2px 2px 0 0 rgba(42, 36, 32, 0.08);
+  background: var(--paper-dark);
+  padding: 3px;
+  line-height: 0;
+}
+
+.portrait-border canvas {
+  display: block;
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+}
+
+/* ============================================================
+   LEVEL BADGE — hanko seal style
+   ============================================================ */
+.level-row {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.level-badge {
+  display: inline-block;
+  font-size: 8px;
+  color: var(--paper);
+  background: var(--vermillion);
+  border: none;
+  padding: 4px 10px;
+  letter-spacing: 1px;
+  transform: rotate(-1deg);
+  box-shadow:
+    1px 1px 0 rgba(42, 36, 32, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================
+   STAT BARS (HP / XP) — ink wash style
+   ============================================================ */
+.stat-bars {
+  margin-bottom: 10px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.stat-label {
+  font-size: 7px;
+  width: 20px;
+  text-align: right;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.stat-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--ink-track);
+  border: none;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.1);
+}
+
+.stat-bar-track.xp-track {
+  background: var(--ink-track);
+}
+
+.stat-bar-fill {
+  height: 100%;
+  background: var(--vermillion);
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+/* Subtle ink shine on bar */
+.stat-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.stat-bar-fill.xp-fill {
+  background: var(--indigo);
+}
+
+.stat-value {
+  font-size: 6px;
+  width: 62px;
+  text-align: left;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   COOLDOWN TIMER
+   ============================================================ */
+.cooldown-section {
+  margin-bottom: 10px;
+}
+
+.cooldown-label {
+  font-size: 6px;
+  color: var(--ink-faint);
+  text-align: center;
+  margin-bottom: 3px;
+  letter-spacing: 1px;
+}
+
+.cooldown-bar-track {
+  height: 10px;
+  background: var(--paper-dark);
+  border: 1px solid rgba(42, 36, 32, 0.25);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.cooldown-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--ink-faint), var(--ink-light));
+  transition: width 0.1s linear;
+  position: relative;
+}
+
+.cooldown-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.cooldown-bar-fill.ready {
+  background: var(--ready-green);
+}
+
+.cooldown-text {
+  font-size: 9px;
+  text-align: center;
+  color: var(--ink);
+  letter-spacing: 1px;
+  min-height: 12px;
+}
+
+.cooldown-text.ready-flash {
+  color: var(--ready-green);
+  animation: readyPulse 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes readyPulse {
+  0% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+/* ============================================================
+   INFO PANELS — inset paper areas
+   ============================================================ */
+.info-panel {
+  background: rgba(42, 36, 32, 0.03);
+  border: none;
+  border-left: 2px solid rgba(42, 36, 32, 0.12);
+  border-bottom: 1px solid rgba(42, 36, 32, 0.06);
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  min-height: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.info-panel-label {
+  font-size: 5px;
+  color: var(--ink-faint);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.info-panel-text {
+  font-size: 7px;
+  line-height: 1.6;
+  color: var(--ink);
+  word-break: break-word;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.log-icon {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  color: var(--ink-light);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   ACTION BUTTONS — hanko seal / ink stamp style
+   ============================================================ */
+.buttons-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.action-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--paper);
+  background: var(--vermillion);
+  border: none;
+  padding: 5px 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  box-shadow:
+    1px 1px 0 rgba(42, 36, 32, 0.2);
+  transition: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Slight rotation on each button — hand-stamped feel */
+.btn-row:nth-child(1) .action-btn:nth-child(1) { transform: rotate(-1.2deg); }
+.btn-row:nth-child(1) .action-btn:nth-child(2) { transform: rotate(0.8deg); }
+.btn-row:nth-child(2) .action-btn:nth-child(1) { transform: rotate(1.5deg); }
+.btn-row:nth-child(3) .action-btn:nth-child(1) { transform: rotate(-0.5deg); }
+.btn-row:nth-child(3) .action-btn:nth-child(2) { transform: rotate(1.8deg); }
+
+.action-btn:hover {
+  background: var(--vermillion-light);
+}
+
+.action-btn:active {
+  background: var(--vermillion-dark);
+  color: var(--paper);
+  box-shadow:
+    inset 1px 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+.action-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   MODAL FRAMEWORK — character details
+   ============================================================ */
+.modal-host {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal-host[hidden] {
+  display: none;
+}
+
+.modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(42, 36, 32, 0.52);
+}
+
+.character-modal {
+  position: relative;
+  z-index: 1;
+  width: min(720px, calc(100vw - 22px));
+  max-height: calc(100vh - 28px);
+  background: var(--paper-warm);
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 -3px 0 0 var(--ink),
+    2px 0 0 0 var(--ink),
+    0 2px 0 0 var(--ink),
+    -1px 0 0 0 var(--ink),
+    5px 7px 0 0 rgba(42, 36, 32, 0.18);
+  outline: none;
+}
+
+.modal-header {
+  border-bottom: 1px solid rgba(42, 36, 32, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(42, 36, 32, 0.02));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.modal-kind {
+  font-size: 6px;
+  letter-spacing: 2px;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+.modal-title {
+  margin-top: 5px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--vermillion);
+}
+
+.modal-close {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  padding: 6px 8px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.22);
+}
+
+.modal-close:hover {
+  background: var(--ink-light);
+}
+
+.modal-banner {
+  font-size: 6px;
+  line-height: 1.4;
+  padding: 8px 12px;
+  letter-spacing: 1px;
+  border-bottom: 1px solid rgba(42, 36, 32, 0.15);
+}
+
+.modal-banner.offline {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.12);
+}
+
+.modal-banner.stale {
+  color: #3f4732;
+  background: rgba(96, 120, 72, 0.14);
+}
+
+.modal-banner.success {
+  color: #2f4732;
+  background: rgba(96, 120, 72, 0.18);
+}
+
+.modal-banner.warning {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.14);
+}
+
+.modal-banner.error {
+  color: #5a231e;
+  background: rgba(200, 48, 40, 0.18);
+}
+
+.modal-content {
+  overflow: auto;
+  padding: 12px;
+}
+
+.modal-state,
+.modal-empty,
+.modal-error {
+  padding: 12px;
+  background: rgba(42, 36, 32, 0.04);
+  border-left: 2px solid rgba(42, 36, 32, 0.16);
+  line-height: 1.7;
+  font-size: 7px;
+}
+
+.modal-error {
+  border-left-color: rgba(200, 48, 40, 0.5);
+  color: #5a231e;
+}
+
+.modal-section {
+  margin-bottom: 12px;
+}
+
+.modal-section:last-child {
+  margin-bottom: 0;
+}
+
+.modal-section-title {
+  font-size: 6px;
+  letter-spacing: 2px;
+  color: var(--ink-faint);
+  margin-bottom: 6px;
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.modal-stat {
+  background: rgba(42, 36, 32, 0.03);
+  border-left: 2px solid rgba(42, 36, 32, 0.12);
+  padding: 6px;
+}
+
+.modal-stat-label {
+  font-size: 5px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+}
+
+.modal-stat-value {
+  font-size: 7px;
+  color: var(--ink);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-list-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  background: rgba(42, 36, 32, 0.03);
+  border-left: 2px solid rgba(42, 36, 32, 0.12);
+  font-size: 7px;
+  line-height: 1.5;
+}
+
+.modal-list-item--two {
+  grid-template-columns: 1fr auto;
+}
+
+.modal-list-main {
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.modal-list-tag,
+.modal-list-slot {
+  color: var(--ink-faint);
+  font-size: 6px;
+}
+
+.modal-log-line {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+}
+
+.achievement-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.achievement-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.achievement-filter-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(42, 36, 32, 0.05);
+  border: none;
+  padding: 5px 7px;
+  cursor: pointer;
+  line-height: 1;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.15);
+}
+
+.achievement-filter-btn:hover {
+  background: rgba(42, 36, 32, 0.1);
+}
+
+.achievement-filter-btn.is-active {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.achievement-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.achievement-search-label {
+  font-size: 5px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+}
+
+.achievement-search-input {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.45);
+  border: none;
+  min-width: 170px;
+  padding: 6px 7px;
+  box-shadow:
+    inset 0 0 0 1px rgba(42, 36, 32, 0.18),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.achievement-search-input:focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--ink),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.achievement-result-count {
+  margin-top: 8px;
+  font-size: 6px;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+}
+
+.achievement-list-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.achievement-code {
+  color: var(--vermillion);
+}
+
+.achievement-title {
+  color: var(--ink);
+  font-size: 6px;
+  line-height: 1.4;
+}
+
+.achievement-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.achievement-status {
+  font-size: 6px;
+  letter-spacing: 1px;
+}
+
+.achievement-status.is-completed {
+  color: var(--ready-green);
+}
+
+.achievement-status.is-in-progress {
+  color: var(--indigo);
+}
+
+.achievement-status.is-not-started {
+  color: var(--ink-faint);
+}
+
+.achievement-type-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.achievement-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.achievement-row:hover {
+  background: rgba(42, 36, 32, 0.06);
+}
+
+.achievement-expand-icon {
+  font-size: 6px;
+  color: var(--ink-faint);
+  transition: transform 0.15s;
+  display: inline-block;
+  margin-right: 4px;
+}
+
+.achievement-row.is-expanded .achievement-expand-icon {
+  transform: rotate(90deg);
+}
+
+.achievement-detail {
+  display: none;
+  padding: 6px 8px 8px 14px;
+  background: rgba(42, 36, 32, 0.02);
+  border-left: 2px solid rgba(42, 36, 32, 0.08);
+  margin-bottom: 2px;
+}
+
+.achievement-detail.is-visible {
+  display: block;
+}
+
+.achievement-description {
+  font-size: 6px;
+  line-height: 1.6;
+  color: var(--ink);
+  margin-bottom: 6px;
+  font-style: italic;
+}
+
+.achievement-meta-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 1px;
+}
+
+.achievement-meta-label {
+  text-transform: uppercase;
+}
+
+.achievement-objective {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 6px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 6px;
+  line-height: 1.4;
+}
+
+.achievement-objective-target {
+  color: var(--ink);
+}
+
+.achievement-objective-progress {
+  color: var(--ink-faint);
+  text-align: right;
+}
+
+.achievement-objective-bar {
+  height: 3px;
+  background: rgba(42, 36, 32, 0.1);
+  grid-column: 1 / -1;
+  overflow: hidden;
+}
+
+.achievement-objective-bar-fill {
+  height: 100%;
+  background: var(--indigo);
+  transition: width 0.2s;
+}
+
+.achievement-objective-bar-fill.is-complete {
+  background: var(--ready-green);
+}
+
+.achievement-rewards {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(42, 36, 32, 0.08);
+  font-size: 6px;
+  color: var(--ink-faint);
+}
+
+.achievement-reward-item {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.achievement-points-badge {
+  display: inline-block;
+  font-size: 5px;
+  padding: 1px 4px;
+  background: rgba(42, 36, 32, 0.08);
+  color: var(--ink);
+  letter-spacing: 1px;
+}
+
+.config-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-editor-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.config-editor-meta .modal-stat {
+  min-height: 40px;
+}
+
+.config-editor-textarea {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.45);
+  border: none;
+  padding: 10px;
+  box-shadow:
+    inset 0 0 0 1px rgba(42, 36, 32, 0.18),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.config-editor-textarea:focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--ink),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.config-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.config-editor-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  padding: 6px 9px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.22);
+}
+
+.config-editor-btn:hover {
+  background: var(--ink-light);
+}
+
+.config-editor-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.config-validation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-validation-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 7px 8px;
+  background: rgba(200, 48, 40, 0.08);
+  border-left: 2px solid rgba(200, 48, 40, 0.35);
+  font-size: 6px;
+  line-height: 1.6;
+}
+
+.config-validation-path {
+  color: var(--vermillion);
+}
+
+.config-validation-message {
+  color: var(--ink);
+  word-break: break-word;
+}
+
+@media (max-width: 700px) {
+  .character-modal {
+    width: calc(100vw - 12px);
+    max-height: calc(100vh - 18px);
+  }
+
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .achievement-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .achievement-search {
+    width: 100%;
+  }
+
+  .achievement-search-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .config-editor-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .config-editor-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-control-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bank-status-grid {
+    grid-template-columns: 1fr 1fr auto;
+  }
+
+  .orders-filter-group {
+    width: 100%;
+  }
+
+  .orders-filter-btn {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+.page-footer {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 8px 16px 24px;
+}
+
+.page-footer p {
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 2px;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 920px) {
+  .cards-container {
+    flex-direction: column;
+    align-items: center;
+  }
+}

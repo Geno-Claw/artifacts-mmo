@@ -22,6 +22,10 @@ let bankInvalidated = true;
 let bankFetchPromise = null;
 let bankRevision = 0;
 
+let bankGold = 0;
+let bankSlots = 0;
+let bankNextExpansionCost = 0;
+
 function toItemMap(slots = []) {
   const map = new Map();
   for (const slot of slots) {
@@ -84,7 +88,8 @@ export async function initialize() {
   }
 
   await getBankItems(true);
-  log.info(`[InventoryManager] Initialized: ${list.length} character(s), ${bank.size} bank item(s)`);
+  await _refreshBankDetails();
+  log.info(`[InventoryManager] Initialized: ${list.length} character(s), ${bank.size} bank item(s), ${bankGold}g`);
 }
 
 export function updateCharacter(name, charData) {
@@ -160,6 +165,22 @@ async function _fetchBankItems() {
   return bank;
 }
 
+async function _refreshBankDetails() {
+  try {
+    const details = await _api.getBankDetails();
+    if (details && typeof details === 'object') {
+      const gold = Number(details.gold);
+      const slots = Number(details.slots);
+      const cost = Number(details.next_expansion_cost);
+      if (Number.isFinite(gold)) bankGold = gold;
+      if (Number.isFinite(slots)) bankSlots = slots;
+      if (Number.isFinite(cost)) bankNextExpansionCost = cost;
+    }
+  } catch (err) {
+    log.warn(`[InventoryManager] Failed to refresh bank details: ${err?.message || err}`);
+  }
+}
+
 export function applyBankDelta(items, op, meta = {}) {
   const list = Array.isArray(items) ? items : [];
   if (op !== 'deposit' && op !== 'withdraw') {
@@ -205,6 +226,21 @@ export function bankCount(code) {
 
 export function getBankRevision() {
   return bankRevision;
+}
+
+export function getBankSummary({ includeItems = false } = {}) {
+  const summary = {
+    gold: bankGold,
+    slots: bankSlots,
+    usedSlots: bank.size,
+    nextExpansionCost: bankNextExpansionCost,
+  };
+  if (includeItems) {
+    summary.items = [...bank.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([code, quantity]) => ({ code, quantity }));
+  }
+  return summary;
 }
 
 export function availableBankCount(code, opts = {}) {
@@ -357,5 +393,8 @@ export function _resetForTests() {
   bankInvalidated = true;
   bankFetchPromise = null;
   bankRevision = 0;
+  bankGold = 0;
+  bankSlots = 0;
+  bankNextExpansionCost = 0;
   _api = api;
 }

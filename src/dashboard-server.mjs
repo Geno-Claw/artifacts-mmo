@@ -1,8 +1,12 @@
 import { createServer } from 'http';
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, extname } from 'path';
 import * as log from './log.mjs';
-import { getCachedAccountAchievements, getCachedAccountDetails } from './services/account-cache.mjs';
+import {
+  getCachedAccountAchievements,
+  getCachedAccountDetails,
+  getCachedAchievementDefinitions,
+} from './services/account-cache.mjs';
 import {
   ConfigStoreError,
   loadConfigSnapshot,
@@ -12,6 +16,7 @@ import {
 import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './services/ui-state.mjs';
 import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
 import { clearGearState } from './services/gear-state.mjs';
+import { getBankSummary } from './services/inventory-manager.mjs';
 import { toPositiveInt } from './utils.mjs';
 
 function toPort(value, fallback) {
@@ -233,6 +238,20 @@ function classifyAchievement(item) {
   );
   if (completedAt) return 'completed';
 
+  if (Array.isArray(safe.objectives) && safe.objectives.length > 0) {
+    const objs = safe.objectives;
+    const completedCount = objs.filter(o => {
+      const cur = firstFiniteNumber(o.current, o.progress, o.value);
+      const tot = firstFiniteNumber(o.total, o.target);
+      return cur != null && tot != null && tot > 0 && cur >= tot;
+    }).length;
+    if (completedCount === objs.length) return 'completed';
+    if (completedCount > 0 || objs.some(o => firstFiniteNumber(o.current, o.progress, o.value) > 0)) {
+      return 'inProgress';
+    }
+    return 'notStarted';
+  }
+
   const current = firstFiniteNumber(
     safe.current,
     safe.current_progress,
@@ -285,6 +304,80 @@ function summarizeAchievements(list, totalHint = null) {
   return counts;
 }
 
+function normalizeObjectives(item) {
+  if (Array.isArray(item.objectives) && item.objectives.length > 0) {
+    return item.objectives.map(obj => ({
+      type: obj.type ?? null,
+      target: obj.target ?? null,
+      total: toFiniteIntOrNull(obj.total) ?? 0,
+      current: toFiniteIntOrNull(obj.current ?? obj.progress) ?? 0,
+    }));
+  }
+  if (item.type || item.total != null) {
+    return [{
+      type: item.type ?? null,
+      target: item.target ?? null,
+      total: toFiniteIntOrNull(item.total) ?? 0,
+      current: toFiniteIntOrNull(item.current ?? item.progress ?? item.value) ?? 0,
+    }];
+  }
+  return [];
+}
+
+function normalizeRewards(item) {
+  const rewards = item.rewards && typeof item.rewards === 'object' ? item.rewards : {};
+  return {
+    gold: toFiniteIntOrNull(rewards.gold) ?? 0,
+    items: Array.isArray(rewards.items)
+      ? rewards.items
+          .map(ri => ({
+            code: firstText(ri?.code, ''),
+            quantity: toFiniteIntOrNull(ri?.quantity) ?? 0,
+          }))
+          .filter(ri => ri.code)
+      : [],
+  };
+}
+
+function mergeAchievementData(accountList, definitionsList) {
+  const defMap = new Map();
+  for (const def of definitionsList) {
+    const code = firstText(def.code, def.name, '');
+    if (code) defMap.set(code, def);
+  }
+
+  return accountList.map(acct => {
+    const code = firstText(acct.code, acct.name, '');
+    const def = defMap.get(code) || {};
+
+    const objectives = normalizeObjectives(acct.objectives ? acct : def);
+
+    if (Array.isArray(acct.objectives)) {
+      for (let i = 0; i < acct.objectives.length && i < objectives.length; i++) {
+        const acctObj = acct.objectives[i];
+        const acctProgress = acctObj.current ?? acctObj.progress;
+        if (acctProgress != null) {
+          objectives[i].current = toFiniteIntOrNull(acctProgress) ?? objectives[i].current;
+        }
+      }
+    }
+
+    return {
+      code,
+      name: firstText(acct.name, def.name, code),
+      description: firstText(acct.description, def.description, ''),
+      points: toFiniteIntOrNull(acct.points ?? def.points) ?? 0,
+      objectives,
+      rewards: normalizeRewards(acct.rewards ? acct : def),
+      completed: acct.completed,
+      completed_at: acct.completed_at,
+      current: toFiniteIntOrNull(acct.current),
+      total: toFiniteIntOrNull(acct.total),
+      status: acct.status,
+    };
+  });
+}
+
 function normalizeAccountIdentity(details) {
   const safe = details && typeof details === 'object' ? details : {};
   const account = firstText(safe.account, safe.username, safe.name, safe.code) || null;
@@ -305,7 +398,7 @@ export async function startDashboardServer({
   port = process.env.DASHBOARD_PORT || 8091,
   basePath = process.env.DASHBOARD_BASE_PATH || '',
   rootDir = process.cwd(),
-  htmlFile = 'frontend/dashboard-phase1.html',
+  htmlFile = 'frontend/dashboard.html',
   heartbeatMs = 15_000,
   broadcastDebounceMs = 200,
   runtimeManager = null,
@@ -314,6 +407,16 @@ export async function startDashboardServer({
   const resolvedHeartbeatMs = toPositiveInt(heartbeatMs, 15_000);
   const resolvedDebounceMs = toPositiveInt(broadcastDebounceMs, 200);
   const htmlPath = resolve(rootDir, htmlFile);
+  const frontendDir = resolve(rootDir, 'frontend');
+
+  const STATIC_CONTENT_TYPES = {
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+  };
 
   if (!existsSync(htmlPath)) {
     throw new Error(`Dashboard HTML file not found: ${htmlPath}`);
@@ -332,6 +435,7 @@ export async function startDashboardServer({
     return {
       ...snapshot,
       orders: Array.isArray(orderBoard.orders) ? orderBoard.orders : [],
+      bank: getBankSummary(),
     };
   }
 
@@ -641,8 +745,10 @@ export async function startDashboardServer({
       if (pathname === '/') {
         try {
           let html = readFileSync(htmlPath, 'utf-8');
-          // Inject basePath so frontend API calls use the correct prefix
-          html = html.replace('</head>', `<script>window.__BASE_PATH__ = ${JSON.stringify(prefix)};</script>\n</head>`);
+          // Inject basePath so frontend API calls and static asset URLs work behind a reverse proxy
+          html = html.replace('</head>',
+            `<base href="${prefix}/">\n` +
+            `<script>window.__BASE_PATH__ = ${JSON.stringify(prefix)};</script>\n</head>`);
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -661,6 +767,11 @@ export async function startDashboardServer({
 
       if (pathname === '/api/ui/orders') {
         sendJson(res, 200, getOrderBoardSnapshot());
+        return;
+      }
+
+      if (pathname === '/api/ui/bank') {
+        sendJson(res, 200, getBankSummary({ includeItems: true }));
         return;
       }
 
@@ -723,19 +834,25 @@ export async function startDashboardServer({
           }
 
           const params = parseAchievementQuery(url.searchParams);
-          const achievementsResult = await getCachedAccountAchievements(identity.account, params);
+          const [achievementsResult, definitionsResult] = await Promise.all([
+            getCachedAccountAchievements(identity.account, params),
+            getCachedAchievementDefinitions(),
+          ]);
+
           const page = normalizeAchievementPage(achievementsResult.data);
-          const counts = summarizeAchievements(page.list, page.meta.total);
+          const defPage = normalizeAchievementPage(definitionsResult.data);
+          const merged = mergeAchievementData(page.list, defPage.list);
+          const counts = summarizeAchievements(merged, page.meta.total);
 
           sendJson(res, 200, {
             account: identity.account,
-            achievements: page.list,
+            achievements: merged,
             metadata: {
               page: page.meta.page,
               size: page.meta.size,
               total: page.meta.total,
               pages: page.meta.pages,
-              returned: page.list.length,
+              returned: merged.length,
               counts,
               query: params,
               detailsFetchedAtMs: detailsResult.fetchedAtMs,
@@ -802,6 +919,33 @@ export async function startDashboardServer({
 
       if (pathname === '/healthz') {
         sendJson(res, 200, { ok: true, serverTimeMs: Date.now() });
+        return;
+      }
+
+      // Static file serving for CSS/JS assets
+      if (pathname.startsWith('/css/') || pathname.startsWith('/js/')) {
+        const filePath = resolve(frontendDir, pathname.slice(1));
+        // Path traversal protection
+        if (!filePath.startsWith(frontendDir + '/')) {
+          sendJson(res, 403, { error: 'forbidden' });
+          return;
+        }
+        const ext = extname(filePath);
+        const contentType = STATIC_CONTENT_TYPES[ext];
+        if (!contentType) {
+          sendJson(res, 404, { error: 'not_found' });
+          return;
+        }
+        try {
+          const content = readFileSync(filePath);
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          });
+          res.end(content);
+        } catch {
+          sendJson(res, 404, { error: 'not_found' });
+        }
         return;
       }
 

@@ -212,6 +212,39 @@ body::before {
   color: #5a231e;
 }
 
+.bank-status {
+  position: relative;
+  z-index: 2;
+  width: min(620px, calc(100vw - 32px));
+  margin: 0 auto 10px;
+  padding: 0 2px;
+}
+
+.bank-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.bank-status-value {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  word-break: break-word;
+}
+
+.bank-status-btn-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+}
+
+.bank-status-btn-cell .action-btn {
+  margin: 0;
+  white-space: nowrap;
+}
+
 .dashboard-control-banner {
   position: relative;
   z-index: 2;
@@ -1145,6 +1178,125 @@ body::before {
   color: var(--ink-faint);
 }
 
+.achievement-type-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.achievement-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.achievement-row:hover {
+  background: rgba(42, 36, 32, 0.06);
+}
+
+.achievement-expand-icon {
+  font-size: 6px;
+  color: var(--ink-faint);
+  transition: transform 0.15s;
+  display: inline-block;
+  margin-right: 4px;
+}
+
+.achievement-row.is-expanded .achievement-expand-icon {
+  transform: rotate(90deg);
+}
+
+.achievement-detail {
+  display: none;
+  padding: 6px 8px 8px 14px;
+  background: rgba(42, 36, 32, 0.02);
+  border-left: 2px solid rgba(42, 36, 32, 0.08);
+  margin-bottom: 2px;
+}
+
+.achievement-detail.is-visible {
+  display: block;
+}
+
+.achievement-description {
+  font-size: 6px;
+  line-height: 1.6;
+  color: var(--ink);
+  margin-bottom: 6px;
+  font-style: italic;
+}
+
+.achievement-meta-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 1px;
+}
+
+.achievement-meta-label {
+  text-transform: uppercase;
+}
+
+.achievement-objective {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 6px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 6px;
+  line-height: 1.4;
+}
+
+.achievement-objective-target {
+  color: var(--ink);
+}
+
+.achievement-objective-progress {
+  color: var(--ink-faint);
+  text-align: right;
+}
+
+.achievement-objective-bar {
+  height: 3px;
+  background: rgba(42, 36, 32, 0.1);
+  grid-column: 1 / -1;
+  overflow: hidden;
+}
+
+.achievement-objective-bar-fill {
+  height: 100%;
+  background: var(--indigo);
+  transition: width 0.2s;
+}
+
+.achievement-objective-bar-fill.is-complete {
+  background: var(--ready-green);
+}
+
+.achievement-rewards {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(42, 36, 32, 0.08);
+  font-size: 6px;
+  color: var(--ink-faint);
+}
+
+.achievement-reward-item {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.achievement-points-badge {
+  display: inline-block;
+  font-size: 5px;
+  padding: 1px 4px;
+  background: rgba(42, 36, 32, 0.08);
+  color: var(--ink);
+  letter-spacing: 1px;
+}
+
 .config-editor {
   display: flex;
   flex-direction: column;
@@ -1274,6 +1426,10 @@ body::before {
     grid-template-columns: 1fr;
   }
 
+  .bank-status-grid {
+    grid-template-columns: 1fr 1fr auto;
+  }
+
   .orders-filter-group {
     width: 100%;
   }
@@ -1378,6 +1534,22 @@ body::before {
   </div>
 </section>
 <div class="dashboard-control-banner" id="controlResultBanner" aria-live="polite" hidden></div>
+
+<section class="bank-status" id="bankStatusPanel" aria-live="polite">
+  <div class="bank-status-grid">
+    <article class="modal-stat">
+      <div class="modal-stat-label">Bank Gold</div>
+      <div class="modal-stat-value bank-status-value" id="bankGoldValue">--</div>
+    </article>
+    <article class="modal-stat">
+      <div class="modal-stat-label">Bank Slots</div>
+      <div class="modal-stat-value bank-status-value" id="bankSlotsValue">--</div>
+    </article>
+    <article class="modal-stat bank-status-btn-cell">
+      <button class="action-btn" type="button" id="openBankBtn" title="View bank contents" aria-haspopup="dialog">BANK</button>
+    </article>
+  </div>
+</section>
 
 <section class="orders-panel" id="ordersPanel" aria-live="polite">
   <div class="orders-panel-header">
@@ -1766,6 +1938,20 @@ const appState = {
   orderFilter: 'all',
 };
 
+const bankState = {
+  gold: 0,
+  slots: 0,
+  usedSlots: 0,
+  nextExpansionCost: 0,
+};
+
+const bankRefs = {
+  panel: null,
+  goldValue: null,
+  slotsValue: null,
+  openBtn: null,
+};
+
 const cardRefs = new Map();
 let eventSource = null;
 const ordersRefs = {
@@ -1775,6 +1961,7 @@ const ordersRefs = {
   filterGroup: null,
 };
 const CONFIG_MODAL_NAME = '__config__';
+const BANK_MODAL_NAME = '__bank__';
 const MODAL_KIND_LABELS = {
   skills: 'Skills',
   inven: 'Inventory',
@@ -1782,11 +1969,31 @@ const MODAL_KIND_LABELS = {
   stats: 'Stats',
   achiev: 'Achievements',
   config: 'Config',
+  bank: 'Bank',
 };
 const ACHIEVEMENT_FILTER_LABELS = {
   all: 'All',
   completed: 'Completed',
   'in-progress': 'In Progress',
+  'not-started': 'Not Started',
+};
+const ACHIEVEMENT_TYPE_FILTER_MAP = {
+  all: null,
+  combat: ['combat_kill', 'combat_level', 'combat_drop'],
+  gathering: ['gathering'],
+  crafting: ['crafting', 'recycling'],
+  tasks: ['task'],
+  trading: ['npc_sell', 'npc_buy'],
+  use: ['use'],
+};
+const ACHIEVEMENT_TYPE_FILTER_LABELS = {
+  all: 'All Types',
+  combat: 'Combat',
+  gathering: 'Gathering',
+  crafting: 'Crafting',
+  tasks: 'Tasks',
+  trading: 'Trading',
+  use: 'Use',
 };
 const ORDER_FILTER_LABELS = {
   all: 'All Orders',
@@ -1824,6 +2031,8 @@ const modalState = {
   fetchSeq: 0,
   lastFocusedElement: null,
   achievementFilter: 'all',
+  achievementTypeFilter: 'all',
+  achievementExpandedSet: new Set(),
   achievementSearch: '',
   configEditorText: '',
   configIfMatchHash: '',
@@ -2178,6 +2387,20 @@ function normalizeOrderRow(raw) {
     claimer: safeText(raw?.claim?.charName, ''),
     createdAtMs: toNumber(raw?.createdAtMs, 0),
   };
+}
+
+function formatGold(value) {
+  if (value == null || !Number.isFinite(value)) return '--';
+  return value.toLocaleString();
+}
+
+function renderBankStatusPanel() {
+  if (bankRefs.goldValue) {
+    bankRefs.goldValue.textContent = formatGold(bankState.gold);
+  }
+  if (bankRefs.slotsValue) {
+    bankRefs.slotsValue.textContent = `${bankState.usedSlots} / ${bankState.slots}`;
+  }
 }
 
 function renderOrdersPanel() {
@@ -2865,33 +3088,85 @@ function normalizeAchievements(rawAchievements) {
   return rawAchievements
     .map((entry, idx) => {
       const row = entry && typeof entry === 'object' ? entry : {};
-      const progress = row.progress && typeof row.progress === 'object' ? row.progress : {};
       const code = safeText(row.code ?? row.id ?? row.name, `achievement-${idx + 1}`);
-      const title = safeText(row.title ?? row.name ?? row.label, code);
-      const progressCurrent = Math.max(
-        0,
-        toNumber(row.current ?? row.value ?? row.count ?? progress.current ?? progress.value, 0)
-      );
-      const progressTotal = Math.max(
-        0,
-        toNumber(row.total ?? row.target ?? row.max ?? progress.total ?? progress.target ?? progress.max, 0)
-      );
-      const pct = Math.max(0, Math.min(100, toNumber(
-        row.pct ?? row.percent ?? row.progressPct ?? progress.pct ?? progress.percent,
-        progressTotal > 0 ? statPct(progressCurrent, progressTotal) : 0
-      )));
+      const title = safeText(row.name ?? row.title ?? row.label, code);
+      const description = safeText(row.description, '');
+      const points = Math.max(0, toNumber(row.points, 0));
+
+      let objectives = [];
+      if (Array.isArray(row.objectives) && row.objectives.length > 0) {
+        objectives = row.objectives.map(obj => {
+          const objCurrent = Math.max(0, toNumber(obj.current ?? obj.progress ?? obj.value, 0));
+          const objTotal = Math.max(0, toNumber(obj.total ?? obj.target, 0));
+          const objPct = objTotal > 0 ? statPct(objCurrent, objTotal) : 0;
+          return {
+            type: safeText(obj.type, ''),
+            target: safeText(obj.target, ''),
+            current: objCurrent,
+            total: objTotal,
+            pct: objPct,
+            completed: objTotal > 0 && objCurrent >= objTotal,
+          };
+        });
+      } else {
+        const progress = row.progress && typeof row.progress === 'object' ? row.progress : {};
+        const flatCurrent = Math.max(0, toNumber(
+          row.current ?? row.value ?? row.count ?? progress.current ?? progress.value, 0));
+        const flatTotal = Math.max(0, toNumber(
+          row.total ?? row.target ?? row.max ?? progress.total ?? progress.target ?? progress.max, 0));
+        objectives = [{
+          type: safeText(row.type, ''),
+          target: safeText(row.target, ''),
+          current: flatCurrent,
+          total: flatTotal,
+          pct: flatTotal > 0 ? statPct(flatCurrent, flatTotal) : 0,
+          completed: flatTotal > 0 && flatCurrent >= flatTotal,
+        }];
+      }
+
+      const rawRewards = row.rewards && typeof row.rewards === 'object' ? row.rewards : {};
+      const rewards = {
+        gold: Math.max(0, toNumber(rawRewards.gold, 0)),
+        items: Array.isArray(rawRewards.items)
+          ? rawRewards.items
+              .map(ri => ({ code: safeText(ri?.code, ''), quantity: Math.max(0, toNumber(ri?.quantity, 0)) }))
+              .filter(ri => ri.code)
+          : [],
+      };
+
+      const completedObjectives = objectives.filter(o => o.completed).length;
+      const totalObjectives = objectives.length;
+      const isMultiObjective = totalObjectives > 1;
+
+      let progressCurrent, progressTotal, pct;
+      if (isMultiObjective) {
+        progressCurrent = completedObjectives;
+        progressTotal = totalObjectives;
+        pct = totalObjectives > 0 ? statPct(completedObjectives, totalObjectives) : 0;
+      } else {
+        progressCurrent = objectives[0]?.current ?? 0;
+        progressTotal = objectives[0]?.total ?? 0;
+        pct = objectives[0]?.pct ?? 0;
+      }
+
       const completed = toBoolLike(row.completed ?? row.isCompleted ?? row.done)
         || safeText(row.status, '').toLowerCase() === 'completed'
+        || (totalObjectives > 0 && completedObjectives === totalObjectives)
         || (progressTotal > 0 && progressCurrent >= progressTotal);
 
       return {
         code,
         title,
+        description,
+        points,
+        objectives,
+        rewards,
         completed,
+        isMultiObjective,
         progressCurrent,
         progressTotal,
         pct,
-        searchText: `${code} ${title}`.toLowerCase(),
+        searchText: `${code} ${title} ${description}`.toLowerCase(),
       };
     })
     .sort((a, b) => Number(b.completed) - Number(a.completed) || b.pct - a.pct || a.code.localeCompare(b.code));
@@ -2919,11 +3194,20 @@ function normalizeAchievementSummary(rawSummary, achievementRows) {
   if (total === 0 && derivedTotal > 0) total = derivedTotal;
   if (completed > total && total > 0) completed = total;
 
+  const totalPoints = achievementRows
+    .filter(r => r.completed)
+    .reduce((sum, r) => sum + (r.points || 0), 0);
+
   return {
     account: safeText(source.account ?? source.username ?? source.accountName ?? source.name, ''),
     completed,
     total,
+    totalPoints,
   };
+}
+
+function getAchievementTypeFilterValue() {
+  return ACHIEVEMENT_TYPE_FILTER_LABELS[modalState.achievementTypeFilter] ? modalState.achievementTypeFilter : 'all';
 }
 
 function getAchievementFilterValue() {
@@ -2937,6 +3221,10 @@ function getAchievementState(row) {
 }
 
 function getAchievementProgressText(row) {
+  if (row.isMultiObjective) {
+    const done = row.objectives.filter(o => o.completed).length;
+    return `${done} / ${row.objectives.length} objectives`;
+  }
   if (row.progressTotal > 0) {
     const pct = row.completed ? 100 : Math.max(0, Math.min(100, Math.round(row.pct)));
     return `${formatNumberish(row.progressCurrent, '0')} / ${formatNumberish(row.progressTotal, '0')} (${pct}%)`;
@@ -2949,12 +3237,16 @@ function getAchievementProgressText(row) {
 
 function filterAchievements(rows) {
   const filter = getAchievementFilterValue();
+  const typeFilter = getAchievementTypeFilterValue();
+  const typeSet = ACHIEVEMENT_TYPE_FILTER_MAP[typeFilter];
   const needle = `${modalState.achievementSearch ?? ''}`.trim().toLowerCase();
 
   return rows.filter((row) => {
     const state = getAchievementState(row);
     if (filter === 'completed' && state !== 'completed') return false;
     if (filter === 'in-progress' && state !== 'in-progress') return false;
+    if (filter === 'not-started' && state !== 'not-started') return false;
+    if (typeSet && !row.objectives.some(o => typeSet.includes(o.type))) return false;
     if (needle && !row.searchText.includes(needle)) return false;
     return true;
   });
@@ -3060,6 +3352,61 @@ function renderEquipmentModal(detail) {
   `;
 }
 
+function renderBankModal(detail) {
+  if (!detail || typeof detail !== 'object') {
+    return '<div class="modal-empty">No bank data available.</div>';
+  }
+
+  const gold = toNumber(detail.gold, 0);
+  const slots = toNumber(detail.slots, 0);
+  const usedSlots = toNumber(detail.usedSlots, 0);
+  const expansionCost = toNumber(detail.nextExpansionCost, 0);
+  const items = Array.isArray(detail.items) ? detail.items : [];
+
+  const summaryHtml = `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Bank Summary</h3>
+      <div class="modal-grid">
+        <article class="modal-stat">
+          <div class="modal-stat-label">Gold</div>
+          <div class="modal-stat-value">${formatGold(gold)}</div>
+        </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Slots Used</div>
+          <div class="modal-stat-value">${usedSlots} / ${slots}</div>
+        </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Next Expansion</div>
+          <div class="modal-stat-value">${formatGold(expansionCost)} gold</div>
+        </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Unique Items</div>
+          <div class="modal-stat-value">${items.length}</div>
+        </article>
+      </div>
+    </section>
+  `;
+
+  if (items.length === 0) {
+    return summaryHtml + '<div class="modal-empty">Bank is empty.</div>';
+  }
+
+  const itemRows = items.map((item) => `
+    <div class="modal-list-item modal-list-item--two">
+      <span class="modal-list-main">${escapeHtml(item.code || '--')}</span>
+      <span class="modal-list-tag">x${formatNumberish(item.quantity, '0')}</span>
+    </div>
+  `).join('');
+
+  return `
+    ${summaryHtml}
+    <section class="modal-section">
+      <h3 class="modal-section-title">Bank Items (${items.length})</h3>
+      <div class="modal-list">${itemRows}</div>
+    </section>
+  `;
+}
+
 function renderStatsModal(detail) {
   const stats = detail?.stats && typeof detail.stats === 'object' ? detail.stats : {};
   const identity = detail?.identity && typeof detail.identity === 'object' ? detail.identity : {};
@@ -3120,13 +3467,81 @@ function renderStatsModal(detail) {
   `;
 }
 
+function renderAchievementDetail(row) {
+  const descriptionHtml = row.description
+    ? `<div class="achievement-description">${escapeHtml(row.description)}</div>`
+    : '';
+
+  const pointsHtml = row.points > 0
+    ? `<span class="achievement-points-badge">${row.points} PT${row.points !== 1 ? 'S' : ''}</span>`
+    : '';
+
+  const objectivesHtml = row.objectives.map(obj => {
+    const targetLabel = obj.target
+      ? `${escapeHtml(obj.type)}: ${escapeHtml(obj.target)}`
+      : escapeHtml(obj.type || 'objective');
+    const pct = obj.total > 0 ? Math.round(obj.pct) : 0;
+    const progressText = obj.total > 0
+      ? `${formatNumberish(obj.current, '0')} / ${formatNumberish(obj.total, '0')}`
+      : '--';
+    const barFillClass = obj.completed ? ' is-complete' : '';
+
+    return `
+      <div class="achievement-objective">
+        <span class="achievement-objective-target">${targetLabel}</span>
+        <span class="achievement-objective-progress">${escapeHtml(progressText)}</span>
+        ${obj.total > 0 ? `
+          <div class="achievement-objective-bar">
+            <div class="achievement-objective-bar-fill${barFillClass}" style="width:${pct}%"></div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  let rewardsHtml = '';
+  const rewardParts = [];
+  if (row.rewards.gold > 0) {
+    rewardParts.push(`<span class="achievement-reward-item">${formatNumberish(row.rewards.gold, '0')} gold</span>`);
+  }
+  for (const ri of row.rewards.items) {
+    rewardParts.push(`<span class="achievement-reward-item">${ri.quantity}x ${escapeHtml(ri.code)}</span>`);
+  }
+  if (rewardParts.length > 0) {
+    rewardsHtml = `
+      <div class="achievement-rewards">
+        <span class="achievement-meta-label">REWARDS:</span> ${rewardParts.join('')}
+      </div>
+    `;
+  }
+
+  return `
+    ${descriptionHtml}
+    <div class="achievement-meta-row">
+      ${pointsHtml}
+    </div>
+    ${objectivesHtml}
+    ${rewardsHtml}
+  `;
+}
+
 function renderAchievementsModal(detail) {
   const summary = detail?.summary && typeof detail.summary === 'object' ? detail.summary : {};
   const completed = Math.max(0, toNumber(summary.completed, 0));
   const total = Math.max(completed, toNumber(summary.total, 0));
   const completionPct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const totalPoints = Math.max(0, toNumber(summary.totalPoints, 0));
   const filter = getAchievementFilterValue();
+  const typeFilter = getAchievementTypeFilterValue();
   const searchValue = `${modalState.achievementSearch ?? ''}`;
+
+  const typeFilterButtons = Object.entries(ACHIEVEMENT_TYPE_FILTER_LABELS).map(([value, label]) => `
+    <button
+      type="button"
+      class="achievement-filter-btn${value === typeFilter ? ' is-active' : ''}"
+      data-achievement-type-filter="${value}"
+    >${escapeHtml(label.toUpperCase())}</button>
+  `).join('');
 
   const filterButtons = Object.entries(ACHIEVEMENT_FILTER_LABELS).map(([value, label]) => `
     <button
@@ -3152,12 +3567,19 @@ function renderAchievementsModal(detail) {
           <div class="modal-stat-label">Completion</div>
           <div class="modal-stat-value">${formatNumberish(completionPct, '0')}%</div>
         </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Points Earned</div>
+          <div class="modal-stat-value">${formatNumberish(totalPoints, '0')}</div>
+        </article>
       </div>
     </section>
     <section class="modal-section">
       <h3 class="modal-section-title">Achievements</h3>
+      <div class="achievement-type-filter-row" role="tablist" aria-label="Achievement type filters">
+        ${typeFilterButtons}
+      </div>
       <div class="achievement-toolbar">
-        <div class="achievement-filter-group" role="tablist" aria-label="Achievement filters">
+        <div class="achievement-filter-group" role="tablist" aria-label="Achievement status filters">
           ${filterButtons}
         </div>
         <label class="achievement-search">
@@ -3166,7 +3588,7 @@ function renderAchievementsModal(detail) {
             type="search"
             class="achievement-search-input"
             data-achievement-search
-            placeholder="Code or title"
+            placeholder="Code, title, or description"
             value="${escapeHtml(searchValue)}"
             autocomplete="off"
           >
@@ -3257,10 +3679,16 @@ function renderAchievementsListInPlace() {
   const rows = Array.isArray(modalState.detail.achievements) ? modalState.detail.achievements : [];
   const visibleRows = filterAchievements(rows);
   const activeFilter = getAchievementFilterValue();
+  const activeTypeFilter = getAchievementTypeFilterValue();
+  const expanded = modalState.achievementExpandedSet;
 
   modalRefs.content.querySelectorAll('button[data-achievement-filter]').forEach((button) => {
     const value = safeText(button.dataset.achievementFilter, '');
     button.classList.toggle('is-active', value === activeFilter);
+  });
+  modalRefs.content.querySelectorAll('button[data-achievement-type-filter]').forEach((button) => {
+    const value = safeText(button.dataset.achievementTypeFilter, '');
+    button.classList.toggle('is-active', value === activeTypeFilter);
   });
 
   if (countHost) {
@@ -3286,10 +3714,15 @@ function renderAchievementsListInPlace() {
     const statusLabel = state === 'completed'
       ? 'COMPLETED'
       : (state === 'in-progress' ? 'IN PROGRESS' : 'NOT STARTED');
+    const isExpanded = expanded.has(row.code);
+    const expandedClass = isExpanded ? ' is-expanded' : '';
+    const detailVisible = isExpanded ? ' is-visible' : '';
 
     return `
-      <div class="modal-list-item modal-list-item--two">
+      <div class="modal-list-item modal-list-item--two achievement-row${expandedClass}"
+           data-achievement-toggle="${escapeHtml(row.code)}">
         <span class="modal-list-main achievement-list-main">
+          <span class="achievement-expand-icon">&#9654;</span>
           <span class="achievement-code">${escapeHtml(row.code)}</span>
           <span class="achievement-title">${escapeHtml(row.title)}</span>
         </span>
@@ -3297,6 +3730,9 @@ function renderAchievementsListInPlace() {
           <span class="achievement-status is-${state}">${statusLabel}</span>
           <span class="modal-list-tag">${escapeHtml(getAchievementProgressText(row))}</span>
         </span>
+      </div>
+      <div class="achievement-detail${detailVisible}" data-achievement-detail="${escapeHtml(row.code)}">
+        ${renderAchievementDetail(row)}
       </div>
     `;
   }).join('');
@@ -3348,6 +3784,10 @@ function renderModalContent() {
     modalRefs.content.innerHTML = renderConfigModal(modalState.detail);
     return;
   }
+  if (modalState.activeKind === 'bank') {
+    modalRefs.content.innerHTML = renderBankModal(modalState.detail);
+    return;
+  }
   modalRefs.content.innerHTML = renderStatsModal(modalState.detail);
 }
 
@@ -3362,6 +3802,8 @@ function renderModal() {
       modalRefs.title.textContent = `${accountName} - ${label}`;
     } else if (modalState.activeKind === 'config') {
       modalRefs.title.textContent = `Runtime Config - ${label}`;
+    } else if (modalState.activeKind === 'bank') {
+      modalRefs.title.textContent = `Account ${label}`;
     } else {
       modalRefs.title.textContent = `${modalState.activeCharacterName} - ${label}`;
     }
@@ -3930,6 +4372,10 @@ function openCharacterModal(name, kind) {
     openConfigModal();
     return;
   }
+  if (kind === 'bank') {
+    openBankModal();
+    return;
+  }
 
   modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
     ? document.activeElement
@@ -3943,6 +4389,8 @@ function openCharacterModal(name, kind) {
     ? 0
     : (appState.characters.get(name)?.lastUpdatedAtMs || 0);
   modalState.achievementFilter = 'all';
+  modalState.achievementTypeFilter = 'all';
+  modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
   modalState.configEditorText = '';
   modalState.configIfMatchHash = '';
@@ -3979,6 +4427,8 @@ function openConfigModal() {
   modalState.errorText = '';
   modalState.activeSnapshotUpdatedAtMs = 0;
   modalState.achievementFilter = 'all';
+  modalState.achievementTypeFilter = 'all';
+  modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
   modalState.configEditorText = '';
   modalState.configIfMatchHash = '';
@@ -3998,6 +4448,67 @@ function openConfigModal() {
   fetchConfigDetail();
 }
 
+function openBankModal() {
+  if (!modalRefs.host || !modalRefs.dialog) return;
+
+  modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  modalState.activeCharacterName = BANK_MODAL_NAME;
+  modalState.activeKind = 'bank';
+  modalState.status = 'loading';
+  modalState.detail = null;
+  modalState.errorText = '';
+  modalState.activeSnapshotUpdatedAtMs = 0;
+
+  modalRefs.host.hidden = false;
+  document.body.classList.add('modal-open');
+  renderModal();
+
+  requestAnimationFrame(() => {
+    if (modalRefs.closeBtn) modalRefs.closeBtn.focus();
+    else modalRefs.dialog.focus();
+  });
+
+  fetchBankDetail();
+}
+
+async function fetchBankDetail() {
+  if (!isModalOpen() || modalState.activeKind !== 'bank') return;
+
+  abortModalFetch();
+  const controller = new AbortController();
+  const seq = modalState.fetchSeq + 1;
+  modalState.fetchSeq = seq;
+  modalState.fetchController = controller;
+
+  try {
+    const base = window.__BASE_PATH__ || '';
+    const res = await fetch(`${base}/api/ui/bank`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'bank') return;
+
+    modalState.detail = data;
+    modalState.status = 'ready';
+    modalState.errorText = '';
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'bank') return;
+    modalState.status = 'error';
+    modalState.errorText = safeText(err?.message, 'Failed to fetch bank data');
+  } finally {
+    if (modalState.fetchController === controller) {
+      modalState.fetchController = null;
+    }
+    renderModal();
+  }
+}
+
 function closeCharacterModal({ restoreFocus = true } = {}) {
   if (!modalRefs.host || modalRefs.host.hidden) return;
 
@@ -4014,6 +4525,8 @@ function closeCharacterModal({ restoreFocus = true } = {}) {
   modalState.activeSnapshotUpdatedAtMs = 0;
   modalState.lastFocusedElement = null;
   modalState.achievementFilter = 'all';
+  modalState.achievementTypeFilter = 'all';
+  modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
   modalState.configEditorText = '';
   modalState.configIfMatchHash = '';
@@ -4105,15 +4618,46 @@ function onModalContentClick(event) {
   if (!isModalOpen() || modalState.status !== 'ready' || !modalRefs.content) return;
 
   if (modalState.activeKind === 'achiev') {
-    const button = closestFromEventTarget(event, 'button[data-achievement-filter]');
-    if (!button || !modalRefs.content.contains(button)) return;
+    const statusBtn = closestFromEventTarget(event, 'button[data-achievement-filter]');
+    if (statusBtn && modalRefs.content.contains(statusBtn)) {
+      const nextFilter = safeText(statusBtn.dataset.achievementFilter, '').toLowerCase();
+      if (ACHIEVEMENT_FILTER_LABELS[nextFilter] && modalState.achievementFilter !== nextFilter) {
+        modalState.achievementFilter = nextFilter;
+        renderAchievementsListInPlace();
+      }
+      return;
+    }
 
-    const nextFilter = safeText(button.dataset.achievementFilter, '').toLowerCase();
-    if (!ACHIEVEMENT_FILTER_LABELS[nextFilter]) return;
-    if (modalState.achievementFilter === nextFilter) return;
+    const typeBtn = closestFromEventTarget(event, 'button[data-achievement-type-filter]');
+    if (typeBtn && modalRefs.content.contains(typeBtn)) {
+      const nextType = safeText(typeBtn.dataset.achievementTypeFilter, '').toLowerCase();
+      if (ACHIEVEMENT_TYPE_FILTER_LABELS[nextType] && modalState.achievementTypeFilter !== nextType) {
+        modalState.achievementTypeFilter = nextType;
+        renderAchievementsListInPlace();
+      }
+      return;
+    }
 
-    modalState.achievementFilter = nextFilter;
-    renderAchievementsListInPlace();
+    const toggleRow = closestFromEventTarget(event, '[data-achievement-toggle]');
+    if (toggleRow && modalRefs.content.contains(toggleRow)) {
+      const code = safeText(toggleRow.dataset.achievementToggle, '');
+      if (!code) return;
+
+      if (modalState.achievementExpandedSet.has(code)) {
+        modalState.achievementExpandedSet.delete(code);
+      } else {
+        modalState.achievementExpandedSet.add(code);
+      }
+
+      toggleRow.classList.toggle('is-expanded');
+      const detailEl = modalRefs.content.querySelector(
+        `[data-achievement-detail="${CSS.escape(code)}"]`
+      );
+      if (detailEl) {
+        detailEl.classList.toggle('is-visible');
+      }
+      return;
+    }
     return;
   }
 
@@ -4152,7 +4696,7 @@ function onModalContentInput(event) {
 
 function maybeRefreshActiveModalFromSnapshot() {
   if (!isModalOpen()) return;
-  if (modalState.activeKind === 'achiev' || modalState.activeKind === 'config') return;
+  if (modalState.activeKind === 'achiev' || modalState.activeKind === 'config' || modalState.activeKind === 'bank') return;
 
   const activeChar = appState.characters.get(modalState.activeCharacterName);
   if (!activeChar) {
@@ -4231,12 +4775,20 @@ function setupModalFramework() {
   controlRefs.updatedAt = document.getElementById('controlStatusUpdatedAt');
   controlRefs.banner = document.getElementById('controlResultBanner');
 
+  bankRefs.panel = document.getElementById('bankStatusPanel');
+  bankRefs.goldValue = document.getElementById('bankGoldValue');
+  bankRefs.slotsValue = document.getElementById('bankSlotsValue');
+  bankRefs.openBtn = document.getElementById('openBankBtn');
+
   const cardsContainer = document.getElementById('cardsContainer');
   if (cardsContainer) {
     cardsContainer.addEventListener('click', onCardActionClick);
   }
   if (modalRefs.configBtn) {
     modalRefs.configBtn.addEventListener('click', onConfigButtonClick);
+  }
+  if (bankRefs.openBtn) {
+    bankRefs.openBtn.addEventListener('click', () => openBankModal());
   }
   if (controlRefs.restartBtn) {
     controlRefs.restartBtn.addEventListener('click', onRuntimeControlButtonClick);
@@ -4343,6 +4895,14 @@ function applySnapshot(snapshot) {
   appState.orders = (Array.isArray(snapshot.orders) ? snapshot.orders : [])
     .map(normalizeOrderRow)
     .filter(Boolean);
+  if (snapshot.bank && typeof snapshot.bank === 'object') {
+    const b = snapshot.bank;
+    bankState.gold = toNumber(b.gold, bankState.gold);
+    bankState.slots = toNumber(b.slots, bankState.slots);
+    bankState.usedSlots = toNumber(b.usedSlots, bankState.usedSlots);
+    bankState.nextExpansionCost = toNumber(b.nextExpansionCost, bankState.nextExpansionCost);
+  }
+  renderBankStatusPanel();
   renderOrdersPanel();
   syncCards();
   maybeRefreshActiveModalFromSnapshot();
