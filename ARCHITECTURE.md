@@ -5,10 +5,12 @@
 The bot loads `config/characters.json`, creates a `CharacterContext` + `Scheduler` for each character, and runs them all concurrently via `Promise.all`. Each character runs an independent forever loop:
 
 ```
-refresh character state → pick highest-priority runnable routine → execute it → repeat
+apply pending config → refresh character state → pick highest-priority runnable routine → execute it → repeat
 ```
 
 When HP drops low, Rest (priority 100) takes over. When inventory fills up, Bank (priority 50) takes over. Otherwise it runs skill rotation, NPC tasks, or direct grinding. This creates emergent behavior from simple rules.
+
+**Config hot-reload:** A file watcher monitors `characters.json` and pushes changes to running schedulers without restarting. Each routine has an `updateConfig()` method that patches config fields in-place while preserving runtime state (current skill, goal progress, recipe blocks, etc.). Changes take effect at the next scheduler loop iteration (~1s).
 
 ## File Layout
 
@@ -85,8 +87,9 @@ Routines declare three properties in their constructor:
 - **priority** — higher number wins (Rest=100, Bank=50, Grind=10)
 - **loop** — if true, execute() is called repeatedly until it returns false or canRun() fails
 
-Optional override:
+Optional overrides:
 - **`canBePreempted(ctx)`** — returns boolean (default `true`). When `false`, the scheduler skips preemption even if a higher-priority routine is runnable. Used by `SkillRotationRoutine` to complete full goal cycles before yielding to bank/rest.
+- **`updateConfig(cfg)`** — hot-reload hook. Receives the new config object from `characters.json` and patches config-derived fields in-place, preserving runtime state. Called automatically when the config file changes on disk.
 
 All routines receive a `CharacterContext` (not a raw character object).
 
@@ -94,11 +97,12 @@ All routines receive a `CharacterContext` (not a raw character object).
 
 The scheduler holds a priority-sorted list of routines. Each iteration:
 
-1. Refreshes character state from the API
-2. Walks the routine list top-down, calls `canRun()` on each
-3. Runs the first routine that returns true
-4. For loop routines: re-checks `canRun()` before each iteration, and checks for higher-priority preemption
-5. Preemption is gated by `routine.canBePreempted(ctx)` — routines can defer preemption until a safe break point (e.g., skill rotation only yields between goal cycles, not mid-action)
+1. Applies any pending config updates (from hot-reload)
+2. Refreshes character state from the API
+3. Walks the routine list top-down, calls `canRun()` on each
+4. Runs the first routine that returns true
+5. For loop routines: re-checks `canRun()` before each iteration, and checks for higher-priority preemption
+6. Preemption is gated by `routine.canBePreempted(ctx)` — routines can defer preemption until a safe break point (e.g., skill rotation only yields between goal cycles, not mid-action)
 
 ### Scheduler ↔ Executor Interaction
 
@@ -155,6 +159,7 @@ Per-character state wrapper (replaces old singleton `state.mjs`). One instance p
 | `consecutiveLosses(m)` | Query loss count |
 | `taskCoins()` | NPC task coin balance |
 | `settings()` | Character-level settings (e.g. potion automation) |
+| `updateSettings(s)` | Hot-reload: replace settings (merges with defaults) |
 
 **Level-up behavior:** On level-up, all loss counters reset and the gear cache is cleared, so the bot retries previously-failed monsters and re-evaluates equipment.
 
@@ -340,8 +345,10 @@ constants.mjs    — GATHERING_SKILLS, CRAFTING_SKILLS, TASK_COIN_CODE, reserve 
 }
 ```
 
-Routine types: `rest`, `depositBank`, `skillRotation`. SkillRotation handles all gameplay (gathering, crafting, combat, NPC tasks, item tasks, order board fulfillment, task coin exchange) internally via its executor modules.
+Routine types: `rest`, `depositBank`, `bankExpansion`, `skillRotation`. SkillRotation handles all gameplay (gathering, crafting, combat, NPC tasks, item tasks, order board fulfillment, task coin exchange) internally via its executor modules.
 Character `settings` can optionally include potion automation controls (`settings.potions.combat`, `settings.potions.bankTravel`).
+
+**Hot-reload:** Config changes are detected automatically via file watcher and applied between scheduler iterations without restart. Changes to weights, goals, thresholds, blacklists, and settings take effect within ~1s. Adding/removing routine types still requires a full restart.
 
 ### `config/sell-rules.json`
 
@@ -384,8 +391,13 @@ The gear optimizer uses combat simulation instead of static scores for actual eq
 import { BaseRoutine } from './base.mjs';
 
 export class MyRoutine extends BaseRoutine {
-  constructor() {
-    super({ name: 'My Routine', priority: 20, loop: false });
+  constructor({ threshold = 10, priority = 20, ...rest } = {}) {
+    super({ name: 'My Routine', priority, loop: false, ...rest });
+    this.threshold = threshold;
+  }
+
+  updateConfig({ threshold } = {}) {
+    if (threshold !== undefined) this.threshold = threshold;
   }
 
   canRun(ctx) {
@@ -401,6 +413,8 @@ export class MyRoutine extends BaseRoutine {
 2. Add it to `buildRoutines()` in `src/routines/factory.mjs` with a config type mapping.
 
 3. Add the routine config to `config/characters.json` for the desired characters.
+
+The `updateConfig()` method enables hot-reload — only patch config-derived fields, never reset runtime state.
 
 ## Running
 

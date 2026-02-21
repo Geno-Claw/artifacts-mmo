@@ -25,7 +25,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 
 **Scheduler loop (per character):** refresh state → pick highest-priority routine where `canRun()` is true → execute → repeat. Loop routines re-check `canRun()` each iteration and support preemption by higher-priority routines.
 
-**Routine interface:** Extend `BaseRoutine` with `canRun(ctx)` → boolean and `async execute(ctx)` → boolean (true = continue loop). Set priority in constructor (higher wins). Optional `canBePreempted(ctx)` override (default true).
+**Routine interface:** Extend `BaseRoutine` with `canRun(ctx)` → boolean and `async execute(ctx)` → boolean (true = continue loop). Set priority in constructor (higher wins). Optional `canBePreempted(ctx)` override (default true). Optional `updateConfig(cfg)` for hot-reload support.
 
 **Priority scale:** Rest (100) > Bank deposit (50-70) > Skill rotation (5). SkillRotation handles all gameplay (gathering, crafting, combat, NPC/item tasks, order board, task exchange) via focused executor modules in `src/routines/skill-rotation/`.
 
@@ -63,7 +63,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 
 ## Configuration
 
-- `config/characters.json` — per-character routine configs with weights, goals, settings
+- `config/characters.json` — per-character routine configs with weights, goals, settings. **Hot-reloaded** automatically on save (no restart needed) — changes to weights, goals, thresholds, and settings take effect at the next scheduler loop iteration.
 - `config/sell-rules.json` — GE selling whitelist and recycler rules
 - `.env` — `ARTIFACTS_TOKEN` (required), `BOT_CONFIG`, `PORT` (dashboard, default 3000), `WEBSOCKET_URL` (optional, enables real-time notifications)
 - Both config files have companion `.schema.json` validators
