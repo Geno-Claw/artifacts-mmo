@@ -19,7 +19,7 @@ let _detailsFetchedAt = 0;
 
 export class BankExpansionRoutine extends BaseRoutine {
   constructor({
-    priority = 45,
+    priority = 55,
     checkIntervalMs = 300_000,
     maxGoldPct = 0.7,
     goldBuffer = 0,
