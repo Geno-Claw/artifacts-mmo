@@ -184,6 +184,11 @@ function defaultCharacterState(name) {
     logLatest: 'No activity yet',
     logHistory: [],
     detailLogHistory: [],
+    gameLogLatest: 'Waiting for activity...',
+    gameLogLatestType: null,
+    gameLogLatestAtMs: 0,
+    gameLogLatestDetail: null,
+    gameLogHistory: [],
     skills: [],
     inventory: [],
     equipment: [],
@@ -221,6 +226,11 @@ function cloneCharacterState(char, serverTimeMs) {
     task: { ...char.task },
     logLatest: char.logLatest,
     logHistory: char.logHistory.map(entry => ({ ...entry })),
+    gameLogLatest: char.gameLogLatest,
+    gameLogLatestType: char.gameLogLatestType,
+    gameLogLatestAtMs: char.gameLogLatestAtMs,
+    gameLogLatestDetail: char.gameLogLatestDetail,
+    gameLogHistory: char.gameLogHistory.map(entry => ({ ...entry })),
   };
 }
 
@@ -367,6 +377,30 @@ export function recordLog(name, { level = 'info', line = '', at = nowMs() } = {}
   }
   if (char.detailLogHistory.length > MAX_LOG_HISTORY) {
     char.detailLogHistory = char.detailLogHistory.slice(char.detailLogHistory.length - MAX_LOG_HISTORY);
+  }
+
+  emitChange();
+}
+
+export function recordGameLog(name, { line = '', type = null, at = nowMs(), detail = null } = {}) {
+  const char = ensureCharacter(name);
+  if (!char) return;
+
+  const entry = {
+    atMs: toNumber(at, nowMs()),
+    type,
+    line: `${line || ''}`,
+    detail,
+  };
+
+  char.gameLogLatest = entry.line || char.gameLogLatest;
+  char.gameLogLatestType = type;
+  char.gameLogLatestAtMs = entry.atMs;
+  char.gameLogLatestDetail = detail;
+  char.gameLogHistory.push(entry);
+
+  if (char.gameLogHistory.length > uiMeta.logLimit) {
+    char.gameLogHistory = char.gameLogHistory.slice(char.gameLogHistory.length - uiMeta.logLimit);
   }
 
   emitChange();

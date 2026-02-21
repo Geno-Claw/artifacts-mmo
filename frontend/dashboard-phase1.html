@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Artifacts MMO Bot Manager — Sumi-e Ink Wash</title>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
 <style>
 /* ============================================================
    SAKURA GARDEN — SUMI-E INK WASH VARIANT
@@ -738,6 +739,22 @@ body::before {
   line-height: 1.6;
   color: var(--ink);
   word-break: break-word;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.log-icon {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  color: var(--ink-light);
+  flex-shrink: 0;
 }
 
 /* ============================================================
@@ -1398,6 +1415,130 @@ body::before {
 <script>
 const PLACEHOLDER_LOG = 'OFFLINE — waiting for runtime updates';
 
+const LOG_TYPE_ICONS = {
+  movement:       'explore',
+  fight:          'swords',
+  gathering:      'landscape',
+  crafting:       'construction',
+  rest:           'bedtime',
+  use:            'auto_awesome',
+  equip:          'shield',
+  unequip:        'backpack',
+  deposit_item:   'account_balance',
+  deposit_gold:   'savings',
+  withdraw_item:  'output',
+  withdraw_gold:  'savings',
+  sell:           'sell',
+  buy:            'shopping_cart',
+  recycling:      'recycling',
+  task:           'assignment',
+  delete:         'delete',
+  _default:       'help',
+};
+
+function logTypeIcon(type) {
+  const name = LOG_TYPE_ICONS[type] || LOG_TYPE_ICONS._default;
+  return `<span class="log-icon">${name}</span>`;
+}
+
+function formatLogTime(atMs) {
+  if (!atMs) return '';
+  const d = new Date(atMs);
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function itemList(items) {
+  if (!items?.length) return '';
+  return items.map(i => `${i.code || i.item}x${i.qty || i.quantity}`).join(', ');
+}
+
+function formatLogSummary(type, d) {
+  if (!d) return null;
+  switch (type) {
+    case 'fight': {
+      const won = d.result === 'win';
+      const base = won ? `Won vs ${d.monster || '?'}` : `Lost vs ${d.monster || '?'}`;
+      const parts = [base];
+      if (d.xp) parts.push(`+${d.xp}xp`);
+      if (d.gold) parts.push(`+${d.gold}g`);
+      const drops = itemList(d.drops);
+      if (drops) parts.push(drops);
+      return parts.join(' ');
+    }
+    case 'gathering': {
+      const parts = [];
+      if (d.skill) parts.push(d.skill);
+      if (d.resource) parts.push(d.resource);
+      if (d.xp) parts.push(`+${d.xp}xp`);
+      const drops = itemList(d.drops);
+      if (drops) parts.push(drops);
+      return parts.join(' ') || null;
+    }
+    case 'crafting': {
+      const parts = [`Crafted ${d.item || '?'}`];
+      if (d.quantity > 1) parts[0] += ` x${d.quantity}`;
+      if (d.xp) parts.push(`+${d.xp}xp`);
+      return parts.join(' ');
+    }
+    case 'movement':
+      return `\u2192 ${d.map || '?'} (${d.x},${d.y})`;
+    case 'use':
+      return `Used ${d.item || '?'}`;
+    case 'rest':
+      return `Rested +${d.hpRestored || 0}HP`;
+    case 'deposit_item':
+      return `Deposited ${d.items?.length || 0} item type${d.items?.length !== 1 ? 's' : ''}`;
+    case 'deposit_gold':
+      return `Deposited ${d.gold || 0}g`;
+    case 'withdraw_item': {
+      const summary = itemList(d.items);
+      return `Withdrew ${summary || 'items'}`;
+    }
+    case 'withdraw_gold':
+      return `Withdrew ${d.gold || 0}g`;
+    case 'equip':
+      return `Equipped ${d.item || '?'} \u2192 ${d.slot || '?'}`;
+    case 'unequip':
+      return `Unequipped ${d.item || '?'} \u2190 ${d.slot || '?'}`;
+    default:
+      return null;
+  }
+}
+
+function formatLogTooltip(type, d, description) {
+  if (!d) return description || '';
+  const lines = [description || ''];
+
+  if (type === 'fight' && Array.isArray(d.turns) && d.turns.length) {
+    lines.push('');
+    for (let i = 0; i < d.turns.length; i++) {
+      const t = d.turns[i];
+      if (!t) continue;
+      const atk = t.attacker_name || 'Attacker';
+      const def = t.defender_name || 'Defender';
+      const dmg = t.damage ?? '?';
+      const parts = [`T${i + 1}: ${atk} \u2192 ${def} ${dmg}dmg`];
+      if (t.ability) parts.push(`(${t.ability})`);
+      lines.push(parts.join(' '));
+    }
+  }
+
+  if (type === 'movement' && Array.isArray(d.path) && d.path.length > 2) {
+    lines.push('');
+    lines.push('Path: ' + d.path.map(p => `(${p[0]},${p[1]})`).join(' \u2192 '));
+  }
+
+  if ((type === 'deposit_item' || type === 'withdraw_item') && d.items?.length) {
+    lines.push('');
+    lines.push('Items: ' + itemList(d.items));
+  }
+
+  return lines.join('\n');
+}
+
 /* ==============================================================
    PORTRAIT PIXEL ART DEFINITIONS
    16x16 grid, drawn at native res then displayed at 96x96 via CSS
@@ -1740,6 +1881,10 @@ function normalizeCharacter(raw) {
   const xp = Math.max(0, toNumber(raw?.xp, 0));
 
   const taskLabel = safeText(raw?.task?.label, offline ? 'OFFLINE' : 'No active task');
+  const gameLogLatest = safeText(raw?.gameLogLatest, offline ? PLACEHOLDER_LOG : 'Waiting for activity...');
+  const gameLogLatestType = raw?.gameLogLatestType || null;
+  const gameLogLatestAtMs = Math.max(0, toNumber(raw?.gameLogLatestAtMs, 0));
+  const gameLogLatestDetail = raw?.gameLogLatestDetail || null;
   const logLatest = safeText(raw?.logLatest, offline ? PLACEHOLDER_LOG : 'No activity yet');
 
   const cooldown = raw?.cooldown || {};
@@ -1759,6 +1904,10 @@ function normalizeCharacter(raw) {
     xp,
     maxXp,
     taskLabel,
+    gameLogLatest,
+    gameLogLatestType,
+    gameLogLatestAtMs,
+    gameLogLatestDetail,
     logLatest,
     cooldown: {
       action: safeText(cooldown.action, ''),
@@ -1927,7 +2076,17 @@ function applyCharacterState(char) {
   refs.xpFill.style.width = `${statPct(char.xp, char.maxXp).toFixed(1)}%`;
   refs.xpText.textContent = `${char.xp} / ${char.maxXp}`;
 
-  refs.logText.textContent = char.logLatest;
+  if (char.gameLogLatestAtMs) {
+    const icon = logTypeIcon(char.gameLogLatestType);
+    const time = escapeHtml(formatLogTime(char.gameLogLatestAtMs));
+    const summary = formatLogSummary(char.gameLogLatestType, char.gameLogLatestDetail);
+    const text = escapeHtml(summary || char.gameLogLatest);
+    refs.logText.innerHTML = `${icon}<span>${time} ${text}</span>`;
+    refs.logText.title = formatLogTooltip(char.gameLogLatestType, char.gameLogLatestDetail, char.gameLogLatest);
+  } else {
+    refs.logText.textContent = char.gameLogLatest;
+    refs.logText.title = '';
+  }
   refs.taskText.textContent = char.taskLabel;
 
   if (refs.portraitType !== char.portraitType) {

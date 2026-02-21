@@ -317,20 +317,33 @@ let transitionTilesCache = null; // Array of { x, y, layer, name, access }
 
 async function discoverTransitionTiles() {
   try {
-    const maps = await api.getMaps({ content_type: 'portal', size: 100 });
-    const list = Array.isArray(maps) ? maps : [];
-    transitionTilesCache = list.map(t => ({
-      x: t.x,
-      y: t.y,
-      layer: t.layer || 'unknown',
-      name: t.name || '',
-      conditions: t.access?.conditions || [],
-    }));
-    if (transitionTilesCache.length > 0) {
-      const summary = transitionTilesCache.map(t => `${t.name || '?'} (${t.x},${t.y}) [${t.layer}]`).join(', ');
-      log.info(`[GameData] Found ${transitionTilesCache.length} transition tiles: ${summary}`);
+    const tiles = [];
+    let page = 1;
+    while (true) {
+      const result = await api.getMaps({ page, size: 100 });
+      const maps = Array.isArray(result) ? result : [];
+      if (maps.length === 0) break;
+      for (const t of maps) {
+        if (t.interactions?.transition) {
+          tiles.push({
+            x: t.x,
+            y: t.y,
+            layer: t.layer || 'unknown',
+            name: t.name || '',
+            conditions: t.access?.conditions || [],
+            transition: t.interactions.transition,
+          });
+        }
+      }
+      if (maps.length < 100) break;
+      page++;
+    }
+    transitionTilesCache = tiles;
+    if (tiles.length > 0) {
+      const summary = tiles.map(t => `${t.name || '?'} (${t.x},${t.y}) [${t.layer}]`).join(', ');
+      log.info(`[GameData] Found ${tiles.length} transition tiles: ${summary}`);
     } else {
-      log.info('[GameData] No transition tiles found (tried content_type=portal)');
+      log.info('[GameData] No transition tiles found');
     }
   } catch (err) {
     log.warn(`[GameData] Could not discover transition tiles: ${err.message}`);

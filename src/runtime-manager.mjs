@@ -22,12 +22,74 @@ import {
   unregisterContext,
 } from './services/gear-state.mjs';
 import { createCharacter, subscribeActionEvents } from './api.mjs';
-import { initializeUiState, recordCooldown, recordLog } from './services/ui-state.mjs';
+import { initializeUiState, recordCooldown, recordLog, recordGameLog } from './services/ui-state.mjs';
 import {
   initialize as initWebSocket,
   cleanup as cleanupWebSocket,
   getState as getWebSocketState,
+  subscribe as wsSubscribe,
 } from './services/websocket-client.mjs';
+
+/**
+ * Extract a lightweight detail object from account_log content per action type.
+ * Strips the full character snapshot — only keeps fields useful for display.
+ */
+function extractLogDetail(type, content) {
+  if (!content) return null;
+  switch (type) {
+    case 'fight': {
+      const f = content.fight;
+      if (!f) return null;
+      const ch = f.characters?.[0] || {};
+      return {
+        result: f.result,
+        monster: f.monster?.name || f.monster_name || null,
+        xp: ch.xp || 0,
+        gold: ch.gold || 0,
+        drops: ch.drops || [],
+        turns: f.turns || [],
+      };
+    }
+    case 'gathering': {
+      const g = content.gathering;
+      return {
+        resource: g?.resource?.code || null,
+        skill: g?.skill || null,
+        xp: g?.xp || 0,
+        drops: content.drops || [],
+      };
+    }
+    case 'crafting':
+      return {
+        item: content.item?.code || null,
+        quantity: content.quantity || 0,
+        skill: content.skill || null,
+        xp: content.xp_gained || 0,
+      };
+    case 'movement':
+      return {
+        map: content.map?.name || null,
+        x: content.map?.x ?? null,
+        y: content.map?.y ?? null,
+        path: content.path || [],
+      };
+    case 'use':
+      return { item: content.item?.code || null, quantity: content.quantity || 0 };
+    case 'rest':
+      return { hpRestored: content.hp_restored || 0 };
+    case 'deposit_item':
+    case 'withdraw_item':
+      return { items: (content.items || []).map(i => ({ code: i.code, qty: i.quantity })) };
+    case 'deposit_gold':
+    case 'withdraw_gold':
+      return { gold: content.gold || 0 };
+    case 'equip':
+    case 'unequip':
+      return { item: content.item?.code || null, slot: content.slot || null };
+    default:
+      return null;
+  }
+}
 
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
@@ -209,6 +271,7 @@ export class RuntimeManager {
       startedAt: Date.now(),
     });
 
+    // Internal bot logs — kept for detail modal only (not card display).
     const unsubscribeLogEvents = log.subscribeLogEvents((entry) => {
       const match = entry.msg.match(/^\[([^\]]+)\]/);
       if (!match) return;
@@ -233,6 +296,20 @@ export class RuntimeManager {
       });
     });
 
+    // Game account log via WebSocket — drives the card LOG display.
+    let unsubscribeAccountLog = null;
+    if (process.env.WEBSOCKET_URL) {
+      unsubscribeAccountLog = wsSubscribe('account_log', (data) => {
+        if (!data?.character || !configuredNameSet.has(data.character)) return;
+        recordGameLog(data.character, {
+          line: data.description || `${data.type || 'action'}`,
+          type: data.type || null,
+          at: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
+          detail: extractLogDetail(data.type, data.content),
+        });
+      });
+    }
+
     return {
       runId: ++this.runSeq,
       configPath,
@@ -242,6 +319,7 @@ export class RuntimeManager {
       loopPromises: [],
       unsubscribeLogEvents,
       unsubscribeActionEvents,
+      unsubscribeAccountLog,
       startedAtMs: Date.now(),
     };
   }
@@ -343,6 +421,15 @@ export class RuntimeManager {
         // No-op
       }
       run.unsubscribeLogEvents = null;
+    }
+
+    if (typeof run.unsubscribeAccountLog === 'function') {
+      try {
+        run.unsubscribeAccountLog();
+      } catch {
+        // No-op
+      }
+      run.unsubscribeAccountLog = null;
     }
   }
 
