@@ -60,6 +60,7 @@ function makeGameDataStub(overrides = {}) {
     async getBankItems() { return new Map(); },
     resolveRecipeChain() { return null; },
     canFulfillPlan() { return false; },
+    canFulfillPlanWithBank() { return { ok: false, deficits: [] }; },
     isTaskReward() { return false; },
     ...overrides,
   };
@@ -163,6 +164,7 @@ async function testAlchemyCraftingSelectsViableRecipe() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -193,6 +195,7 @@ async function testAlchemyCraftingNonViableFallsBackToGathering() {
       craftSkill === 'alchemy' && maxLevel >= 5 ? [recipe] : [],
     resolveRecipeChain: () => impossiblePlan,
     canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
     findResourcesBySkill: () => [gatherFallback],
     getResourceLocation: async () => ({ x: 2, y: 2 }),
   });
@@ -233,6 +236,7 @@ async function testCraftingXpPrefersBankOnlyRecipe() {
     getBankItems: async () => new Map([['raw_shrimp', 20]]),
     resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -273,6 +277,7 @@ async function testCraftingXpFallsBackToHighestLevelWhenNoBankOnly() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -313,6 +318,7 @@ async function testCraftingSkipsTemporarilyBlockedRecipe() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -342,6 +348,7 @@ async function testUnwinnableCombatRecipeIsTemporarilyBlocked() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -380,6 +387,7 @@ async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
   const stub = makeGameDataStub({
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -422,6 +430,7 @@ async function testOrderBoardCanDisableOrderCreation() {
   const stub = makeGameDataStub({
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -515,6 +524,7 @@ async function testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar() {
       },
     ];
     routine._canFulfillCraftClaimPlan = () => true;
+    routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
     let simCalls = 0;
     routine._simulateClaimFight = async () => {
       simCalls += 1;
@@ -570,6 +580,7 @@ async function testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar() {
       { type: 'bank', itemCode: 'event_core', quantity: 1 },
     ];
     routine._canFulfillCraftClaimPlan = () => true;
+    routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
     let simCalls = 0;
     routine._simulateClaimFight = async () => {
       simCalls += 1;
@@ -689,6 +700,7 @@ async function testAcquireCraftClaimSucceedsWhenPrechecksPass() {
       },
     ];
     routine._canFulfillCraftClaimPlan = () => true;
+    routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
     routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 40 } });
 
     const claim = await routine._acquireCraftOrderClaim(
@@ -1954,6 +1966,222 @@ async function testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards() {
   }
 }
 
+async function testCraftClaimSucceedsWhenBankCoversGatherDeficit() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'wooden_staff',
+      itemCode: 'wooden_staff',
+      sourceType: 'craft',
+      sourceCode: 'wooden_staff',
+      craftSkill: 'weaponcrafting',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    // Bank has the gather material the character can't gather
+    routine._getBankItems = async () => new Map([['ash_wood', 10]]);
+    routine._getCraftClaimItem = () => ({
+      code: 'wooden_staff',
+      craft: { skill: 'weaponcrafting', level: 5, items: [{ code: 'wooden_stick', quantity: 1 }] },
+    });
+    routine._resolveRecipeChain = () => [
+      {
+        type: 'gather',
+        itemCode: 'ash_wood',
+        quantity: 2,
+        resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+      },
+      {
+        type: 'craft',
+        itemCode: 'wooden_stick',
+        recipe: { skill: 'weaponcrafting', level: 1, items: [{ code: 'ash_wood', quantity: 2 }] },
+        quantity: 1,
+      },
+    ];
+    // Character has woodcutting 1 (too low for lv10 ash_tree), but bank has 10 ash_wood
+    // Bank-aware check should pass because bank covers the gather deficit
+    routine._canFulfillCraftClaimPlanWithBank = (_plan, ctx, bankItems) => {
+      const bank = bankItems instanceof Map ? bankItems : new Map();
+      // Simulate: woodcutting too low, but bank has ash_wood
+      const have = (ctx.itemCount('ash_wood') || 0) + (bank.get('ash_wood') || 0);
+      if (have >= 2) return { ok: true, deficits: [] };
+      return { ok: false, deficits: [{ type: 'gather', itemCode: 'ash_wood', resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 }, quantity: 2 }] };
+    };
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 0 } });
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { weaponcrafting: 10, woodcutting: 1 } }),
+      'weaponcrafting',
+    );
+
+    assert.ok(claim, 'craft claim should succeed when bank covers gather deficit');
+    assert.equal(claim?.itemCode, 'wooden_staff');
+  });
+}
+
+async function testCraftClaimRejectsInsufficientIntermediateCraftSkill() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'fancy_item',
+      itemCode: 'fancy_item',
+      sourceType: 'craft',
+      sourceCode: 'fancy_item',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 10,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'fancy_item',
+      craft: { skill: 'gearcrafting', level: 10, items: [{ code: 'sub_part', quantity: 1 }] },
+    });
+    routine._resolveRecipeChain = () => [
+      {
+        type: 'craft',
+        itemCode: 'sub_part',
+        recipe: { skill: 'jewelrycrafting', level: 20, items: [{ code: 'gem', quantity: 1 }] },
+        quantity: 1,
+      },
+    ];
+    // Character has gearcrafting 10 but jewelrycrafting 5 (too low for lv20 sub_part)
+    routine._canFulfillCraftClaimPlanWithBank = () => ({
+      ok: false,
+      deficits: [{
+        type: 'craft',
+        itemCode: 'sub_part',
+        recipe: { skill: 'jewelrycrafting', level: 20 },
+        quantity: 1,
+      }],
+    });
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 0 } });
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { gearcrafting: 10, jewelrycrafting: 5 } }),
+      'gearcrafting',
+    );
+
+    assert.equal(claim, null, 'claim should be rejected when intermediate craft skill too low');
+    assert.equal(
+      listClaimableOrders({ sourceType: 'craft', craftSkill: 'gearcrafting', charName: 'Tester' }).length,
+      0,
+      'rejected order should be blocked for this character',
+    );
+  });
+}
+
+async function testCraftClaimQueuesGatherOrderOnInsufficientSkill() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true, createOrders: true },
+    });
+
+    // Set up a rotation that supports order creation
+    routine.rotation = new SkillRotation({
+      skills: ['weaponcrafting'],
+      orderBoard: { enabled: true, createOrders: true },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'wooden_staff',
+      itemCode: 'wooden_staff',
+      sourceType: 'craft',
+      sourceCode: 'wooden_staff',
+      craftSkill: 'weaponcrafting',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'wooden_staff',
+      craft: { skill: 'weaponcrafting', level: 5, items: [{ code: 'ash_wood', quantity: 2 }] },
+    });
+    const gatherStep = {
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 2,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    };
+    routine._resolveRecipeChain = () => [gatherStep];
+    routine._canFulfillCraftClaimPlanWithBank = () => ({
+      ok: false,
+      deficits: [gatherStep],
+    });
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 0 } });
+
+    let enqueuedOrders = [];
+    routine._enqueueGatherOrderForDeficit = (step, order, ctx, deficit) => {
+      enqueuedOrders.push({ step, orderItemCode: order.itemCode, charName: ctx.name, deficit });
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { weaponcrafting: 10, woodcutting: 1 } }),
+      'weaponcrafting',
+    );
+
+    assert.equal(claim, null, 'claim should be rejected for insufficient gather skill');
+    assert.equal(enqueuedOrders.length, 1, 'should queue one gather order for the deficit');
+    assert.equal(enqueuedOrders[0].step.itemCode, 'ash_wood');
+    assert.equal(enqueuedOrders[0].deficit, 2);
+  });
+}
+
+async function testBuildCraftCandidateAcceptsWhenBankCoversMaterials() {
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 3,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    },
+    {
+      type: 'craft',
+      itemCode: 'ash_plank',
+      recipe: { skill: 'woodcutting', level: 1, items: [{ code: 'ash_wood', quantity: 3 }] },
+      quantity: 1,
+    },
+  ];
+  const recipe = makeRecipe('ash_plank', 'woodcutting', 5);
+
+  // Bank has all the raw materials — character doesn't need to gather
+  const bank = new Map([['ash_wood', 10]]);
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false, // Pure skill check would fail
+    canFulfillPlanWithBank: (_steps, _ctx, bankItems) => {
+      const have = (bankItems?.get('ash_wood') || 0);
+      if (have >= 3) return { ok: true, deficits: [] };
+      return { ok: false, deficits: [plan[0]] };
+    },
+  });
+
+  const rotation = new SkillRotation(
+    { skills: ['woodcutting'], orderBoard: { enabled: true, createOrders: true } },
+    { gameDataSvc: stub },
+  );
+
+  const ctx = makeCtx({ skillLevels: { woodcutting: 1 } }); // Too low to gather
+  const candidate = rotation._buildCraftCandidate(recipe, ctx, bank);
+
+  assert.ok(candidate, 'candidate should be returned when bank covers all gather materials');
+  assert.equal(candidate.recipe.code, 'ash_plank');
+}
+
 async function run() {
   await testContextTaskCoinsUsesInventoryOnly();
   await testAlchemyFallbackToGatherAtLevel1();
@@ -2000,6 +2228,10 @@ async function run() {
   await testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards();
   await testCraftingWithdrawSkipsFinalRecipeOutput();
   await testCraftingWithdrawHonorsReserveMaxUnits();
+  await testCraftClaimSucceedsWhenBankCoversGatherDeficit();
+  await testCraftClaimRejectsInsufficientIntermediateCraftSkill();
+  await testCraftClaimQueuesGatherOrderOnInsufficientSkill();
+  await testBuildCraftCandidateAcceptsWhenBankCoversMaterials();
   resetOrderPriorityForTests();
   console.log('skill-rotation tests passed');
 }

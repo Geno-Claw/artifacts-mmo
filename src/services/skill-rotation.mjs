@@ -377,7 +377,8 @@ export class SkillRotation {
   _buildCraftCandidate(recipe, ctx, bank) {
     const plan = this.gameData.resolveRecipeChain(recipe.craft);
     if (!plan || plan.length === 0) return null;
-    if (!this.gameData.canFulfillPlan(plan, ctx)) {
+    const planCheck = this.gameData.canFulfillPlanWithBank(plan, ctx, bank);
+    if (!planCheck.ok) {
       this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank);
       return null;
     }

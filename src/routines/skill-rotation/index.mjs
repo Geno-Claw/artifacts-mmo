@@ -29,7 +29,7 @@ import { executeCrafting, equipForCraftFight, handleUnwinnableCraftFight, invent
 import { executeNpcTask, executeItemTask, executeTaskByType, inferTaskType, runNpcTaskFlow } from './npc-tasks.mjs';
 import { runItemTaskFlow, craftForItemTask, craftAndTradeItemTaskFromInventory, placeOrderAndCancel, cancelItemTask, withdrawForItemTask, shouldTradeItemTaskNow, gatherForItemTask, tradeItemTask } from './item-tasks.mjs';
 import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, inventorySnapshotForTargets } from './task-exchange.mjs';
-import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById } from './order-claims.mjs';
+import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit } from './order-claims.mjs';
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
   enabled: false,
@@ -176,6 +176,10 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.canFulfillPlan(plan, ctx);
   }
 
+  _canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems) {
+    return gameData.canFulfillPlanWithBank(plan, ctx, bankItems);
+  }
+
   _isTaskRewardCode(itemCode) {
     return gameData.isTaskReward(itemCode);
   }
@@ -260,4 +264,5 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _ensureOrderClaim(ctx, sourceType, opts) { return ensureOrderClaim(ctx, this, sourceType, opts); }
   async _depositClaimItemsIfNeeded(ctx, opts) { return depositClaimItemsIfNeeded(ctx, this, opts); }
   async _blockAndReleaseClaim(ctx, reason) { return blockAndReleaseClaim(ctx, this, reason); }
+  _enqueueGatherOrderForDeficit(step, order, ctx, deficit) { return enqueueGatherOrderForDeficit(this, step, order, ctx, deficit); }
 }

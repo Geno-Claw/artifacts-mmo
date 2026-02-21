@@ -144,11 +144,17 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
     return { ok: false, reason: 'unresolvable_recipe_chain' };
   }
 
-  if (!routine._canFulfillCraftClaimPlan(plan, ctx)) {
-    return { ok: false, reason: 'insufficient_gather_skill' };
-  }
-
   const bankItems = bank instanceof Map ? bank : new Map();
+
+  // Bank-aware plan check: skip gather/craft skill checks when bank+inventory covers the need
+  const planCheck = routine._canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems);
+  if (!planCheck.ok) {
+    const firstDeficit = planCheck.deficits[0];
+    if (firstDeficit?.type === 'craft') {
+      return { ok: false, reason: `insufficient_craft_skill:${firstDeficit.itemCode}` };
+    }
+    return { ok: false, reason: 'insufficient_gather_skill', deficits: planCheck.deficits };
+  }
 
   for (const step of plan) {
     if (step.type !== 'bank') continue;
@@ -208,6 +214,17 @@ export async function acquireCraftOrderClaim(ctx, routine, craftSkill) {
       }
     }
     if (!viability.ok) {
+      // Queue gather orders for deficit materials so other characters can help
+      if (viability.reason === 'insufficient_gather_skill' && viability.deficits?.length > 0) {
+        for (const step of viability.deficits) {
+          if (step.type !== 'gather' || !step.resource) continue;
+          const bankItems = bank instanceof Map ? bank : new Map();
+          const deficit = step.quantity - ctx.itemCount(step.itemCode) - (bankItems.get(step.itemCode) || 0);
+          if (deficit > 0) {
+            routine._enqueueGatherOrderForDeficit(step, order, ctx, deficit);
+          }
+        }
+      }
       routine._blockUnclaimableOrderForChar(order, ctx, viability.reason);
       continue;
     }
@@ -288,6 +305,25 @@ export async function depositClaimItemsIfNeeded(ctx, routine, { force = false } 
     log.info(`[${ctx.name}] Order progress: ${fresh.itemCode} remaining ${fresh.remainingQty}`);
   }
   return true;
+}
+
+export function enqueueGatherOrderForDeficit(routine, step, order, ctx, deficit) {
+  if (!step?.resource || !routine.rotation) return;
+  try {
+    routine.rotation._enqueueOrder({
+      requesterName: ctx.name,
+      recipeCode: order?.itemCode || '',
+      itemCode: step.itemCode,
+      sourceType: 'gather',
+      sourceCode: step.resource.code,
+      gatherSkill: step.resource.skill,
+      sourceLevel: step.resource.level,
+      quantity: Math.max(1, Math.floor(Number(deficit) || 0)),
+    });
+    log.info(`[${ctx.name}] Order claim: queued gather order for ${step.itemCode} x${deficit} (${step.resource.skill} lv${step.resource.level})`);
+  } catch (err) {
+    log.warn(`[${ctx.name}] Could not queue gather order for ${step.itemCode}: ${err?.message || String(err)}`);
+  }
 }
 
 export async function blockAndReleaseClaim(ctx, routine, reason = 'blocked') {
