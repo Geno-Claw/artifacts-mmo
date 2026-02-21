@@ -1,7 +1,7 @@
 /**
  * Automatic bank expansion purchasing.
- * Checks bank capacity via GET /my/bank; when free slots drop below threshold
- * and enough gold is available, purchases a 20-slot expansion.
+ * Buys a 20-slot expansion whenever the next expansion is affordable
+ * (cost <= maxGoldPct of total gold).
  *
  * Module-level shared state coordinates across all character instances
  * so only one character purchases at a time.
@@ -11,7 +11,6 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { ensureAtBank } from '../services/bank-travel.mjs';
 import { withdrawGoldFromBank } from '../services/bank-ops.mjs';
-import { getBankItems } from '../services/inventory-manager.mjs';
 
 // Shared across all BankExpansionRoutine instances (one per character).
 let _purchasing = false;
@@ -21,43 +20,29 @@ let _detailsFetchedAt = 0;
 export class BankExpansionRoutine extends BaseRoutine {
   constructor({
     priority = 45,
-    slotThreshold = 5,
     checkIntervalMs = 300_000,
     maxGoldPct = 0.7,
+    goldBuffer = 0,
   } = {}) {
     super({ name: 'Bank Expansion', priority, loop: false });
-    this.slotThreshold = slotThreshold;
     this.checkIntervalMs = checkIntervalMs;
     this.maxGoldPct = maxGoldPct;
+    this.goldBuffer = goldBuffer;
   }
 
   canRun(ctx) {
     if (_purchasing) return false;
 
     const now = Date.now();
-    const cacheValid = _bankDetails && (now - _detailsFetchedAt) < this.checkIntervalMs;
-
-    if (!cacheValid) {
+    if (!_bankDetails || (now - _detailsFetchedAt) >= this.checkIntervalMs) {
       // Cache expired or missing — let execute() fetch fresh data and decide.
       return true;
     }
 
-    // Use cached details for a quick synchronous check.
-    const bankItems = getBankItems();
-    // getBankItems returns a Map synchronously from cache (or a Promise if
-    // cache is stale). If it's a Promise, let execute() handle it.
-    if (bankItems instanceof Promise) return true;
-
-    const usedSlots = bankItems.size;
-    const freeSlots = _bankDetails.slots - usedSlots;
-    if (freeSlots > this.slotThreshold) return false;
-
+    // Use cached details for a quick synchronous affordability check.
     const cost = _bankDetails.next_expansion_cost;
     const totalGold = ctx.get().gold + (_bankDetails.gold || 0);
-    if (totalGold < cost) return false;
-    if (cost > totalGold * this.maxGoldPct) return false;
-
-    return true;
+    return cost <= totalGold * this.maxGoldPct && totalGold - cost >= this.goldBuffer;
   }
 
   async execute(ctx) {
@@ -75,30 +60,20 @@ export class BankExpansionRoutine extends BaseRoutine {
     _bankDetails = details;
     _detailsFetchedAt = Date.now();
 
-    // Compute free slots using inventory-manager's bank item map.
-    const bankItems = await getBankItems();
-    const usedSlots = bankItems.size;
-    const freeSlots = details.slots - usedSlots;
     const cost = details.next_expansion_cost;
-
-    log.info(`[${ctx.name}] Bank expansion check: ${usedSlots}/${details.slots} slots used (${freeSlots} free), next expansion ${cost}g`);
-
-    if (freeSlots > this.slotThreshold) {
-      log.info(`[${ctx.name}] Bank has ${freeSlots} free slots (threshold: ${this.slotThreshold}), skipping`);
-      return;
-    }
-
     const charGold = ctx.get().gold;
     const bankGold = details.gold || 0;
     const totalGold = charGold + bankGold;
 
-    if (totalGold < cost) {
-      log.info(`[${ctx.name}] Not enough gold for expansion: need ${cost}g, have ${totalGold}g (${charGold}g char, ${bankGold}g bank)`);
-      return;
-    }
+    log.info(`[${ctx.name}] Bank expansion check: next expansion ${cost}g, total gold ${totalGold}g (${charGold}g char, ${bankGold}g bank)`);
 
     if (cost > totalGold * this.maxGoldPct) {
       log.info(`[${ctx.name}] Expansion too expensive: ${cost}g is >${Math.round(this.maxGoldPct * 100)}% of ${totalGold}g total`);
+      return;
+    }
+
+    if (totalGold - cost < this.goldBuffer) {
+      log.info(`[${ctx.name}] Expansion would leave ${totalGold - cost}g, need ${this.goldBuffer}g buffer`);
       return;
     }
 
@@ -149,4 +124,9 @@ export function _getSharedState() {
 
 export function _setPurchasing(val) {
   _purchasing = val;
+}
+
+export function _setBankDetails(details) {
+  _bankDetails = details;
+  _detailsFetchedAt = details ? Date.now() : 0;
 }

@@ -1344,6 +1344,22 @@ body::before {
     data-runtime-control="restart"
     hidden
   >RESTART BOT</button>
+  <button
+    class="action-btn dashboard-control-btn"
+    id="clearOrderBoardBtn"
+    type="button"
+    title="Clear all crafting coordination orders. Characters will re-publish desired orders on the next gear state refresh cycle."
+    data-runtime-control="clear-order-board"
+    hidden
+  >RESET ORDERS</button>
+  <button
+    class="action-btn dashboard-control-btn"
+    id="clearGearStateBtn"
+    type="button"
+    title="Clear all gear assignments and desired items. The gear optimizer will recompute everything from scratch on the next refresh cycle."
+    data-runtime-control="clear-gear-state"
+    hidden
+  >RESET GEAR</button>
 </div>
 <section class="dashboard-control-status" id="controlStatusPanel" aria-live="polite" hidden>
   <div class="dashboard-control-status-grid">
@@ -1780,10 +1796,14 @@ const ORDER_FILTER_LABELS = {
 const CONTROL_ACTION_LABELS = {
   reload: 'Reload Config',
   restart: 'Restart Bot',
+  'clear-order-board': 'Clear Order Board',
+  'clear-gear-state': 'Clear Gear State',
 };
 const CONTROL_ACTION_ENDPOINTS = {
   get reload() { return (window.__BASE_PATH__||'')+'/api/control/reload-config'; },
   get restart() { return (window.__BASE_PATH__||'')+'/api/control/restart'; },
+  get 'clear-order-board'() { return (window.__BASE_PATH__||'')+'/api/control/clear-order-board'; },
+  get 'clear-gear-state'() { return (window.__BASE_PATH__||'')+'/api/control/clear-gear-state'; },
 };
 const CONTROL_OPERATION_STATE_VALUES = new Set(['idle', 'in-flight', 'success', 'failure']);
 const CONTROL_STATUS_POLL_MS = 5000;
@@ -1840,6 +1860,8 @@ const controlState = {
 
 const controlRefs = {
   restartBtn: null,
+  clearOrderBoardBtn: null,
+  clearGearStateBtn: null,
   statusPanel: null,
   runtimeState: null,
   operationState: null,
@@ -2230,6 +2252,12 @@ function normalizeControlAction(value, fallback = '') {
   if (normalized === 'restart' || normalized === 'restart-bot' || normalized === 'restart_bot') {
     return 'restart';
   }
+  if (normalized === 'clear-order-board' || normalized === 'clear_order_board') {
+    return 'clear-order-board';
+  }
+  if (normalized === 'clear-gear-state' || normalized === 'clear_gear_state') {
+    return 'clear-gear-state';
+  }
   return fallback;
 }
 
@@ -2402,12 +2430,20 @@ function renderControlPanel() {
   if (controlRefs.restartBtn) {
     controlRefs.restartBtn.hidden = !controlsAvailable;
   }
+  if (controlRefs.clearOrderBoardBtn) {
+    controlRefs.clearOrderBoardBtn.hidden = !controlsAvailable;
+  }
+  if (controlRefs.clearGearStateBtn) {
+    controlRefs.clearGearStateBtn.hidden = !controlsAvailable;
+  }
   if (controlRefs.statusPanel) {
     controlRefs.statusPanel.hidden = !controlsAvailable;
   }
 
   if (!controlsAvailable) {
     if (controlRefs.restartBtn) controlRefs.restartBtn.disabled = true;
+    if (controlRefs.clearOrderBoardBtn) controlRefs.clearOrderBoardBtn.disabled = true;
+    if (controlRefs.clearGearStateBtn) controlRefs.clearGearStateBtn.disabled = true;
     if (controlRefs.runtimeState) {
       controlRefs.runtimeState.textContent = '--';
       controlRefs.runtimeState.classList.remove('is-error');
@@ -2435,6 +2471,12 @@ function renderControlPanel() {
 
   if (controlRefs.restartBtn) {
     controlRefs.restartBtn.disabled = controlsLocked;
+  }
+  if (controlRefs.clearOrderBoardBtn) {
+    controlRefs.clearOrderBoardBtn.disabled = controlsLocked;
+  }
+  if (controlRefs.clearGearStateBtn) {
+    controlRefs.clearGearStateBtn.disabled = controlsLocked;
   }
 
   const runtimeValue = formatUpperToken(snapshot?.lifecycle, 'UNKNOWN');
@@ -4181,6 +4223,8 @@ function setupModalFramework() {
   modalRefs.closeBtn = document.getElementById('modalCloseBtn');
   modalRefs.configBtn = document.getElementById('openConfigBtn');
   controlRefs.restartBtn = document.getElementById('restartBotBtn');
+  controlRefs.clearOrderBoardBtn = document.getElementById('clearOrderBoardBtn');
+  controlRefs.clearGearStateBtn = document.getElementById('clearGearStateBtn');
   controlRefs.statusPanel = document.getElementById('controlStatusPanel');
   controlRefs.runtimeState = document.getElementById('controlRuntimeState');
   controlRefs.operationState = document.getElementById('controlOperationState');
@@ -4196,6 +4240,12 @@ function setupModalFramework() {
   }
   if (controlRefs.restartBtn) {
     controlRefs.restartBtn.addEventListener('click', onRuntimeControlButtonClick);
+  }
+  if (controlRefs.clearOrderBoardBtn) {
+    controlRefs.clearOrderBoardBtn.addEventListener('click', onRuntimeControlButtonClick);
+  }
+  if (controlRefs.clearGearStateBtn) {
+    controlRefs.clearGearStateBtn.addEventListener('click', onRuntimeControlButtonClick);
   }
   if (modalRefs.scrim) {
     modalRefs.scrim.addEventListener('click', () => closeCharacterModal());

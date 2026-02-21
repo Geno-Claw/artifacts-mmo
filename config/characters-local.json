@@ -16,6 +16,10 @@
           "type": "depositBank"
         },
         {
+          "type": "bankExpansion",
+          "goldBuffer": 1000
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "alchemy": 10,
@@ -68,6 +72,10 @@
           "type": "depositBank"
         },
         {
+          "type": "bankExpansion",
+          "goldBuffer": 1000
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "alchemy": 10,
@@ -116,6 +124,10 @@
           "sellOnGE": true,
           "threshold": 0.5,
           "type": "depositBank"
+        },
+        {
+          "type": "bankExpansion",
+          "goldBuffer": 1000
         },
         {
           "craftBlacklist": {},
@@ -167,6 +179,10 @@
           "type": "depositBank"
         },
         {
+          "type": "bankExpansion",
+          "goldBuffer": 1000
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "alchemy": 10,
@@ -214,6 +230,10 @@
           "sellOnGE": true,
           "threshold": 0.5,
           "type": "depositBank"
+        },
+        {
+          "type": "bankExpansion",
+          "goldBuffer": 1000
         },
         {
           "craftBlacklist": {},

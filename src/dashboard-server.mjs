@@ -10,7 +10,8 @@ import {
   validateBotConfig,
 } from './services/config-store.mjs';
 import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './services/ui-state.mjs';
-import { getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
+import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
+import { clearGearState } from './services/gear-state.mjs';
 import { toPositiveInt } from './utils.mjs';
 
 function toPort(value, fallback) {
@@ -592,6 +593,42 @@ export async function startDashboardServer({
           });
         } catch (err) {
           sendRuntimeControlError(res, err, 'restart_failed');
+        }
+        return;
+      }
+
+      if (pathname === '/api/control/clear-order-board') {
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+        try {
+          const result = clearOrderBoard('dashboard_manual_clear');
+          sendJson(res, 200, {
+            ok: true,
+            operation: 'clear_order_board',
+            cleared: result.cleared,
+          });
+        } catch (err) {
+          sendError(res, 500, 'service_error', err?.message || 'Failed to clear order board', 'clear_order_board_failed');
+        }
+        return;
+      }
+
+      if (pathname === '/api/control/clear-gear-state') {
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+        try {
+          const result = clearGearState('dashboard_manual_clear');
+          sendJson(res, 200, {
+            ok: true,
+            operation: 'clear_gear_state',
+            cleared: result.cleared,
+          });
+        } catch (err) {
+          sendError(res, 500, 'service_error', err?.message || 'Failed to clear gear state', 'clear_gear_state_failed');
         }
         return;
       }

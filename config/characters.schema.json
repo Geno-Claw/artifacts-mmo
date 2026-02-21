@@ -135,9 +135,9 @@
       "properties": {
         "type": { "const": "bankExpansion" },
         "priority": { "type": "number", "default": 45, "description": "Execution priority (default 45, between depositBank and skillRotation)" },
-        "slotThreshold": { "type": "number", "default": 5, "minimum": 0, "description": "Purchase expansion when free bank slots drop to or below this number" },
         "checkIntervalMs": { "type": "number", "default": 300000, "minimum": 10000, "description": "Minimum milliseconds between bank capacity checks (default 5 min)" },
-        "maxGoldPct": { "type": "number", "default": 0.7, "minimum": 0, "maximum": 1, "description": "Only buy expansion if cost <= this fraction of total gold (bank + character)" }
+        "maxGoldPct": { "type": "number", "default": 0.7, "minimum": 0, "maximum": 1, "description": "Only buy expansion if cost <= this fraction of total gold (bank + character)" },
+        "goldBuffer": { "type": "number", "default": 0, "minimum": 0, "description": "Minimum gold to keep after purchase (bank + character). 0 = no minimum." }
       }
     },
 

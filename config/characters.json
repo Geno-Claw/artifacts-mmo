@@ -16,8 +16,7 @@
           "depositGold": true
         },
         {
-          "type": "bankExpansion",
-          "slotThreshold": 5
+          "type": "bankExpansion"
         },
         {
           "type": "skillRotation",
@@ -92,8 +91,7 @@
           "depositGold": true
         },
         {
-          "type": "bankExpansion",
-          "slotThreshold": 5
+          "type": "bankExpansion"
         },
         {
           "type": "skillRotation",
@@ -168,8 +166,7 @@
           "depositGold": true
         },
         {
-          "type": "bankExpansion",
-          "slotThreshold": 5
+          "type": "bankExpansion"
         },
         {
           "type": "skillRotation",
@@ -242,8 +239,7 @@
           "depositGold": true
         },
         {
-          "type": "bankExpansion",
-          "slotThreshold": 5
+          "type": "bankExpansion"
         },
         {
           "type": "skillRotation",
@@ -316,8 +312,7 @@
           "depositGold": true
         },
         {
-          "type": "bankExpansion",
-          "slotThreshold": 5
+          "type": "bankExpansion"
         },
         {
           "type": "skillRotation",

@@ -647,6 +647,36 @@ export async function flushGearState() {
   await queuePersistWrite();
 }
 
+export function clearGearState(reason = 'manual_clear') {
+  if (!initialized) return { cleared: 0 };
+
+  let cleared = 0;
+  for (const name of characterOrder) {
+    if (!stateByChar.has(name)) continue;
+    cleared += 1;
+    stateByChar.set(name, {
+      available: new Map(),
+      assigned: new Map(),
+      desired: new Map(),
+      required: new Map(),
+      selectedMonsters: [],
+      bestTarget: null,
+      levelSnapshot: 0,
+      bankRevisionSnapshot: 0,
+    });
+  }
+
+  lastBankRevision = -1;
+  for (const name of characterOrder) {
+    lastLevelSnapshot.set(name, 0);
+  }
+
+  markUpdated();
+  schedulePersist();
+  log.info(`[GearState] Cleared state for ${cleared} character(s): ${reason}`);
+  return { cleared };
+}
+
 export function _resetGearStateForTests() {
   initialized = false;
   gearStatePath = process.env.GEAR_STATE_PATH || DEFAULT_GEAR_STATE_PATH;
