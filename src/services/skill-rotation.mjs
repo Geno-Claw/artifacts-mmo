@@ -21,8 +21,8 @@ const DEFAULT_GOALS = {
   gearcrafting: 2,
   jewelrycrafting: 2,
   combat: 10,
-  npc_task: 1,
-  item_task: 1,
+  npc_task: 999,
+  item_task: 999,
 };
 
 const DEFAULT_ORDER_BOARD = Object.freeze({

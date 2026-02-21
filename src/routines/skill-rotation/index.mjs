@@ -238,7 +238,16 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _withdrawForItemTask(ctx, itemCode, needed, opts) { return withdrawForItemTask(ctx, this, itemCode, needed, opts); }
   _shouldTradeItemTaskNow(ctx, opts) { return shouldTradeItemTaskNow(ctx, opts); }
   async _gatherForItemTask(ctx, itemCode, resource, needed) { return gatherForItemTask(ctx, this, itemCode, resource, needed); }
-  async _tradeItemTask(ctx, itemCode, quantity) { return tradeItemTask(ctx, itemCode, quantity); }
+  async _tradeItemTask(ctx, itemCode, quantity) {
+    const before = ctx.get().task_progress;
+    const result = await tradeItemTask(ctx, itemCode, quantity);
+    const after = ctx.get().task_progress;
+    const delta = after - before;
+    if (delta > 0) {
+      this.rotation.recordProgress(delta);
+    }
+    return result;
+  }
 
   // --- Task Exchange ---
   _collectExchangeTargets(opts) { return collectExchangeTargets(this, opts); }

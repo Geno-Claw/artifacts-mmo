@@ -76,7 +76,6 @@ export async function runNpcTaskFlow(ctx, routine) {
     const result = await api.completeTask(ctx.name);
     ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    routine.rotation.recordProgress(1);
     log.info(`[${ctx.name}] NPC Task: completed (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
 
     // Exchange task coins for rewards if targets are configured/detected
@@ -128,8 +127,10 @@ export async function runNpcTaskFlow(ctx, routine) {
 
   // Withdraw food from bank for all remaining task fights (once per NPC task)
   if (!routine._foodWithdrawn) {
-    const remaining = c.task_total - c.task_progress;
-    await withdrawFoodForFights(ctx, monster, remaining);
+    const taskRemaining = c.task_total - c.task_progress;
+    const goalRemaining = routine.rotation.goalTarget - routine.rotation.goalProgress;
+    const fightBudget = Math.min(taskRemaining, goalRemaining);
+    await withdrawFoodForFights(ctx, monster, fightBudget);
     routine._foodWithdrawn = true;
   }
 
@@ -143,8 +144,9 @@ export async function runNpcTaskFlow(ctx, routine) {
 
   if (r.win) {
     ctx.clearLosses(monster);
+    routine.rotation.recordProgress(1);
     const fresh = ctx.get();
-    log.info(`[${ctx.name}] ${monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} [task: ${fresh.task_progress}/${fresh.task_total}]`);
+    log.info(`[${ctx.name}] ${monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} [task: ${fresh.task_progress}/${fresh.task_total}] (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
   } else {
     ctx.recordLoss(monster);
     log.warn(`[${ctx.name}] ${monster}: LOSS ${r.turns}t (${ctx.consecutiveLosses(monster)} losses)`);

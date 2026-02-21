@@ -43,8 +43,8 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 50,
-            "npc_task": 1,
-            "item_task": 1
+            "npc_task": 50,
+            "item_task": 50
           },
           "orderBoard": {
             "enabled": true
@@ -118,8 +118,8 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 25,
-            "npc_task": 1,
-            "item_task": 1
+            "npc_task": 50,
+            "item_task": 50
           },
           "orderBoard": {
             "enabled": true

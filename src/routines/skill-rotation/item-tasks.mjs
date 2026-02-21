@@ -30,7 +30,6 @@ export async function runItemTaskFlow(ctx, routine) {
     const result = await api.completeTask(ctx.name);
     ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    routine.rotation.recordProgress(1);
     log.info(`[${ctx.name}] Item Task: completed! (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
     await routine._exchangeTaskCoins(ctx);
     return true;
