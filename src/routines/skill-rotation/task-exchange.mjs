@@ -94,8 +94,8 @@ export async function depositTargetRewardsToBank(ctx, targets, beforeInvSnapshot
 export async function performTaskExchange(ctx) {
   await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
   const result = await api.taskExchange(ctx.name);
+  ctx.applyActionResult(result);
   await api.waitForCooldown(result);
-  await ctx.refresh();
 }
 
 export async function runTaskExchange(

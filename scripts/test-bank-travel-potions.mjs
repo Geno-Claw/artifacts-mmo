@@ -140,6 +140,7 @@ function makeCtx(name, { x = 0, y = 0, inventory = [], settings = {} } = {}) {
       return itemQty(name, code) >= qty;
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 

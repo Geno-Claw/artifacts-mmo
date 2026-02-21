@@ -1,7 +1,7 @@
 /**
  * Reusable action patterns.
  * Every helper takes a CharacterContext as first arg and handles
- * waitForCooldown + ctx.refresh() so callers don't have to.
+ * applyActionResult + waitForCooldown so callers don't have to.
  */
 import * as api from './api.mjs';
 import * as log from './log.mjs';
@@ -31,8 +31,8 @@ export async function moveTo(ctx, x, y) {
   log.info(`[${ctx.name}] Moving (${c.x},${c.y}) → (${x},${y})`);
   try {
     const result = await api.move(x, y, ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
     return result;
   } catch (err) {
     if (err.code === 595) {
@@ -56,16 +56,16 @@ export {
 /** Single fight. Returns the full action result. */
 export async function fightOnce(ctx) {
   const result = await api.fight(ctx.name);
+  ctx.applyActionResult(result);
   await api.waitForCooldown(result);
-  await ctx.refresh();
   return result;
 }
 
 /** Single gather. Returns the full action result. */
 export async function gatherOnce(ctx) {
   const result = await api.gather(ctx.name);
+  ctx.applyActionResult(result);
   await api.waitForCooldown(result);
-  await ctx.refresh();
   return result;
 }
 
@@ -83,22 +83,22 @@ export async function swapEquipment(ctx, slot, newItemCode) {
     }
     log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
     const ur = await api.unequipItem(slot, ctx.name);
+    ctx.applyActionResult(ur);
     await api.waitForCooldown(ur);
-    await ctx.refresh();
   }
 
   try {
     log.info(`[${ctx.name}] Equipping ${newItemCode} in ${slot}`);
     const er = await api.equipItem(slot, newItemCode, ctx.name);
+    ctx.applyActionResult(er);
     await api.waitForCooldown(er);
-    await ctx.refresh();
   } catch (err) {
     if (currentCode) {
       log.warn(`[${ctx.name}] Equip ${newItemCode} failed, rolling back to ${currentCode}`);
       try {
         const rr = await api.equipItem(slot, currentCode, ctx.name);
+        ctx.applyActionResult(rr);
         await api.waitForCooldown(rr);
-        await ctx.refresh();
       } catch (rollbackErr) {
         log.warn(`[${ctx.name}] Rollback failed for ${slot}: ${rollbackErr.message}`);
       }

@@ -173,12 +173,12 @@ async function executeReservedWithdraw(ctx, req, reservationId, reason, result) 
 
   try {
     const action = await _api.withdrawBank([{ code: req.code, quantity: qty }], ctx.name);
+    ctx.applyActionResult(action);
     await _api.waitForCooldown(action);
     applyBankDelta([{ code: req.code, quantity: qty }], 'withdraw', {
       charName: ctx.name,
       reason,
     });
-    await ctx.refresh();
     result.withdrawn.push({ code: req.code, quantity: qty });
   } catch (err) {
     if (isBankAvailabilityError(err)) {
@@ -307,6 +307,7 @@ export async function depositBankItems(ctx, items, opts = {}) {
   await ensureAtBank(ctx);
   try {
     const action = await _api.depositBank(normalized, ctx.name);
+    ctx.applyActionResult(action);
     await _api.waitForCooldown(action);
     applyBankDelta(normalized, 'deposit', {
       charName: ctx.name,
@@ -322,7 +323,6 @@ export async function depositBankItems(ctx, items, opts = {}) {
     } catch (err) {
       log.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`);
     }
-    await ctx.refresh();
     return normalized;
   } catch (err) {
     invalidateBank(`[${ctx.name}] deposit failed: ${err.message}`);
@@ -368,8 +368,8 @@ export async function withdrawGoldFromBank(ctx, quantity, _opts = {}) {
   if (qty <= 0) return null;
   await ensureAtBank(ctx);
   const action = await _api.withdrawGold(qty, ctx.name);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
   return action;
 }
 
@@ -381,8 +381,8 @@ export async function depositGoldToBank(ctx, quantity, _opts = {}) {
   if (qty <= 0) return null;
   await ensureAtBank(ctx);
   const action = await _api.depositGold(qty, ctx.name);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
   return action;
 }
 

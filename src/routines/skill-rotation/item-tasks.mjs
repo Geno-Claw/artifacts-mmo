@@ -18,8 +18,8 @@ export async function runItemTaskFlow(ctx, routine) {
   if (!ctx.hasTask()) {
     await moveTo(ctx, ITEMS_MASTER.x, ITEMS_MASTER.y);
     const result = await api.acceptTask(ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
     const c = ctx.get();
     log.info(`[${ctx.name}] Item Task: accepted ${c.task} x${c.task_total}`);
   }
@@ -28,8 +28,8 @@ export async function runItemTaskFlow(ctx, routine) {
   if (ctx.taskComplete()) {
     await moveTo(ctx, ITEMS_MASTER.x, ITEMS_MASTER.y);
     const result = await api.completeTask(ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
     routine.rotation.recordProgress(1);
     log.info(`[${ctx.name}] Item Task: completed! (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
     await routine._exchangeTaskCoins(ctx);
@@ -264,8 +264,8 @@ export async function craftForItemTask(ctx, routine, itemCode, item, plan, neede
 
       await moveTo(ctx, ws.x, ws.y);
       const result = await api.craft(step.itemCode, toCraft, ctx.name);
+      ctx.applyActionResult(result);
       await api.waitForCooldown(result);
-      await ctx.refresh();
       log.info(`[${ctx.name}] Item Task craft: crafted ${step.itemCode} x${toCraft} (${ctx.itemCount(step.itemCode)}/${stepNeeded})`);
       return true;
     }
@@ -318,8 +318,8 @@ export async function craftAndTradeItemTaskFromInventory(ctx, routine, itemCode,
 
         await moveTo(ctx, ws.x, ws.y);
         const result = await api.craft(itemCode, toCraft, ctx.name);
+        ctx.applyActionResult(result);
         await api.waitForCooldown(result);
-        await ctx.refresh();
         const produced = toCraft * craftYield;
         log.info(`[${ctx.name}] Item Task craft: crafted ${itemCode} x${produced}${opts.reason ? ` (${opts.reason})` : ''}`);
         crafted = true;
@@ -392,8 +392,8 @@ export async function cancelItemTask(ctx, routine, masterLoc) {
   }
   await moveTo(ctx, masterLoc.x, masterLoc.y);
   const result = await api.cancelTask(ctx.name);
+  ctx.applyActionResult(result);
   await api.waitForCooldown(result);
-  await ctx.refresh();
   log.info(`[${ctx.name}] Item Task: cancelled`);
 }
 
@@ -493,8 +493,8 @@ export async function tradeItemTask(ctx, itemCode, quantity) {
   await moveTo(ctx, ITEMS_MASTER.x, ITEMS_MASTER.y);
   try {
     const result = await api.taskTrade(itemCode, quantity, ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
     const c = ctx.get();
     log.info(`[${ctx.name}] Item Task: traded ${itemCode} x${quantity} (${c.task_progress}/${c.task_total})`);
   } catch (err) {

@@ -192,8 +192,8 @@ async function moveToBankTile(ctx, bankTile) {
     log.info(`[${ctx.name}] Moving to bank (${bankTile.x},${bankTile.y})`);
   }
   const action = await _api.move(bankTile.x, bankTile.y, ctx.name);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
 }
 
 // ── main entry point ─────────────────────────────────────────────────
@@ -215,8 +215,8 @@ export async function ensureAtBank(ctx) {
     log.info(`[${ctx.name}] BankTravel: using ${chosen.potion} (save ~${chosen.savingsSeconds}s, direct ${chosen.directSeconds}s)`);
     try {
       const useResult = await _api.useItem(chosen.potion, 1, ctx.name);
+      ctx.applyActionResult(useResult);
       await _api.waitForCooldown(useResult);
-      await ctx.refresh();
       const afterTeleport = charPosition(ctx) || origin;
       const target = nearestBankFrom(afterTeleport, bankTiles);
       if (!isAtAnyBank(afterTeleport, bankTiles)) {

@@ -1348,6 +1348,7 @@ function makeItemTaskFlowCtx(state, { task = 'sunflower', taskTotal = 20, taskPr
     inventoryFull: () => false,
     skillLevel: () => gatherLevel,
     refresh: async () => {},
+    applyActionResult() {},
   };
 }
 
@@ -1477,6 +1478,7 @@ async function testItemTaskWithdrawRespectsReserveCap() {
       inventoryCount: () => 105,
       itemCount: () => 0,
       refresh: async () => {},
+      applyActionResult() {},
     };
 
     const withdrawn = await routine._withdrawForItemTask(ctx, 'ash_wood', 50);
@@ -1622,6 +1624,7 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
       inventoryCount: () => 0,
       itemCount: () => 0,
       refresh: async () => {},
+      applyActionResult() {},
     };
 
     await routine._withdrawFromBank(ctx, routine.rotation.productionPlan, routine.rotation.recipe.code, 1);
@@ -1697,6 +1700,7 @@ async function testCraftingWithdrawHonorsReserveMaxUnits() {
       inventoryCount: () => 107,
       itemCount: () => 0,
       refresh: async () => {},
+      applyActionResult() {},
     };
 
     await routine._withdrawFromBank(ctx, routine.rotation.productionPlan, routine.rotation.recipe.code, 1);
@@ -1753,6 +1757,7 @@ function makeMutableCtx(state) {
       return state.inventory.get('tasks_coin') || 0;
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 

@@ -82,6 +82,7 @@ function makeCtx(name = 'TestChar') {
       };
     },
     async refresh() {},
+    applyActionResult() {},
     hpPercent() { return 100; },
     isAt(x, y) { return mockCharPosition.x === x && mockCharPosition.y === y; },
     inventoryCount() { return 0; },
@@ -388,7 +389,7 @@ console.log('\nConfig defaults:');
 await test('default config values', () => {
   const routine = new BankExpansionRoutine();
   assert.equal(routine.name, 'Bank Expansion');
-  assert.equal(routine.priority, 45);
+  assert.equal(routine.priority, 55);
   assert.equal(routine.loop, false);
   assert.equal(routine.checkIntervalMs, 300_000);
   assert.equal(routine.maxGoldPct, 0.7);

@@ -65,19 +65,39 @@ export class CharacterContext {
 
   async refresh() {
     this._char = await getCharacter(this.name);
-    updateCharacter(this.name, this._char);
-    recordCharacterSnapshot(this.name, this._char);
+    this._applyCharData(this._char);
+    return this._char;
+  }
+
+  /**
+   * Apply character data from an action response immediately, before the
+   * cooldown wait.  Avoids stale state during long cooldowns (e.g. bulk
+   * crafts).  Most actions return result.character; fight returns
+   * result.characters (array).
+   */
+  applyActionResult(result) {
+    if (!result) return;
+    const charData = result.character
+      ?? result.characters?.find(c => c.name === this.name)
+      ?? result.characters?.[0];
+    if (!charData) return;
+    this._char = charData;
+    this._applyCharData(charData);
+  }
+
+  /** Shared state-update logic for refresh() and applyActionResult(). */
+  _applyCharData(charData) {
+    updateCharacter(this.name, charData);
+    recordCharacterSnapshot(this.name, charData);
 
     // Reset all losses and gear cache on level-up so bot retries task monsters
     // and re-evaluates gear (new items may be available at the new level)
-    const level = this._char.level;
+    const level = charData.level;
     if (this._lastLevel !== null && level > this._lastLevel) {
       this._losses = {};
       clearGearCache(this.name);
     }
     this._lastLevel = level;
-
-    return this._char;
   }
 
   get() {

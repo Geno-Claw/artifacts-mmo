@@ -103,8 +103,8 @@ export async function trySmelting(ctx, routine) {
 
     await moveTo(ctx, ws.x, ws.y);
     const result = await api.craft(item.code, maxQty, ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
 
     routine.rotation.recordProgress(maxQty);
     log.info(`[${ctx.name}] ${skill}: smelted ${item.code} x${maxQty} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);

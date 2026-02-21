@@ -91,8 +91,8 @@ export class BankExpansionRoutine extends BaseRoutine {
     log.info(`[${ctx.name}] Purchasing bank expansion (+20 slots) for ${cost}g`);
     try {
       const result = await api.buyBankExpansion(ctx.name);
+      ctx.applyActionResult(result);
       await api.waitForCooldown(result);
-      await ctx.refresh();
 
       // Clear cache so next check sees updated slots/cost.
       _bankDetails = null;

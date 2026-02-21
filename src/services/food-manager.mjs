@@ -94,8 +94,8 @@ export async function restUntil(ctx, hpPct = 80) {
     log.info(`[${ctx.name}] Eating ${food.code} x${countToEat} (+${food.hpRestore}hp each)`);
     try {
       const result = await api.useItem(food.code, countToEat, ctx.name);
+      ctx.applyActionResult(result);
       await api.waitForCooldown(result);
-      await ctx.refresh();
     } catch (err) {
       if (err.code === 476) {
         log.warn(`[${ctx.name}] ${food.code} is not consumable, skipping`);
@@ -117,8 +117,8 @@ export async function restUntil(ctx, hpPct = 80) {
     log.info(`[${ctx.name}] Resting (${c.hp}/${c.max_hp} HP, want ${hpPct}%)`);
     try {
       const result = await api.rest(ctx.name);
+      ctx.applyActionResult(result);
       await api.waitForCooldown(result);
-      await ctx.refresh();
     } catch (err) {
       if (isConditionNotMet(err)) {
         log.warn(`[${ctx.name}] Rest unavailable right now (${err.message}); stopping rest attempts`);

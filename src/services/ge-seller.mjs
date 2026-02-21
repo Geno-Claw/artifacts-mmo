@@ -154,8 +154,8 @@ export async function cancelStaleOrders(ctx, activeOrders) {
     try {
       log.info(`[${ctx.name}] GE: cancelling stale order ${order.id} (${order.code} x${order.quantity})`);
       const result = await api.cancelGE(order.id, ctx.name);
+      ctx.applyActionResult(result);
       await api.waitForCooldown(result);
-      await ctx.refresh();
       cancelled++;
     } catch (err) {
       log.warn(`[${ctx.name}] GE: could not cancel order ${order.id}: ${err.message}`);
@@ -264,8 +264,8 @@ export async function executeSellFlow(ctx) {
 
       try {
         const result = await api.sellGE(item.code, item.quantity, item.price, ctx.name);
+        ctx.applyActionResult(result);
         await api.waitForCooldown(result);
-        await ctx.refresh();
         ordersCreated++;
         log.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${item.price}g each`);
       } catch (err) {

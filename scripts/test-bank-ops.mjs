@@ -286,6 +286,7 @@ function makeCtx(name = 'Tester', opts = {}) {
       };
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 

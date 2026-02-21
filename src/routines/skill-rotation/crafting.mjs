@@ -259,8 +259,8 @@ export async function executeCrafting(ctx, routine) {
 
       await moveTo(ctx, ws.x, ws.y);
       const result = await api.craft(step.itemCode, craftQty, ctx.name);
+      ctx.applyActionResult(result);
       await api.waitForCooldown(result);
-      await ctx.refresh();
 
       log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: crafted ${step.itemCode} x${craftQty}`);
 

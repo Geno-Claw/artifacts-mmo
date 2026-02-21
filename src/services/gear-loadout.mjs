@@ -126,8 +126,8 @@ async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abortOnMis
         }
         log.info(`[${ctx.name}] Unequipping ${currentCode} from ${slot}`);
         const ur = await api.unequipItem(slot, ctx.name);
+        ctx.applyActionResult(ur);
         await api.waitForCooldown(ur);
-        await ctx.refresh();
       }
     } else {
       if (!ctx.hasItem(targetCode) && ctx.get()[`${slot}_slot`] !== targetCode) {

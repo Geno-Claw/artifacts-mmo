@@ -48,6 +48,7 @@ function makeCtx(name = 'Recycler', capacity = 100) {
       };
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 

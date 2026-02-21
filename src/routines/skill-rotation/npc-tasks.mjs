@@ -63,8 +63,8 @@ export async function runNpcTaskFlow(ctx, routine) {
   if (!ctx.hasTask()) {
     await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
     const result = await api.acceptTask(ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
     const c = ctx.get();
     log.info(`[${ctx.name}] NPC Task: accepted ${c.task} (0/${c.task_total})`);
     return true;
@@ -74,8 +74,8 @@ export async function runNpcTaskFlow(ctx, routine) {
   if (ctx.taskComplete()) {
     await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
     const result = await api.completeTask(ctx.name);
+    ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    await ctx.refresh();
     routine.rotation.recordProgress(1);
     log.info(`[${ctx.name}] NPC Task: completed (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
 

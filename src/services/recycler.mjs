@@ -248,8 +248,8 @@ async function _recycleGroup(ctx, skill, workshop, items) {
     try {
       log.info(`[${ctx.name}] Recycle: recycling ${item.code} x${qty} at ${skill} workshop`);
       const result = await _deps.recycleFn(item.code, qty, ctx.name);
+      ctx.applyActionResult(result);
       await _deps.waitForCooldownFn(result);
-      await ctx.refresh();
       recycled++;
       log.info(`[${ctx.name}] Recycle: successfully recycled ${item.code} x${qty}`);
     } catch (err) {

@@ -50,6 +50,7 @@ function makeCtx(char, settings = {}) {
       return char.inventory_max_items || 100;
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 

@@ -239,15 +239,15 @@ function getSlotState(c, slot) {
 async function unequipSlot(ctx, slot, quantity) {
   const qty = Math.max(1, toPositiveInt(quantity));
   const action = await _api.unequipItem(slot, ctx.name, qty);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
 }
 
 async function equipSlot(ctx, slot, code, quantity) {
   const qty = Math.max(1, toPositiveInt(quantity));
   const action = await _api.equipItem(slot, code, ctx.name, qty);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
 }
 
 async function ensureSlotPotion(ctx, slot, desiredCode, settings) {
