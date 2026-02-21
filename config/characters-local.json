@@ -47,10 +47,10 @@
             "cooking": 1,
             "fishing": 0,
             "gearcrafting": 0,
-            "item_task": 1,
+            "item_task": 0,
             "jewelrycrafting": 0,
             "mining": 0,
-            "npc_task": 1,
+            "npc_task": 0,
             "weaponcrafting": 5,
             "woodcutting": 0
           }

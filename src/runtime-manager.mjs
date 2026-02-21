@@ -343,7 +343,8 @@ export class RuntimeManager {
     }
 
     const char = ctx.get();
-    log.info(`[${char.name}] Lv${char.level} | ${char.hp}/${char.max_hp} HP | ${char.gold}g | (${char.x},${char.y})`);
+    const cdRemaining = ctx.cooldownRemainingMs();
+    log.info(`[${char.name}] Lv${char.level} | ${char.hp}/${char.max_hp} HP | ${char.gold}g | (${char.x},${char.y}) | cd=${cdRemaining > 0 ? (cdRemaining / 1000).toFixed(1) + 's' : 'none'}`);
 
     return {
       scheduler: new Scheduler(ctx, routines),
