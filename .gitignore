@@ -7,4 +7,6 @@ report/map-cache.json
 report/order-board.json
 report/gear-state.json
 report/.order-board-v2-rollout
-report/order-board.json
+
+config/characters.json
+config/characters-local.json
