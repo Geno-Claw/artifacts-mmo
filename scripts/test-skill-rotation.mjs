@@ -415,6 +415,130 @@ async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
   assert.equal(createdOrders[0].quantity, 3);
 }
 
+async function testOrderBoardScalesGatherOrderToGoalQty() {
+  const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'hard_ore',
+      resource: { code: 'hard_rocks', skill: 'mining', level: 40 },
+      quantity: 3,
+    },
+  ];
+  const createdOrders = [];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { weaponcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  // goalQty=10 → order should be 3 * 10 = 30
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { mining: 5 }, itemCounts: {} }),
+    new Map(),
+    10,
+  );
+  assert.equal(candidate, null, 'recipe should be rejected');
+  assert.equal(createdOrders.length, 1, 'a gather order should be created');
+  assert.equal(createdOrders[0].quantity, 30, 'order quantity should be step.quantity * goalQty');
+}
+
+async function testOrderBoardScalesGatherOrderSubtractsExisting() {
+  const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'hard_ore',
+      resource: { code: 'hard_rocks', skill: 'mining', level: 40 },
+      quantity: 3,
+    },
+  ];
+  const createdOrders = [];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { weaponcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  // goalQty=10 → need 30, bank has 5, inv has 3 → order for 22
+  const bank = new Map([['hard_ore', 5]]);
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { mining: 5 }, itemCounts: { hard_ore: 3 } }),
+    bank,
+    10,
+  );
+  assert.equal(candidate, null, 'recipe should be rejected');
+  assert.equal(createdOrders.length, 1, 'a gather order should be created');
+  assert.equal(createdOrders[0].quantity, 22, 'order quantity should subtract bank and inventory');
+}
+
+async function testBuildCraftCandidateScalesFightDeficitToGoalQty() {
+  const recipe = makeRecipe('wolf_hat', 'gearcrafting', 20);
+  const plan = [
+    {
+      type: 'fight',
+      itemCode: 'wolf_pelt',
+      monster: { code: 'wolf', level: 20 },
+      quantity: 2,
+    },
+    { type: 'craft', itemCode: 'wolf_hat', recipe: recipe.craft, quantity: 1 },
+  ];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => true,
+    canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { gearcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: () => ({}),
+    },
+  );
+
+  // goalQty=5, step.quantity=2, bank=0, inv=0 → deficit = 10
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: {}, itemCounts: {} }),
+    new Map(),
+    5,
+  );
+  assert.ok(candidate, 'candidate should be returned');
+  assert.equal(candidate.needsCombat, true, 'should need combat');
+  assert.equal(candidate.fightSteps[0].deficit, 10, 'fight deficit should be step.quantity * goalQty');
+}
+
 async function testOrderBoardCanDisableOrderCreation() {
   const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
   const plan = [
@@ -2192,6 +2316,9 @@ async function run() {
   await testCraftingSkipsTemporarilyBlockedRecipe();
   await testUnwinnableCombatRecipeIsTemporarilyBlocked();
   await testOrderBoardCreatesGatherOrderForUnmetGatherSkill();
+  await testOrderBoardScalesGatherOrderToGoalQty();
+  await testOrderBoardScalesGatherOrderSubtractsExisting();
+  await testBuildCraftCandidateScalesFightDeficitToGoalQty();
   await testOrderBoardCanDisableOrderCreation();
   await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();
   await testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar();

@@ -441,7 +441,7 @@ export class SkillRotation {
     if (!plan || plan.length === 0) return null;
     const planCheck = this.gameData.canFulfillPlanWithBank(plan, ctx, bank);
     if (!planCheck.ok) {
-      this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank);
+      this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank, goalQty);
       return null;
     }
 
@@ -462,7 +462,7 @@ export class SkillRotation {
     for (const step of fightSteps) {
       const inBank = bank.get(step.itemCode) || 0;
       const inInventory = ctx.itemCount(step.itemCode);
-      const deficit = step.quantity - (inBank + inInventory);
+      const deficit = (step.quantity * goalQty) - (inBank + inInventory);
       if (deficit > 0) {
         needsCombat = true;
         fightStepDeficits.push({ ...step, deficit });
@@ -524,14 +524,14 @@ export class SkillRotation {
     return verified;
   }
 
-  _queueGatherOrdersForDeficits(plan, recipe, ctx, bank) {
+  _queueGatherOrdersForDeficits(plan, recipe, ctx, bank, goalQty = 1) {
     const bankItems = bank || new Map();
 
     for (const step of plan) {
       if (step.type !== 'gather' || !step.resource) continue;
       if (ctx.skillLevel(step.resource.skill) >= step.resource.level) continue;
 
-      const deficit = this._deficitQty(step.quantity, step.itemCode, bankItems, ctx);
+      const deficit = this._deficitQty(step.quantity * goalQty, step.itemCode, bankItems, ctx);
       if (deficit <= 0) continue;
 
       this._enqueueOrder({

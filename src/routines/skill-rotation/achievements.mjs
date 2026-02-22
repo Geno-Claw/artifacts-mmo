@@ -421,6 +421,16 @@ export async function selectBestAchievement(ctx, config = {}) {
 
   // 6. Pick easiest (lowest score)
   candidates.sort((a, b) => a.score - b.score);
+
+  // DEBUG: dump all scored candidates so we can validate scoring
+  log.info(`[${ctx.name}] Achievement: ${candidates.length} viable candidates (top 20):`);
+  for (const c of candidates.slice(0, 20)) {
+    const obj = c.objective;
+    const progress = obj.current ?? obj.progress ?? 0;
+    const total = obj.total ?? 0;
+    log.info(`  score=${String(c.score.toFixed(0)).padStart(8)} | ${c.achievement.code} / ${obj.type}:${obj.target || 'any'} (${progress}/${total})`);
+  }
+
   return candidates[0];
 }
 
@@ -511,12 +521,13 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
       if (!loc) return null;
 
       // Estimate gather actions needed: factor in drop rate and average quantity
-      const rate = (drop?.rate ?? 100) / 100;
+      // rate is 1-in-N format: rate=1 means guaranteed, rate=200 means 1-in-200
+      const probability = drop ? (1 / (drop.rate || 1)) : 1;
       const avgQty = ((drop?.min_quantity ?? 1) + (drop?.max_quantity ?? 1)) / 2;
-      const expectedPerGather = Math.max(0.01, rate * avgQty);
+      const expectedPerGather = Math.max(0.01, probability * avgQty);
 
       return {
-        score: resource.level * (remaining / expectedPerGather),
+        score: Math.sqrt(resource.level) * (remaining / expectedPerGather),
         action: { type: 'gather', resourceCode: resource.code, resource, loc },
       };
     }
@@ -566,7 +577,8 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
       const loc = await gameData.getMonsterLocation(monster.code);
       if (!loc) return null;
 
-      const dropRate = Math.max(0.01, (drop.rate || 10) / 100);
+      // rate is 1-in-N format: rate=1 means guaranteed, rate=200 means 1-in-200
+      const dropRate = Math.max(0.01, 1 / (drop.rate || 1));
       return {
         score: monster.level * (remaining / dropRate),
         action: { type: 'fight', monsterCode: monster.code, loc },
