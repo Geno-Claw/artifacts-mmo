@@ -373,12 +373,15 @@ export class SkillRotation {
     const blacklist = new Set(this.craftBlacklist[skill] || []);
     this._pruneRecipeBlocks();
 
+    // Goal quantity for availability scoring (goalTarget isn't set yet — computed from config)
+    const goalQty = Math.max(1, this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+
     const scored = [];
     for (const recipe of recipes) {
       if (blacklist.has(recipe.code)) continue;
       if (this._isRecipeBlocked(skill, recipe.code)) continue;
 
-      const candidate = this._buildCraftCandidate(recipe, ctx, bank);
+      const candidate = this._buildCraftCandidate(recipe, ctx, bank, goalQty);
       if (!candidate) continue;
       scored.push(candidate);
     }
@@ -413,12 +416,12 @@ export class SkillRotation {
    * are already available in bank + inventory.
    * Returns 0.0 (nothing available) to 1.0 (everything available).
    */
-  _scoreRecipeAvailability(plan, ctx, bank) {
+  _scoreRecipeAvailability(plan, ctx, bank, goalQty = 1) {
     let totalNeeded = 0;
     let totalHave = 0;
 
     for (const step of plan) {
-      const needed = step.quantity;
+      const needed = step.quantity * goalQty;
       totalNeeded += needed;
 
       const inInventory = ctx.itemCount(step.itemCode);
@@ -433,7 +436,7 @@ export class SkillRotation {
    * Build a craft candidate with viability checks and metadata for selection.
    * Returns null if the recipe cannot be used right now.
    */
-  _buildCraftCandidate(recipe, ctx, bank) {
+  _buildCraftCandidate(recipe, ctx, bank, goalQty = 1) {
     const plan = this.gameData.resolveRecipeChain(recipe.craft);
     if (!plan || plan.length === 0) return null;
     const planCheck = this.gameData.canFulfillPlanWithBank(plan, ctx, bank);
@@ -471,8 +474,8 @@ export class SkillRotation {
     return {
       recipe,
       plan,
-      availability: this._scoreRecipeAvailability(plan, ctx, bank),
-      bankOnly: this._isPlanBankOnly(plan, ctx, bank),
+      availability: this._scoreRecipeAvailability(plan, ctx, bank, goalQty),
+      bankOnly: this._isPlanBankOnly(plan, ctx, bank, goalQty),
       needsCombat,
       fightSteps: needsCombat ? fightStepDeficits : [],
     };
@@ -580,11 +583,11 @@ export class SkillRotation {
    * A plan is bank-only when all gather/bank inputs are already present in
    * current inventory + bank, so no gathering action is needed.
    */
-  _isPlanBankOnly(plan, ctx, bank) {
+  _isPlanBankOnly(plan, ctx, bank, goalQty = 1) {
     for (const step of plan) {
       if (step.type !== 'gather' && step.type !== 'bank' && step.type !== 'fight') continue;
       const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
-      if (have < step.quantity) return false;
+      if (have < step.quantity * goalQty) return false;
     }
     return true;
   }
