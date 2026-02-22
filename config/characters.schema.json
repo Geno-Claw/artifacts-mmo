@@ -4,6 +4,29 @@
   "type": "object",
   "required": ["characters"],
   "properties": {
+    "npcBuyList": {
+      "type": "object",
+      "description": "Items to buy from NPC merchants during events. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for all NPCs.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["code", "maxTotal"],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Item code to purchase"
+            },
+            "maxTotal": {
+              "type": "number",
+              "minimum": 1,
+              "description": "Maximum total quantity across bank + all inventories. Stops buying when globalCount >= this."
+            }
+          }
+        }
+      }
+    },
     "characters": {
       "type": "array",
       "items": {

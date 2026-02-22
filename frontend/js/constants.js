@@ -81,3 +81,27 @@ const CONTROL_ACTION_ENDPOINTS = {
 const CONTROL_OPERATION_STATE_VALUES = new Set(['idle', 'in-flight', 'success', 'failure']);
 const CONTROL_STATUS_POLL_MS = 5000;
 const CONTROL_ACTION_REQUEST_TIMEOUT_MS = 30_000;
+
+const SANDBOX_XP_TYPES = [
+  'combat', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting',
+  'cooking', 'woodcutting', 'mining', 'alchemy', 'fishing',
+];
+
+const SANDBOX_EVENTS = [
+  { code: 'attacking_the_island', name: 'Attacking The Island' },
+  { code: 'bandit_camp', name: 'Bandit Camp' },
+  { code: 'corrupted_ogre', name: 'Corrupted Ogre' },
+  { code: 'corrupted_owlbear', name: 'Corrupted Owlbear' },
+  { code: 'corrupted_portal', name: 'Corrupted Portal' },
+  { code: 'cult_of_darkness', name: 'Cult of Darkness' },
+  { code: 'fish_merchant', name: 'Fish Merchant' },
+  { code: 'gemstone_merchant', name: 'Gemstone Merchant' },
+  { code: 'herbal_merchant', name: 'Herbal Merchant' },
+  { code: 'magic_apparition', name: 'Magic Apparition' },
+  { code: 'nomadic_merchant', name: 'Nomadic Merchant' },
+  { code: 'out_of_the_ground', name: 'Out Of The Ground' },
+  { code: 'portal_demon', name: 'Portal (Demon)' },
+  { code: 'portal_efreet_sultan', name: 'Portal (Efreet)' },
+  { code: 'strange_apparition', name: 'Strange Apparition' },
+  { code: 'timber_merchant', name: 'Timber Merchant' },
+];

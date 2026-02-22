@@ -29,6 +29,7 @@ import {
   getTimeRemaining,
   getEventDefinition,
   getActiveEvent,
+  getNpcEventCodes,
   _handleEventSpawn,
   _handleEventRemoved,
   _activeEvents,
@@ -215,17 +216,72 @@ function test_cleanup_clearsState() {
   console.log('  PASS: cleanup clears all state');
 }
 
+function test_handleEventSpawn_siblingContent() {
+  _activeEvents.clear();
+
+  // WebSocket format: content as sibling of map (not nested inside)
+  _handleEventSpawn({
+    content: { type: 'npc', code: 'nomadic_merchant' },
+    map: { x: 3, y: 2 },
+    expiration: new Date(Date.now() + 3600_000).toISOString(),
+    created_at: new Date().toISOString(),
+  });
+
+  assert.equal(_activeEvents.size, 1);
+  const entry = _activeEvents.get('nomadic_merchant');
+  assert.ok(entry);
+  assert.equal(entry.contentType, 'npc');
+  assert.equal(entry.contentCode, 'nomadic_merchant');
+  assert.equal(entry.map.x, 3);
+  assert.equal(entry.map.y, 2);
+
+  _activeEvents.clear();
+  console.log('  PASS: handleEventSpawn with sibling content format');
+}
+
+function test_handleEventRemoved_siblingContent() {
+  _activeEvents.clear();
+  _activeEvents.set('nomadic_merchant', { code: 'nomadic_merchant', contentType: 'npc' });
+
+  _handleEventRemoved({
+    content: { code: 'nomadic_merchant' },
+    map: { x: 3, y: 2 },
+  });
+
+  assert.equal(_activeEvents.size, 0);
+  console.log('  PASS: handleEventRemoved with sibling content format');
+}
+
+function test_getNpcEventCodes() {
+  _eventDefinitions.clear();
+  _eventDefinitions.set('demon', { code: 'demon', content: { type: 'monster', code: 'demon' } });
+  _eventDefinitions.set('nomadic_merchant', { code: 'nomadic_merchant', content: { type: 'npc', code: 'nomadic_merchant' } });
+  _eventDefinitions.set('fish_merchant', { code: 'fish_merchant', content: { type: 'npc', code: 'fish_merchant' } });
+  _eventDefinitions.set('strange_rocks', { code: 'strange_rocks', content: { type: 'resource', code: 'strange_rocks' } });
+
+  const npcCodes = getNpcEventCodes();
+  assert.equal(npcCodes.length, 2);
+  assert.ok(npcCodes.includes('nomadic_merchant'));
+  assert.ok(npcCodes.includes('fish_merchant'));
+
+  _eventDefinitions.clear();
+  console.log('  PASS: getNpcEventCodes returns NPC content codes');
+}
+
 // --- Run ---
 
 console.log('Event Manager Tests:');
 test_handleEventSpawn_addsEvent();
 test_handleEventSpawn_ignoresMissingContent();
+test_handleEventSpawn_siblingContent();
 test_handleEventRemoved_removesEvent();
 test_handleEventRemoved_noop();
+test_handleEventRemoved_siblingContent();
 test_isEventActive_valid();
 test_isEventActive_expired();
 test_getTimeRemaining();
 test_getActiveMonsterEvents_filters();
 test_getEventDefinition();
+test_getNpcEventCodes();
 test_cleanup_clearsState();
 console.log('All event manager tests passed!');

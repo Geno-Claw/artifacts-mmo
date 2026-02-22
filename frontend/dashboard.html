@@ -15,6 +15,7 @@
 <script defer src="js/cards.js"></script>
 <script defer src="js/panels.js"></script>
 <script defer src="js/modals.js"></script>
+<script defer src="js/sandbox.js"></script>
 <script defer src="js/api.js"></script>
 <script defer src="js/events.js"></script>
 <script defer src="js/init.js"></script>
@@ -68,6 +69,14 @@
     data-runtime-control="clear-gear-state"
     hidden
   >RESET GEAR</button>
+  <button
+    class="action-btn dashboard-control-btn sandbox-btn"
+    id="openSandboxBtn"
+    type="button"
+    title="Sandbox controls — give gold, items, XP, spawn events"
+    aria-haspopup="dialog"
+    hidden
+  >SANDBOX</button>
 </div>
 <section class="dashboard-control-status" id="controlStatusPanel" aria-live="polite" hidden>
   <div class="dashboard-control-status-grid">
@@ -139,6 +148,29 @@
     </header>
     <div class="modal-banner" id="modalBanner" hidden></div>
     <div class="modal-content" id="modalContent"></div>
+  </section>
+</div>
+
+<!-- Sandbox modal host -->
+<div class="modal-host" id="sandboxModalHost" hidden>
+  <div class="modal-scrim" id="sandboxModalScrim"></div>
+  <section
+    class="character-modal sandbox-modal"
+    id="sandboxModal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="sandboxModalTitle"
+    tabindex="-1"
+  >
+    <header class="modal-header">
+      <div>
+        <p class="modal-kind">SANDBOX</p>
+        <h2 class="modal-title" id="sandboxModalTitle">Sandbox Controls</h2>
+      </div>
+      <button type="button" class="modal-close" id="sandboxModalCloseBtn" aria-label="Close sandbox modal">CLOSE</button>
+    </header>
+    <div class="modal-banner" id="sandboxModalBanner" hidden></div>
+    <div class="modal-content" id="sandboxModalContent"></div>
   </section>
 </div>
 

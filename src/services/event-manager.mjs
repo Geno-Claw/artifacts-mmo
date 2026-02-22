@@ -30,8 +30,8 @@ let unsubRemoved = null;
 function handleEventSpawn(data) {
   if (!data) return;
 
-  const contentCode = data.map?.content?.code;
-  const contentType = data.map?.content?.type;
+  const contentCode = data.content?.code || data.map?.content?.code;
+  const contentType = data.content?.type || data.map?.content?.type;
   if (!contentCode) {
     log.warn(`${TAG} event_spawn missing content code`);
     return;
@@ -56,7 +56,7 @@ function handleEventSpawn(data) {
 function handleEventRemoved(data) {
   if (!data) return;
 
-  const contentCode = data.map?.content?.code;
+  const contentCode = data.content?.code || data.map?.content?.code;
   if (!contentCode) {
     log.warn(`${TAG} event_removed missing content code`);
     return;
@@ -87,11 +87,12 @@ export async function initialize() {
   try {
     const active = await loadAllPages(api.getActiveEvents);
     for (const evt of active) {
-      const contentCode = evt.map?.content?.code;
+      const contentCode = evt.content?.code || evt.map?.content?.code;
       if (!contentCode) continue;
+      const contentType = evt.content?.type || evt.map?.content?.type;
       activeEvents.set(contentCode, {
         code: contentCode,
-        contentType: evt.map?.content?.type || null,
+        contentType: contentType || null,
         contentCode,
         map: evt.map ? { x: evt.map.x, y: evt.map.y } : null,
         expiration: evt.expiration ? new Date(evt.expiration) : null,
@@ -193,6 +194,17 @@ async function loadAllPages(apiFn) {
     page++;
   }
   return all;
+}
+
+/** Returns content codes for all NPC-type events (for catalog preloading). */
+export function getNpcEventCodes() {
+  const codes = [];
+  for (const def of eventDefinitions.values()) {
+    if (def.content?.type === 'npc' && def.content?.code) {
+      codes.push(def.content.code);
+    }
+  }
+  return codes;
 }
 
 // --- Testing helpers ---

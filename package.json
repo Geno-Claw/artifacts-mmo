@@ -28,7 +28,14 @@
     "test:bank-travel": "node scripts/test-bank-travel-potions.mjs",
     "test:combat-sim": "node scripts/test-combat-simulator.mjs",
     "test:bank-expansion": "node scripts/test-bank-expansion.mjs",
-    "test:all": "node scripts/test-inventory-manager.mjs && node scripts/test-bank-ops.mjs && node scripts/test-order-board.mjs && node scripts/test-gear-state.mjs && node scripts/test-gear-optimizer.mjs && node scripts/test-tool-policy.mjs && node scripts/test-recycler.mjs && node scripts/test-no-direct-bank-api.mjs && node scripts/test-skill-rotation.mjs && node scripts/test-potion-manager.mjs && node scripts/test-bank-travel-potions.mjs && node scripts/test-combat-simulator.mjs && node scripts/test-bank-expansion.mjs"
+    "test:npc-buy": "node scripts/test-npc-buy.mjs",
+    "test:event-manager": "node scripts/test-event-manager.mjs",
+    "test:all": "node scripts/test-inventory-manager.mjs && node scripts/test-bank-ops.mjs && node scripts/test-order-board.mjs && node scripts/test-gear-state.mjs && node scripts/test-gear-optimizer.mjs && node scripts/test-tool-policy.mjs && node scripts/test-recycler.mjs && node scripts/test-no-direct-bank-api.mjs && node scripts/test-skill-rotation.mjs && node scripts/test-potion-manager.mjs && node scripts/test-bank-travel-potions.mjs && node scripts/test-combat-simulator.mjs && node scripts/test-bank-expansion.mjs && node scripts/test-npc-buy.mjs && node scripts/test-event-manager.mjs",
+    "sandbox:gold": "node scripts/sandbox.mjs give-gold",
+    "sandbox:item": "node scripts/sandbox.mjs give-item",
+    "sandbox:xp": "node scripts/sandbox.mjs give-xp",
+    "sandbox:event": "node scripts/sandbox.mjs spawn-event",
+    "sandbox:reset": "node scripts/sandbox.mjs reset-account"
   },
   "engines": {
     "node": ">=20"

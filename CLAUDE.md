@@ -75,3 +75,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 - Game coordinates and static data live in `src/data/locations.mjs`
 - Tests mock API/services inline — no shared test fixtures
 - Persistent state files (gear-state, order-board) write to `./report/` with atomic writes
+
+## API Docs
+https://api.artifactsmmo.com/openapi.json
+
+https://docs.artifactsmmo.com/

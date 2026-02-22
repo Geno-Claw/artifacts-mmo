@@ -1456,3 +1456,94 @@ body::before {
     align-items: center;
   }
 }
+
+/* ============================================================
+   SANDBOX CONTROLS
+   ============================================================ */
+.sandbox-btn {
+  background: var(--indigo);
+}
+.sandbox-btn:hover {
+  background: var(--indigo-light);
+}
+
+.sandbox-modal {
+  max-width: 480px;
+}
+
+.sandbox-form-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px dashed var(--ink-ghost);
+}
+.sandbox-form-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.sandbox-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sandbox-form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sandbox-label {
+  font-size: 6px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+  min-width: 72px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.sandbox-select,
+.sandbox-input {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink-faint);
+  padding: 6px 8px;
+  flex: 1;
+  min-width: 0;
+}
+.sandbox-select:focus,
+.sandbox-input:focus {
+  outline: 2px solid var(--indigo);
+  outline-offset: -1px;
+  border-color: var(--indigo);
+}
+
+.sandbox-submit-btn {
+  align-self: flex-end;
+  margin-top: 4px;
+  background: var(--indigo);
+}
+.sandbox-submit-btn:hover {
+  background: var(--indigo-light);
+}
+
+.sandbox-danger-btn {
+  align-self: flex-end;
+  margin-top: 4px;
+  background: var(--vermillion-dark);
+}
+.sandbox-danger-btn:hover {
+  background: var(--vermillion);
+}
+
+.sandbox-warning {
+  font-size: 6px;
+  line-height: 1.5;
+  color: var(--vermillion-dark);
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}

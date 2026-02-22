@@ -9,6 +9,7 @@
  * Scheduler re-checks canRun() and preemption between iterations.
  */
 import { BaseRoutine } from './base.mjs';
+import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import * as eventManager from '../services/event-manager.mjs';
@@ -17,6 +18,9 @@ import { equipForCombat, equipForGathering } from '../services/gear-loadout.mjs'
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError } from '../helpers.mjs';
 import { restBeforeFight } from '../services/food-manager.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
+import { getItemsForNpc } from '../services/npc-buy-config.mjs';
+import { getOrderBoardSnapshot } from '../services/order-board.mjs';
+import { globalCount } from '../services/inventory-manager.mjs';
 
 const TAG = 'Event';
 
@@ -261,10 +265,10 @@ export class EventRoutine extends BaseRoutine {
     return true; // Continue gathering
   }
 
-  // --- NPC events (V1 framework) ---
+  // --- NPC events ---
 
   async _executeNpc(ctx, target) {
-    const { map } = target;
+    const { map, npcCode } = target;
 
     if (!eventManager.isEventActive(target.code)) {
       log.info(`[${ctx.name}] ${TAG}: ${target.code} despawned`);
@@ -272,21 +276,133 @@ export class EventRoutine extends BaseRoutine {
       return false;
     }
 
+    // First iteration: travel to NPC
+    if (!this._prepared) {
+      try {
+        await moveTo(ctx, map.x, map.y);
+      } catch (err) {
+        if (err instanceof NoPathError) {
+          log.warn(`[${ctx.name}] ${TAG}: no path to NPC at (${map.x},${map.y})`);
+          this._setCooldown(target.code);
+          this._clearTarget();
+          return false;
+        }
+        throw err;
+      }
+      this._prepared = true;
+    }
+
+    // Build shopping list
+    const shoppingList = this._buildNpcShoppingList(ctx, npcCode);
+    if (shoppingList.length === 0) {
+      log.info(`[${ctx.name}] ${TAG}: nothing to buy from ${npcCode}`);
+      this._clearTarget();
+      return false;
+    }
+
+    // Buy the first item on the list (one action per execute() call)
+    const item = shoppingList[0];
+    const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+    const buyQty = Math.min(item.quantity, space, 100); // API limit: 100 per action
+
+    if (buyQty <= 0) {
+      log.info(`[${ctx.name}] ${TAG}: inventory full, can't buy from ${npcCode}`);
+      this._clearTarget();
+      return false;
+    }
+
     try {
-      await moveTo(ctx, map.x, map.y);
+      const result = await api.npcBuy(item.code, buyQty, ctx.name);
+      ctx.applyActionResult(result);
+      await api.waitForCooldown(result);
+
+      const cost = result.transaction?.total_price || 0;
+      log.info(`[${ctx.name}] ${TAG} ${npcCode}: bought ${item.code} x${buyQty} for ${cost}g (${item.reason})`);
     } catch (err) {
-      if (err instanceof NoPathError) {
-        log.warn(`[${ctx.name}] ${TAG}: no path to NPC event at (${map.x},${map.y})`);
-        this._setCooldown(target.code);
+      if (err.code === 598) {
+        log.warn(`[${ctx.name}] ${TAG}: NPC not on map (598), event may have despawned`);
+        this._clearTarget();
+        return false;
+      }
+      if (err.code === 441) {
+        log.warn(`[${ctx.name}] ${TAG}: ${item.code} not available from ${npcCode} (441)`);
+        this._addNpcSkipItem(npcCode, item.code);
+        return true; // Continue loop to try other items
+      }
+      if (err.code === 492) {
+        log.warn(`[${ctx.name}] ${TAG}: not enough gold to buy ${item.code} from ${npcCode}`);
+        this._clearTarget();
+        return false;
+      }
+      if (err.code === 497) {
+        log.info(`[${ctx.name}] ${TAG}: inventory full (497)`);
         this._clearTarget();
         return false;
       }
       throw err;
     }
 
-    log.info(`[${ctx.name}] ${TAG}: arrived at NPC event ${target.code} at (${map.x},${map.y}). Buy/sell logic not implemented yet.`);
-    this._clearTarget();
-    return false; // Framework only — no trading yet
+    // Check if we should continue buying
+    if (ctx.inventoryFull()) {
+      log.info(`[${ctx.name}] ${TAG}: inventory full after purchase, yielding`);
+      this._clearTarget();
+      return false;
+    }
+
+    if (eventManager.getTimeRemaining(target.code) < 30_000) {
+      log.info(`[${ctx.name}] ${TAG}: ${target.code} expiring soon, yielding`);
+      this._clearTarget();
+      return false;
+    }
+
+    return true; // Continue buying loop
+  }
+
+  /**
+   * Build a prioritized shopping list for an NPC merchant.
+   * Sources: (1) npcBuyList config entries, (2) open order-board orders.
+   * Only includes items the NPC actually sells (from loaded catalog).
+   */
+  _buildNpcShoppingList(ctx, npcCode) {
+    const result = [];
+    const seen = new Set();
+
+    // Source 1: Items from npcBuyList config
+    const configItems = getItemsForNpc(npcCode);
+    for (const entry of configItems) {
+      if (!gameData.canNpcSell(npcCode, entry.code)) continue;
+      if (this._isNpcSkipItem(npcCode, entry.code)) continue;
+
+      const current = globalCount(entry.code);
+      const needed = entry.maxTotal - current;
+      if (needed <= 0) continue;
+
+      seen.add(entry.code);
+      result.push({
+        code: entry.code,
+        quantity: needed,
+        reason: `config (have ${current}/${entry.maxTotal})`,
+      });
+    }
+
+    // Source 2: Open/claimed order-board orders matching NPC catalog
+    const snapshot = getOrderBoardSnapshot();
+    for (const order of snapshot.orders) {
+      if (order.status === 'fulfilled') continue;
+      if (order.remainingQty <= 0) continue;
+      if (seen.has(order.itemCode)) continue;
+      if (!gameData.canNpcSell(npcCode, order.itemCode)) continue;
+      if (this._isNpcSkipItem(npcCode, order.itemCode)) continue;
+
+      seen.add(order.itemCode);
+      result.push({
+        code: order.itemCode,
+        quantity: order.remainingQty,
+        reason: `order-board (${order.id.slice(0, 8)})`,
+      });
+    }
+
+    return result;
   }
 
   // --- Event selection ---
@@ -356,6 +472,12 @@ export class EventRoutine extends BaseRoutine {
         if (this._isOnCooldown(evt.code, now)) continue;
         if (eventManager.getTimeRemaining(evt.code) < this.minTimeRemainingMs) continue;
 
+        const npcCode = evt.contentCode;
+
+        // Check if we have anything to buy from this NPC
+        const shoppingList = this._buildNpcShoppingList(ctx, npcCode);
+        if (shoppingList.length === 0) continue;
+
         // NPCs score lower than monsters — only pick if no monster event
         const score = 1;
         if (score > bestScore) {
@@ -363,6 +485,7 @@ export class EventRoutine extends BaseRoutine {
           best = {
             code: evt.code,
             type: 'npc',
+            npcCode,
             map: evt.map,
           };
         }
@@ -386,5 +509,21 @@ export class EventRoutine extends BaseRoutine {
   _clearTarget() {
     this._targetEvent = null;
     this._prepared = false;
+  }
+
+  // --- NPC skip list (persists across events of same NPC type) ---
+
+  _addNpcSkipItem(npcCode, itemCode) {
+    if (!this._npcSkipItems) this._npcSkipItems = new Map();
+    let set = this._npcSkipItems.get(npcCode);
+    if (!set) {
+      set = new Set();
+      this._npcSkipItems.set(npcCode, set);
+    }
+    set.add(itemCode);
+  }
+
+  _isNpcSkipItem(npcCode, itemCode) {
+    return this._npcSkipItems?.get(npcCode)?.has(itemCode) || false;
   }
 }

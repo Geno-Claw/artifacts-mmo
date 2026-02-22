@@ -222,6 +222,16 @@ export async function taskExchange(name = CHARACTER) {
   return request('POST', `/my/${name}/action/task/exchange`);
 }
 
+// --- NPC transactions ---
+
+export async function npcBuy(code, quantity = 1, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/npc/buy`, { code, quantity });
+}
+
+export async function npcSell(code, quantity = 1, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/npc/sell`, { code, quantity });
+}
+
 export async function getTaskRewards(params = {}) {
   const qs = new URLSearchParams(params).toString();
   return request('GET', `/tasks/rewards${qs ? '?' + qs : ''}`);
@@ -344,6 +354,13 @@ export async function getServerStatus() {
   return request('GET', '/');
 }
 
+// --- NPC data ---
+
+export async function getNpcItems(npcCode, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/npcs/items/${npcCode}${qs ? '?' + qs : ''}`);
+}
+
 // --- Events ---
 
 export async function getEvents(params = {}) {
@@ -354,6 +371,32 @@ export async function getEvents(params = {}) {
 export async function getActiveEvents(params = {}) {
   const qs = new URLSearchParams(params).toString();
   return request('GET', `/events/active${qs ? '?' + qs : ''}`);
+}
+
+// --- Sandbox (sandbox server only) ---
+
+export function isSandbox() {
+  return API.includes('sandbox');
+}
+
+export async function sandboxGiveGold(character, quantity) {
+  return request('POST', '/sandbox/give_gold', { character, quantity });
+}
+
+export async function sandboxGiveItem(character, code, quantity) {
+  return request('POST', '/sandbox/give_item', { character, code, quantity });
+}
+
+export async function sandboxGiveXp(character, type, amount) {
+  return request('POST', '/sandbox/give_xp', { character, type, amount });
+}
+
+export async function sandboxSpawnEvent(code) {
+  return request('POST', '/sandbox/spawn_event', { code });
+}
+
+export async function sandboxResetAccount() {
+  return request('POST', '/sandbox/reset_account', {});
 }
 
 // --- Simulation ---

@@ -59,6 +59,13 @@ function setupModalFramework() {
   controlRefs.updatedAt = document.getElementById('controlStatusUpdatedAt');
   controlRefs.banner = document.getElementById('controlResultBanner');
 
+  sandboxRefs.host = document.getElementById('sandboxModalHost');
+  sandboxRefs.scrim = document.getElementById('sandboxModalScrim');
+  sandboxRefs.content = document.getElementById('sandboxModalContent');
+  sandboxRefs.banner = document.getElementById('sandboxModalBanner');
+  sandboxRefs.closeBtn = document.getElementById('sandboxModalCloseBtn');
+  sandboxRefs.openBtn = document.getElementById('openSandboxBtn');
+
   bankRefs.panel = document.getElementById('bankStatusPanel');
   bankRefs.goldValue = document.getElementById('bankGoldValue');
   bankRefs.slotsValue = document.getElementById('bankSlotsValue');
@@ -82,6 +89,18 @@ function setupModalFramework() {
   }
   if (controlRefs.clearGearStateBtn) {
     controlRefs.clearGearStateBtn.addEventListener('click', onRuntimeControlButtonClick);
+  }
+  if (sandboxRefs.openBtn) {
+    sandboxRefs.openBtn.addEventListener('click', () => openSandboxModal());
+  }
+  if (sandboxRefs.scrim) {
+    sandboxRefs.scrim.addEventListener('click', () => closeSandboxModal());
+  }
+  if (sandboxRefs.closeBtn) {
+    sandboxRefs.closeBtn.addEventListener('click', () => closeSandboxModal());
+  }
+  if (sandboxRefs.content) {
+    sandboxRefs.content.addEventListener('submit', onSandboxContentSubmit);
   }
   if (modalRefs.scrim) {
     modalRefs.scrim.addEventListener('click', () => closeCharacterModal());
@@ -163,6 +182,7 @@ async function init() {
   await Promise.all([
     probeConfigFeatureAvailability(),
     probeControlFeatureAvailability(),
+    probeSandboxAvailability(),
   ]);
   createPetals();
 

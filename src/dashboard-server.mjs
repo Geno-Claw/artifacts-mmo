@@ -18,6 +18,14 @@ import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } fro
 import { clearGearState } from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
 import { toPositiveInt } from './utils.mjs';
+import {
+  isSandbox,
+  sandboxGiveGold,
+  sandboxGiveItem,
+  sandboxGiveXp,
+  sandboxSpawnEvent,
+  sandboxResetAccount,
+} from './api.mjs';
 
 function toPort(value, fallback) {
   const num = Number(value);
@@ -733,6 +741,101 @@ export async function startDashboardServer({
           });
         } catch (err) {
           sendError(res, 500, 'service_error', err?.message || 'Failed to clear gear state', 'clear_gear_state_failed');
+        }
+        return;
+      }
+
+      // --- Sandbox endpoints (only available on sandbox server) ---
+
+      if (pathname === '/api/sandbox/status') {
+        if (method !== 'GET') {
+          sendError(res, 405, 'method_not_allowed', 'Only GET is allowed', 'method_not_allowed');
+          return;
+        }
+        const sandbox = isSandbox();
+        const characters = sandbox
+          ? (getUiSnapshot()?.characters || []).map(c => c?.name).filter(Boolean)
+          : [];
+        sendJson(res, 200, { sandbox, characters });
+        return;
+      }
+
+      if (pathname.startsWith('/api/sandbox/') && pathname !== '/api/sandbox/status') {
+        if (!isSandbox()) {
+          sendJson(res, 404, { error: 'not_found' });
+          return;
+        }
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+
+        const sandboxAction = pathname.slice('/api/sandbox/'.length);
+
+        let body = null;
+        if (sandboxAction !== 'reset-account') {
+          try {
+            body = await readJsonBody(req);
+          } catch (err) {
+            sendError(res, 400, 'bad_request', err?.detail || 'Invalid JSON body', 'bad_json');
+            return;
+          }
+          if (!isObject(body)) {
+            sendError(res, 400, 'bad_request', 'Body must be a JSON object', 'invalid_payload');
+            return;
+          }
+        }
+
+        try {
+          let result;
+          switch (sandboxAction) {
+            case 'give-gold': {
+              const { character, quantity } = body;
+              if (!character || !quantity) {
+                sendError(res, 400, 'bad_request', 'character and quantity are required', 'missing_fields');
+                return;
+              }
+              result = await sandboxGiveGold(character, Number(quantity));
+              break;
+            }
+            case 'give-item': {
+              const { character, code, quantity } = body;
+              if (!character || !code || !quantity) {
+                sendError(res, 400, 'bad_request', 'character, code, and quantity are required', 'missing_fields');
+                return;
+              }
+              result = await sandboxGiveItem(character, code, Number(quantity));
+              break;
+            }
+            case 'give-xp': {
+              const { character, type, amount } = body;
+              if (!character || !type || !amount) {
+                sendError(res, 400, 'bad_request', 'character, type, and amount are required', 'missing_fields');
+                return;
+              }
+              result = await sandboxGiveXp(character, type, Number(amount));
+              break;
+            }
+            case 'spawn-event': {
+              const { code } = body;
+              if (!code) {
+                sendError(res, 400, 'bad_request', 'code is required', 'missing_fields');
+                return;
+              }
+              result = await sandboxSpawnEvent(code);
+              break;
+            }
+            case 'reset-account': {
+              result = await sandboxResetAccount();
+              break;
+            }
+            default:
+              sendJson(res, 404, { error: 'not_found' });
+              return;
+          }
+          sendJson(res, 200, { ok: true, data: result });
+        } catch (err) {
+          sendStructuredError(res, err, 'sandbox_action_failed');
         }
         return;
       }

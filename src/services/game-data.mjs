@@ -21,6 +21,8 @@ let workshopCache = null;       // { skill: { x, y } }
 let geLocationCache = null;     // { x, y } or null
 let taskRewardsCache = null;    // Array of reward objects
 let taskRewardCodes = null;     // Set<itemCode> for fast lookup
+let npcItemsCache = null;       // Map<npcCode, Array<{code, npc, currency, buy_price, sell_price}>>
+let npcBuyableLookup = null;    // Map<npcCode, Set<itemCode>> — quick lookup for buyable items
 
 // --- Unreachable location tracking (session-scoped) ---
 const unreachableLocations = new Set(); // "monster:frost_slime", "resource:iron_rocks"
@@ -353,6 +355,73 @@ async function discoverTransitionTiles() {
 
 export function getTransitionTiles() {
   return transitionTilesCache || [];
+}
+
+// --- NPC item catalogs ---
+
+/**
+ * Load item catalogs for NPC merchants. Called after event-manager init
+ * provides the NPC codes from event definitions.
+ * @param {string[]} npcCodes — NPC content codes (e.g. 'nomadic_merchant')
+ */
+export async function loadNpcCatalogs(npcCodes) {
+  npcItemsCache = new Map();
+  npcBuyableLookup = new Map();
+
+  for (const npcCode of npcCodes) {
+    try {
+      const items = [];
+      let page = 1;
+      while (true) {
+        const result = await api.getNpcItems(npcCode, { page, size: 100 });
+        const batch = Array.isArray(result) ? result : [];
+        if (batch.length === 0) break;
+        items.push(...batch);
+        if (batch.length < 100) break;
+        page++;
+      }
+      npcItemsCache.set(npcCode, items);
+
+      const buyable = new Set();
+      for (const item of items) {
+        if (item.buy_price != null) buyable.add(item.code);
+      }
+      npcBuyableLookup.set(npcCode, buyable);
+
+      log.info(`[GameData] NPC ${npcCode}: ${items.length} items (${buyable.size} buyable)`);
+    } catch (err) {
+      log.warn(`[GameData] Could not load NPC items for ${npcCode}: ${err.message}`);
+      npcItemsCache.set(npcCode, []);
+      npcBuyableLookup.set(npcCode, new Set());
+    }
+  }
+}
+
+/** Returns all items a given NPC has with buy_price set (items we can purchase). */
+export function getNpcBuyableItems(npcCode) {
+  const items = npcItemsCache?.get(npcCode);
+  if (!items) return [];
+  return items.filter(i => i.buy_price != null);
+}
+
+/** Returns all items a given NPC has with sell_price set (items we can sell to them). */
+export function getNpcSellableItems(npcCode) {
+  const items = npcItemsCache?.get(npcCode);
+  if (!items) return [];
+  return items.filter(i => i.sell_price != null);
+}
+
+/** Quick check: does this NPC sell this item? */
+export function canNpcSell(npcCode, itemCode) {
+  return npcBuyableLookup?.get(npcCode)?.has(itemCode) || false;
+}
+
+/** Returns the buy price for an item at a given NPC, or null if not buyable. */
+export function getNpcBuyPrice(npcCode, itemCode) {
+  const items = npcItemsCache?.get(npcCode);
+  if (!items) return null;
+  const item = items.find(i => i.code === itemCode);
+  return item?.buy_price ?? null;
 }
 
 // --- Equipment type helpers ---

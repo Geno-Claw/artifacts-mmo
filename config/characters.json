@@ -1,5 +1,6 @@
 {
   "$schema": "./characters.schema.json",
+  "npcBuyList": {},
   "characters": [
     {
       "name": "GenoClaw",

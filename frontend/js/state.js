@@ -31,6 +31,7 @@ const ordersRefs = {
 const runtimeFeatures = {
   configEditorAvailable: false,
   controlPanelAvailable: false,
+  sandboxAvailable: false,
 };
 
 const modalState = {
@@ -65,6 +66,23 @@ const modalRefs = {
   content: null,
   closeBtn: null,
   configBtn: null,
+};
+
+const sandboxState = {
+  characters: [],
+  status: 'idle',
+  resultMessage: '',
+  resultTone: '',
+  resetTimer: null,
+};
+
+const sandboxRefs = {
+  host: null,
+  scrim: null,
+  closeBtn: null,
+  content: null,
+  banner: null,
+  openBtn: null,
 };
 
 const controlState = {

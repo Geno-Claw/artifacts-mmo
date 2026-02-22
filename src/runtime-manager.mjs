@@ -34,7 +34,10 @@ import {
 import {
   initialize as initEventManager,
   cleanup as cleanupEventManager,
+  getNpcEventCodes,
 } from './services/event-manager.mjs';
+import { loadNpcCatalogs } from './services/game-data.mjs';
+import { loadNpcBuyList } from './services/npc-buy-config.mjs';
 
 /**
  * Extract a lightweight detail object from account_log content per action type.
@@ -491,6 +494,11 @@ export class RuntimeManager {
 
       await initEventManager();
 
+      const npcCodes = getNpcEventCodes();
+      if (npcCodes.length > 0) await loadNpcCatalogs(npcCodes);
+
+      loadNpcBuyList(config);
+
       for (const charCfg of config.characters) {
         const { scheduler, ctx } = await this._createScheduler(charCfg);
         registerContext(ctx);
@@ -647,6 +655,8 @@ export class RuntimeManager {
       log.warn(`[Runtime] Hot-reload failed to read config: ${err.message}`);
       return;
     }
+
+    loadNpcBuyList(config);
 
     for (const entry of run.schedulerEntries) {
       const charCfg = config.characters.find(c => c.name === entry.name);

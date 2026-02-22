@@ -27,6 +27,11 @@ function trapModalFocus(event) {
 }
 
 function onDocumentKeydown(event) {
+  if (event.key === 'Escape' && isSandboxModalOpen()) {
+    event.preventDefault();
+    closeSandboxModal();
+    return;
+  }
   if (!isModalOpen()) return;
   if (event.key === 'Escape') {
     event.preventDefault();
