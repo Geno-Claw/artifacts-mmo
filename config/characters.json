@@ -31,7 +31,8 @@
             "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
-            "item_task": 0
+            "item_task": 0,
+            "achievement": 1
           },
           "goals": {
             "mining": 100,
@@ -44,7 +45,8 @@
             "jewelrycrafting": 5,
             "combat": 50,
             "npc_task": 50,
-            "item_task": 50
+            "item_task": 50,
+            "achievement": 30
           },
           "orderBoard": {
             "enabled": true
@@ -106,7 +108,8 @@
             "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
-            "item_task": 0
+            "item_task": 0,
+            "achievement": 0
           },
           "goals": {
             "mining": 50,
@@ -119,7 +122,8 @@
             "jewelrycrafting": 5,
             "combat": 25,
             "npc_task": 50,
-            "item_task": 50
+            "item_task": 50,
+            "achievement": 30
           },
           "orderBoard": {
             "enabled": true
@@ -181,7 +185,8 @@
             "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
-            "item_task": 0
+            "item_task": 0,
+            "achievement": 0
           },
           "goals": {
             "mining": 20,
@@ -193,7 +198,8 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 25,
-            "npc_task": 1
+            "npc_task": 1,
+            "achievement": 30
           },
           "orderBoard": {
             "enabled": true
@@ -254,7 +260,8 @@
             "jewelrycrafting": 1,
             "combat": 0,
             "npc_task": 0,
-            "item_task": 0
+            "item_task": 0,
+            "achievement": 0
           },
           "goals": {
             "mining": 20,
@@ -266,7 +273,8 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 25,
-            "npc_task": 1
+            "npc_task": 1,
+            "achievement": 30
           },
           "orderBoard": {
             "enabled": true
@@ -327,7 +335,8 @@
             "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
-            "item_task": 0
+            "item_task": 0,
+            "achievement": 0
           },
           "goals": {
             "mining": 50,
@@ -339,7 +348,8 @@
             "gearcrafting": 5,
             "jewelrycrafting": 5,
             "combat": 25,
-            "npc_task": 25
+            "npc_task": 25,
+            "achievement": 30
           },
           "orderBoard": {
             "enabled": true

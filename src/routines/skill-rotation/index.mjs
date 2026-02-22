@@ -30,6 +30,7 @@ import { executeNpcTask, executeItemTask, executeTaskByType, inferTaskType, runN
 import { runItemTaskFlow, craftForItemTask, craftAndTradeItemTaskFromInventory, placeOrderAndCancel, cancelItemTask, withdrawForItemTask, shouldTradeItemTaskNow, gatherForItemTask, tradeItemTask } from './item-tasks.mjs';
 import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, inventorySnapshotForTargets } from './task-exchange.mjs';
 import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit } from './order-claims.mjs';
+import { executeAchievement } from './achievements.mjs';
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
   enabled: false,
@@ -144,6 +145,9 @@ export class SkillRotationRoutine extends BaseRoutine {
       await this._clearActiveOrderClaim(ctx, { reason: 'item_task_mode' });
       return this._executeItemTask(ctx);
     }
+    if (skill === 'achievement') {
+      return this._executeAchievement(ctx);
+    }
 
     // Unknown skill — force rotate
     await this.rotation.forceRotate(ctx);
@@ -254,6 +258,9 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
     return result;
   }
+
+  // --- Achievement Hunter ---
+  async _executeAchievement(ctx) { return executeAchievement(ctx, this); }
 
   // --- Task Exchange ---
   _collectExchangeTargets(opts) { return collectExchangeTargets(this, opts); }

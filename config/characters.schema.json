@@ -98,7 +98,7 @@
       "enum": [
         "mining", "woodcutting", "fishing",
         "cooking", "alchemy", "weaponcrafting", "gearcrafting", "jewelrycrafting",
-        "combat", "npc_task", "item_task"
+        "combat", "npc_task", "item_task", "achievement"
       ]
     },
 
@@ -187,6 +187,21 @@
           "description": "Target quantities for task exchange reward items. Keys are item codes, values are desired quantities to accumulate in bank. Also works dynamically — crafting recipes with unmet bank deps that are task rewards will auto-trigger exchanges. Empty object enables dynamic-only mode.",
           "additionalProperties": { "type": "number", "minimum": 1 },
           "default": {}
+        },
+        "achievementTypes": {
+          "type": "array",
+          "description": "Achievement objective types to pursue. Default: combat_kill, gathering, combat_drop, crafting, task. Types like use, recycling, npc_buy, npc_sell complete naturally and are excluded by default.",
+          "items": {
+            "type": "string",
+            "enum": ["combat_kill", "gathering", "crafting", "combat_drop", "use", "recycling", "task", "npc_buy", "npc_sell"]
+          },
+          "default": ["combat_kill", "gathering", "combat_drop", "crafting", "task"]
+        },
+        "achievementBlacklist": {
+          "type": "array",
+          "description": "Achievement codes to never pursue (e.g., achievements requiring inaccessible content).",
+          "items": { "type": "string" },
+          "default": []
         },
         "orderBoard": {
           "type": "object",

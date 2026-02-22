@@ -7,6 +7,7 @@ import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
+import { selectBestAchievement } from '../routines/skill-rotation/achievements.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -23,6 +24,7 @@ const DEFAULT_GOALS = {
   combat: 10,
   npc_task: 999,
   item_task: 999,
+  achievement: 50,
 };
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
@@ -63,6 +65,8 @@ export class SkillRotation {
       taskCollection = {},
       orderBoard = {},
       recipeBlockMs = DEFAULT_RECIPE_BLOCK_MS,
+      achievementTypes,
+      achievementBlacklist,
     } = {},
     {
       gameDataSvc = gameData,
@@ -92,6 +96,8 @@ export class SkillRotation {
       : DEFAULT_RECIPE_BLOCK_MS;
     this._exchangeNeeds = new Map();              // { itemCode → qty } dynamic targets from crafting
     this._recipeBlocks = new Map();               // { "skill:recipeCode" → expiresAtMs }
+    this.achievementTypes = Array.isArray(achievementTypes) ? achievementTypes : null;
+    this.achievementBlacklist = Array.isArray(achievementBlacklist) ? achievementBlacklist : null;
 
     // Current rotation state
     this.currentSkill = null;
@@ -108,10 +114,13 @@ export class SkillRotation {
     this._monsterLoc = null;    // { x, y } for combat
     this._combatLoadout = null; // optimal gear loadout for combat target
     this._bankChecked = false;  // whether bank withdrawal happened for current recipe
+    this._achievement = null;        // achievement object for achievement hunter
+    this._achievementObjective = null; // specific objective being worked on
+    this._achievementAction = null;  // { type, monsterCode/resourceCode/etc, loc }
   }
 
   /** Hot-reload: update config fields, preserving rotation state. */
-  updateConfig({ weights, skills, goals, craftBlacklist, taskCollection, orderBoard, recipeBlockMs } = {}) {
+  updateConfig({ weights, skills, goals, craftBlacklist, taskCollection, orderBoard, recipeBlockMs, achievementTypes, achievementBlacklist } = {}) {
     if (weights !== undefined) {
       this.weights = weights && Object.keys(weights).length > 0 ? weights : null;
       this.skills = this.weights
@@ -129,6 +138,8 @@ export class SkillRotation {
       this.recipeBlockMs = Number.isFinite(parsed) && parsed > 0
         ? Math.floor(parsed) : DEFAULT_RECIPE_BLOCK_MS;
     }
+    if (achievementTypes !== undefined) this.achievementTypes = Array.isArray(achievementTypes) ? achievementTypes : null;
+    if (achievementBlacklist !== undefined) this.achievementBlacklist = Array.isArray(achievementBlacklist) ? achievementBlacklist : null;
   }
 
   isGoalComplete() {
@@ -199,6 +210,9 @@ export class SkillRotation {
   get combatLoadout() { return this._combatLoadout; }
   get bankChecked() { return this._bankChecked; }
   set bankChecked(v) { this._bankChecked = v; }
+  get achievement() { return this._achievement; }
+  get achievementObjective() { return this._achievementObjective; }
+  get achievementAction() { return this._achievementAction; }
 
   // --- Internal ---
 
@@ -212,6 +226,9 @@ export class SkillRotation {
     this._monsterLoc = null;
     this._combatLoadout = null;
     this._bankChecked = false;
+    this._achievement = null;
+    this._achievementObjective = null;
+    this._achievementAction = null;
   }
 
   _weightedShuffle(skills) {
@@ -299,7 +316,28 @@ export class SkillRotation {
     if (skill === 'item_task') {
       return true; // always viable
     }
+    if (skill === 'achievement') {
+      return this._setupAchievement(ctx);
+    }
     return false;
+  }
+
+  async _setupAchievement(ctx) {
+    const config = {
+      achievementTypes: this.achievementTypes || undefined,
+      achievementBlacklist: this.achievementBlacklist || undefined,
+    };
+    const result = await selectBestAchievement(ctx, config);
+    if (!result) return false;
+
+    this._achievement = result.achievement;
+    this._achievementObjective = result.objective;
+    this._achievementAction = result.action;
+    const obj = result.objective;
+    const progress = obj.current ?? obj.progress ?? 0;
+    const total = obj.total ?? 0;
+    log.info(`[${ctx.name}] Rotation: achievement → ${result.achievement.code} / ${obj.type}:${obj.target || 'any'} (${progress}/${total}, score: ${result.score.toFixed(0)})`);
+    return true;
   }
 
   async _setupGathering(skill, ctx) {
