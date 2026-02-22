@@ -63,7 +63,6 @@ function makeCtx({
 function installOptimizerDeps({
   itemsByCode = new Map(),
   equipmentBySlot = new Map(),
-  scoreByCode = new Map(),
   gatherTools = [],
 } = {}) {
   _setDepsForTests({
@@ -77,7 +76,6 @@ function installOptimizerDeps({
       if (type === 'weapon' && subtype === 'tool') return gatherTools;
       return [];
     },
-    scoreItemFn: (item) => scoreByCode.get(item?.code) || 0,
     bankCountFn: () => 0,
     calcTurnDamageFn: () => 1,
     simulateCombatFn: () => ({
@@ -105,23 +103,6 @@ function testBagRankingBreaksTieByLevel() {
     candidate(makeItem('tier2_bag', { level: 20, effects: invSpace(2) })),
   ]);
   assert.equal(best?.item?.code, 'tier2_bag');
-}
-
-function testBagRankingBreaksTieByScore() {
-  _resetDepsForTests();
-  const scoreByCode = new Map([
-    ['alpha_bag', 10],
-    ['beta_bag', 25],
-  ]);
-  _setDepsForTests({
-    scoreItemFn: (item) => scoreByCode.get(item?.code) || 0,
-  });
-
-  const best = _chooseBestBagCandidateForTests([
-    candidate(makeItem('alpha_bag', { level: 20, effects: invSpace(2) })),
-    candidate(makeItem('beta_bag', { level: 20, effects: invSpace(2) })),
-  ]);
-  assert.equal(best?.item?.code, 'beta_bag');
 }
 
 function testBagRankingBreaksFinalTieByCodeAsc() {
@@ -205,7 +186,6 @@ async function run() {
   try {
     testBagRankingPrefersInventorySpace();
     testBagRankingBreaksTieByLevel();
-    testBagRankingBreaksTieByScore();
     testBagRankingBreaksFinalTieByCodeAsc();
     await testOptimizeForMonsterIncludesBestBag();
     await testOptimizeForGatheringIncludesBestBag();

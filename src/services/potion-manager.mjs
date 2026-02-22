@@ -366,6 +366,48 @@ export async function prepareCombatPotions(ctx, monsterCode) {
   };
 }
 
+/**
+ * Compute the set of ideal potion codes across target monsters.
+ * Unlike collectPotionCandidates, this considers ALL potions the character
+ * can use (no availability filter) — used by gear-state to track desired
+ * potions and place orders for missing ones.
+ *
+ * @param {object} ctx — CharacterContext
+ * @param {string[]} monsterCodes — monsters to evaluate against
+ * @param {{ poisonBias?: boolean }} [settings]
+ * @returns {Set<string>} — unique desired potion codes
+ */
+export function computeDesiredPotionsForMonsters(ctx, monsterCodes, settings = {}) {
+  const c = ctx.get();
+  const allPotions = _gameData.findItems({ type: 'utility', subtype: 'potion', maxLevel: c.level }) || [];
+
+  const candidates = [];
+  for (const item of allPotions) {
+    if (!isUtilityPotion(item)) continue;
+    if (!_canUseItem(item, c)) continue;
+    candidates.push({ code: item.code, item });
+  }
+
+  if (candidates.length === 0) return new Set();
+
+  const mergedSettings = { ...DEFAULT_COMBAT_SETTINGS, ...settings };
+  const desiredCodes = new Set();
+
+  for (const monsterCode of monsterCodes) {
+    const monster = _gameData.getMonster(monsterCode);
+    if (!monster) continue;
+
+    const charStats = c;
+    const u1 = chooseUtility1(candidates, charStats, monster, mergedSettings);
+    if (u1?.code) desiredCodes.add(u1.code);
+
+    const u2 = chooseUtility2(candidates, u1?.code || null, charStats, monster, mergedSettings);
+    if (u2?.code) desiredCodes.add(u2.code);
+  }
+
+  return desiredCodes;
+}
+
 // Test helpers.
 export function _scorePotionCandidateForTests(item, charStats, monster, opts = {}) {
   return scorePotionCandidate(item, charStats, monster, opts);

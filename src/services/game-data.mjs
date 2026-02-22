@@ -1,13 +1,12 @@
 /**
  * Game data service — fetches and caches items, monsters, bank contents,
- * and workshop locations from the API. Provides equipment scoring.
+ * and workshop locations from the API.
  *
  * Data is static per season, so items/monsters are loaded once at startup.
  * Bank items are delegated to inventory-manager.mjs.
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import { getWeight } from '../data/scoring-weights.mjs';
 import { getBankItems as getInventoryManagerBankItems } from './inventory-manager.mjs';
 
 // --- In-memory caches ---
@@ -268,22 +267,6 @@ export function getEquipmentForSlot(slot, charLevel) {
     if (results.length > 0) return results;
   }
   return [];
-}
-
-// --- Equipment scoring ---
-
-/**
- * Score an item for general combat effectiveness.
- * Higher = better. Weights prioritize damage output > survivability.
- */
-export function scoreItem(item) {
-  if (!item?.effects) return 0;
-  let score = 0;
-  for (const effect of item.effects) {
-    const name = effect.name || effect.code;
-    score += (effect.value || 0) * getWeight(name);
-  }
-  return score;
 }
 
 // --- Equipment slots ---

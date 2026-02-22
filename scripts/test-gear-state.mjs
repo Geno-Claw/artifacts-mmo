@@ -155,6 +155,8 @@ async function testRequiredMultiplicityDesiredAndPotionCarryAccounting(basePath)
     },
     getBankRevisionFn: () => bankRevision,
     globalCountFn: (code) => counts.get(code) || 0,
+    // Use legacy equipped-slot path for potions (this test doesn't mock the potion simulation).
+    computeDesiredPotionsFn: null,
   });
 
   await initializeGearState({

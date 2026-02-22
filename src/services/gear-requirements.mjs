@@ -101,10 +101,21 @@ function compareMonsterRecords(a, b) {
 
 // ── sub-requirement helpers ──────────────────────────────────────────
 
-function computePotionRequirements(ctx, cfg) {
+function computePotionRequirements(ctx, cfg, monsterCodes, deps) {
   const required = new Map();
   if (!cfg?.potionEnabled || !cfg?.potionTargetQty) return required;
 
+  // Simulation-derived: find ideal potions across all beatable monsters.
+  if (deps?.computeDesiredPotionsFn && monsterCodes.length > 0) {
+    const settings = { poisonBias: cfg.potionPoisonBias !== false };
+    const desiredCodes = deps.computeDesiredPotionsFn(ctx, monsterCodes, settings);
+    for (const code of desiredCodes) {
+      incrementCount(required, code, cfg.potionTargetQty);
+    }
+    return required;
+  }
+
+  // Fallback: use currently equipped potions (legacy behavior).
   const char = ctx.get();
   for (const slot of UTILITY_SLOTS) {
     const code = char[slot] || null;
@@ -141,6 +152,7 @@ function computeToolRequirements(level, deps) {
  * @param {object} deps.gameDataSvc — game data service (findMonstersByLevel)
  * @param {Function} deps.optimizeForMonsterFn — gear optimizer
  * @param {Function} deps.getBestToolForSkillAtLevelFn — tool policy
+ * @param {Function} [deps.computeDesiredPotionsFn] — potion-manager.computeDesiredPotionsForMonsters
  * @param {Function} [deps.logFn] — optional logger
  * @returns {Promise<{ selected: Map, required: Map, selectedMonsters: string[], bestTarget: string|null, level: number }>}
  */
@@ -176,7 +188,8 @@ export async function computeCharacterRequirements(name, ctx, cfg, deps) {
     maxMergeCounts(required, record.counts);
   }
 
-  const potionRequired = computePotionRequirements(ctx, cfg);
+  const monsterCodes = allRecords.map(r => r.monsterCode);
+  const potionRequired = computePotionRequirements(ctx, cfg, monsterCodes, deps);
   maxMergeCounts(required, potionRequired);
   const toolRequired = computeToolRequirements(level, deps);
   maxMergeCounts(required, toolRequired);

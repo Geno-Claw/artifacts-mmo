@@ -24,7 +24,6 @@ src/
   log.mjs                Timestamped console logging
   data/
     locations.mjs        Monster, resource, and bank coordinates (Season 7)
-    scoring-weights.mjs  Equipment scoring multipliers
   services/
     game-data.mjs        Static game data cache (items, monsters, resources, recipes)
     combat-simulator.mjs Pure math fight predictor using game damage formulas
@@ -66,7 +65,6 @@ config/
   sell-rules.json         Grand Exchange sell rules
   *.schema.json           JSON Schema validators
 scripts/
-  export-gear-scores.mjs  Export all equipment to CSV with scoring breakdown
 ```
 
 ## Core Concepts
@@ -186,7 +184,7 @@ The following are re-exported from their dedicated modules for backward compatib
 ## Services
 
 ### Game Data (`services/game-data.mjs`)
-Loads items, monsters, resources, maps, and bank contents from the API at startup. Provides lookups (`getItem`, `getMonster`, `getResource`), equipment scoring (`scoreItem`), recipe resolution (`resolveRecipeChain`), and location helpers (`getResourceLocation`, `getWorkshops`).
+Loads items, monsters, resources, maps, and bank contents from the API at startup. Provides lookups (`getItem`, `getMonster`, `getResource`), recipe resolution (`resolveRecipeChain`), and location helpers (`getResourceLocation`, `getWorkshops`).
 
 ### Combat Simulator (`services/combat-simulator.mjs`)
 Pure math fight predictor using the documented Artifacts MMO damage formulas. Key exports:
@@ -365,23 +363,6 @@ Controls equipment recycling and GE selling:
 | 90–100 | Survival | Rest when HP low |
 | 50–70 | Maintenance | Bank deposits |
 | 5 | Core gameplay | Skill rotation (handles all gathering, crafting, combat, tasks) |
-
-## Equipment Scoring
-
-Static scoring via weighted sum of item effects (`data/scoring-weights.mjs`):
-
-| Effect | Weight | Rationale |
-|--------|--------|-----------|
-| haste | 4x | Most impactful combat stat |
-| attack_* | 3x | Direct damage scaling |
-| dmg, dmg_* | 2x | Flat damage bonuses |
-| res_* | 1.5x | Damage reduction |
-| hp | 0.5x | Raw values are large (50-500) |
-| initiative | 0.2x | Raw values 50-700, would dominate at 1x |
-| wisdom | 0.2x | High raw values, non-combat |
-| prospecting | 0.1x | High raw values, non-combat |
-
-The gear optimizer uses combat simulation instead of static scores for actual equipment decisions.
 
 ## Adding a New Routine
 

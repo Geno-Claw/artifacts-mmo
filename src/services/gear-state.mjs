@@ -8,7 +8,8 @@ import * as gameData from './game-data.mjs';
 import { optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
 import { getBankRevision, globalCount } from './inventory-manager.mjs';
-import { getBestToolForSkillAtLevel } from './tool-policy.mjs';
+import { getBestToolForSkillAtLevel, resolveItemOrderSource } from './tool-policy.mjs';
+import { computeDesiredPotionsForMonsters } from './potion-manager.mjs';
 import {
   mapToObject as _mapToObject,
   equipmentCountsOnCharacter as _equipmentCountsOnCharacter,
@@ -54,6 +55,8 @@ let _deps = {
   createOrMergeOrderFn: createOrMergeOrder,
   getBankRevisionFn: getBankRevision,
   globalCountFn: globalCount,
+  resolveItemOrderSourceFn: resolveItemOrderSource,
+  computeDesiredPotionsFn: computeDesiredPotionsForMonsters,
 };
 
 function nowMs() {
@@ -110,10 +113,13 @@ function extractCharacterConfig(charCfg = {}) {
   const potionEnabled = potionSettings.enabled !== false && combatPotions.enabled !== false;
   const potionTargetQty = potionEnabled ? toPositiveInt(combatPotions.targetQuantity, 0) : 0;
 
+  const potionPoisonBias = potionEnabled ? combatPotions.poisonBias !== false : false;
+
   return {
     createOrders,
     potionEnabled,
     potionTargetQty,
+    potionPoisonBias,
   };
 }
 
@@ -282,24 +288,34 @@ function summarizeCategoryMap(map) {
 }
 
 async function computeCharacterRequirements(name, ctx) {
-  const cfg = characterConfig.get(name) || { potionEnabled: false, potionTargetQty: 0 };
+  const cfg = characterConfig.get(name) || { potionEnabled: false, potionTargetQty: 0, potionPoisonBias: false };
   return _computeCharacterRequirements(name, ctx, cfg, {
     gameDataSvc: _deps.gameDataSvc,
     optimizeForMonsterFn: _deps.optimizeForMonsterFn,
     getBestToolForSkillAtLevelFn: _deps.getBestToolForSkillAtLevelFn,
+    computeDesiredPotionsFn: cfg.potionEnabled ? _deps.computeDesiredPotionsFn : null,
     logFn: (...args) => log.warn(...args),
   });
 }
 
-function resolveCraftDesiredOrder(itemCode) {
+function resolveDesiredOrderSource(itemCode) {
+  // Try craft source first (most common for gear and potions).
   const item = _deps.gameDataSvc.getItem(itemCode);
   if (item?.craft?.skill) {
     return {
+      sourceType: 'craft',
       sourceCode: itemCode,
       sourceLevel: toPositiveInt(item.craft.level || item.level),
       craftSkill: item.craft.skill,
+      gatherSkill: null,
     };
   }
+
+  // Fallback to gather/fight sources via general resolver.
+  if (_deps.resolveItemOrderSourceFn) {
+    return _deps.resolveItemOrderSourceFn(itemCode);
+  }
+
   return null;
 }
 
@@ -615,7 +631,7 @@ export function publishDesiredOrdersForCharacter(name) {
     const item = _deps.gameDataSvc.getItem(itemCode);
     if (_isToolItem(item)) continue;
 
-    const source = resolveCraftDesiredOrder(itemCode);
+    const source = resolveDesiredOrderSource(itemCode);
     if (!source) continue;
 
     try {
@@ -623,9 +639,10 @@ export function publishDesiredOrdersForCharacter(name) {
         requesterName: name,
         recipeCode: `gear_state:${name}:${itemCode}`,
         itemCode,
-        sourceType: 'craft',
+        sourceType: source.sourceType,
         sourceCode: source.sourceCode,
-        craftSkill: source.craftSkill,
+        craftSkill: source.craftSkill || null,
+        gatherSkill: source.gatherSkill || null,
         sourceLevel: source.sourceLevel,
         quantity: missingQty,
       });
@@ -704,6 +721,8 @@ export function _resetGearStateForTests() {
     createOrMergeOrderFn: createOrMergeOrder,
     getBankRevisionFn: getBankRevision,
     globalCountFn: globalCount,
+    resolveItemOrderSourceFn: resolveItemOrderSource,
+    computeDesiredPotionsFn: computeDesiredPotionsForMonsters,
   };
 }
 

@@ -54,7 +54,6 @@ let _deps = {
   getItemFn: (code) => gameData.getItem(code),
   getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
   findItemsFn: (filters) => gameData.findItems(filters),
-  scoreItemFn: (item) => gameData.scoreItem(item),
   bankCountFn: (code) => bankCount(code),
 };
 
@@ -139,10 +138,6 @@ function isBetterBagItem(candidate, currentBest) {
   const levelA = Number(a.level) || 0;
   const levelB = Number(b.level) || 0;
   if (levelA !== levelB) return levelA > levelB;
-
-  const scoreA = Number(_deps.scoreItemFn(a)) || 0;
-  const scoreB = Number(_deps.scoreItemFn(b)) || 0;
-  if (scoreA !== scoreB) return scoreA > scoreB;
 
   const codeA = `${a.code || ''}`;
   const codeB = `${b.code || ''}`;
@@ -240,10 +235,6 @@ function isPreferredItemOnTie(candidate, currentBest) {
   const aLevel = Number(candidate.level) || 0;
   const bLevel = Number(currentBest.level) || 0;
   if (aLevel !== bLevel) return aLevel > bLevel;
-
-  const aScore = Number(_deps.scoreItemFn(candidate)) || 0;
-  const bScore = Number(_deps.scoreItemFn(currentBest)) || 0;
-  if (aScore !== bScore) return aScore > bScore;
 
   const aCode = `${candidate.code || ''}`;
   const bCode = `${currentBest.code || ''}`;
@@ -638,7 +629,6 @@ export function _resetDepsForTests() {
     getItemFn: (code) => gameData.getItem(code),
     getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
     findItemsFn: (filters) => gameData.findItems(filters),
-    scoreItemFn: (item) => gameData.scoreItem(item),
     bankCountFn: (code) => bankCount(code),
   };
 }
