@@ -149,6 +149,18 @@ export function getResourceForDrop(itemCode) {
 }
 
 /**
+ * Find which resource drops a given item, including drop metadata.
+ * Returns { resource, drop } where drop has { code, rate, min_quantity, max_quantity }, or null.
+ * Mirrors getMonsterForDrop() pattern.
+ */
+export function getResourceDropInfo(itemCode) {
+  const resource = getResourceForDrop(itemCode);
+  if (!resource) return null;
+  const drop = resource.drops?.find(d => d.code === itemCode);
+  return drop ? { resource, drop } : null;
+}
+
+/**
  * Find which monster drops a given item.
  * Returns { monster, drop } where drop has { code, rate, min_quantity, max_quantity }, or null.
  * Prefers the lowest-level monster.

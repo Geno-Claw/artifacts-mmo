@@ -495,8 +495,14 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
 
     case 'gathering': {
       // Target is the item code (drop), not the resource code
-      let resource = gameData.getResourceForDrop(target);
-      if (!resource) resource = gameData.getResource(target);
+      let resource, drop;
+      const dropInfo = gameData.getResourceDropInfo(target);
+      if (dropInfo) {
+        resource = dropInfo.resource;
+        drop = dropInfo.drop;
+      } else {
+        resource = gameData.getResource(target);
+      }
       if (!resource) return null;
       if (gameData.isLocationUnreachable('resource', resource.code)) return null;
       if (ctx.skillLevel(resource.skill) < resource.level) return null;
@@ -504,8 +510,13 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
       const loc = await gameData.getResourceLocation(resource.code);
       if (!loc) return null;
 
+      // Estimate gather actions needed: factor in drop rate and average quantity
+      const rate = (drop?.rate ?? 100) / 100;
+      const avgQty = ((drop?.min_quantity ?? 1) + (drop?.max_quantity ?? 1)) / 2;
+      const expectedPerGather = Math.max(0.01, rate * avgQty);
+
       return {
-        score: resource.level * remaining,
+        score: resource.level * (remaining / expectedPerGather),
         action: { type: 'gather', resourceCode: resource.code, resource, loc },
       };
     }
