@@ -300,6 +300,110 @@ export async function validateBotConfig(config, options = {}) {
   };
 }
 
+// ── Schema-driven config normalization ──────────────────────────────
+
+/**
+ * Given a value and a list of oneOf schema variants, find the variant
+ * whose properties.type.const matches value.type.
+ */
+function findOneOfVariant(value, variants, rootSchema) {
+  const valueType = value?.type;
+  if (typeof valueType !== 'string') return null;
+
+  for (const variant of variants) {
+    let resolved = variant;
+    if (resolved && hasOwn(resolved, '$ref')) {
+      resolved = resolveSchemaRef(rootSchema, resolved.$ref);
+      if (!resolved) continue;
+    }
+    const typeProp = resolved?.properties?.type;
+    if (typeProp && hasOwn(typeProp, 'const') && typeProp.const === valueType) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+/**
+ * Recursively fill missing properties with defaults declared in the JSON
+ * Schema.  Returns a new value with defaults applied (never mutates input).
+ */
+function applySchemaDefaults(value, schema, rootSchema) {
+  let activeSchema = schema;
+
+  // Resolve $ref
+  if (activeSchema && typeof activeSchema === 'object' && hasOwn(activeSchema, '$ref')) {
+    const resolved = resolveSchemaRef(rootSchema, activeSchema.$ref);
+    if (!resolved) return value;
+    activeSchema = resolved;
+  }
+
+  if (!activeSchema || typeof activeSchema !== 'object') return value;
+
+  // Handle oneOf: find the matching variant by type.const, recurse into it
+  if (Array.isArray(activeSchema.oneOf) && activeSchema.oneOf.length > 0) {
+    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+      const matched = findOneOfVariant(value, activeSchema.oneOf, rootSchema);
+      if (matched) return applySchemaDefaults(value, matched, rootSchema);
+    }
+    return value;
+  }
+
+  // Value is missing — use schema default or synthesize object from property defaults
+  if (value === undefined) {
+    if (hasOwn(activeSchema, 'default')) {
+      return structuredClone(activeSchema.default);
+    }
+    if (activeSchema.type === 'object' && activeSchema.properties) {
+      return applySchemaDefaults({}, activeSchema, rootSchema);
+    }
+    return undefined;
+  }
+
+  // Object: fill missing properties, recurse into existing ones
+  if (activeSchema.type === 'object' && value != null && typeof value === 'object' && !Array.isArray(value)) {
+    const result = { ...value };
+    const properties = activeSchema.properties || {};
+
+    for (const [key, propSchema] of Object.entries(properties)) {
+      const normalized = applySchemaDefaults(result[key], propSchema, rootSchema);
+      if (normalized !== undefined) {
+        result[key] = normalized;
+      }
+    }
+
+    // Recurse into user-provided keys covered by additionalProperties schema
+    if (activeSchema.additionalProperties && typeof activeSchema.additionalProperties === 'object') {
+      for (const key of Object.keys(result)) {
+        if (hasOwn(properties, key)) continue;
+        result[key] = applySchemaDefaults(result[key], activeSchema.additionalProperties, rootSchema);
+      }
+    }
+
+    return result;
+  }
+
+  // Array: recurse into each item
+  if (activeSchema.type === 'array' && Array.isArray(value) && activeSchema.items) {
+    return value.map(item => applySchemaDefaults(item, activeSchema.items, rootSchema));
+  }
+
+  // Scalar or type mismatch — return as-is
+  return value;
+}
+
+/**
+ * Apply schema defaults to a bot config object.
+ * Returns a new object with all missing fields filled from schema defaults,
+ * plus a flag indicating whether anything was added.
+ */
+export async function normalizeConfig(config, options = {}) {
+  const schema = await loadCharactersSchema(options);
+  const normalized = applySchemaDefaults(config, schema, schema);
+  const changed = !valuesEqual(config, normalized);
+  return { config: normalized, changed };
+}
+
 export async function loadConfigSnapshot(options = {}) {
   const paths = getBotConfigPaths(options);
   const config = await readJsonFile(paths.resolvedPath, {

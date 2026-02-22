@@ -39,6 +39,7 @@ import {
 } from './services/event-manager.mjs';
 import { loadNpcCatalogs } from './services/game-data.mjs';
 import { loadNpcBuyList } from './services/npc-buy-config.mjs';
+import { normalizeConfig, hashCanonicalJson, saveConfigAtomically } from './services/config-store.mjs';
 
 /**
  * Extract a lightweight detail object from account_log content per action type.
@@ -180,6 +181,7 @@ export class RuntimeManager {
     this.lastConfigPath = process.env.BOT_CONFIG || DEFAULT_CONFIG_PATH;
     this._configWatcher = null;
     this._configWatchDebounce = null;
+    this._lastSavedHash = null;
   }
 
   _setState(nextState) {
@@ -472,7 +474,20 @@ export class RuntimeManager {
     let run = null;
 
     try {
-      const { configPath, config } = this._loadRuntimeConfig();
+      const { configPath, config: rawConfig } = this._loadRuntimeConfig();
+
+      // Fill missing fields with schema defaults; write back if anything was added
+      const { config, changed: configNormalized } = await normalizeConfig(rawConfig);
+      if (configNormalized) {
+        try {
+          const saved = await saveConfigAtomically(config);
+          this._lastSavedHash = saved.hash;
+          log.info('[Runtime] Config normalized — defaults written to disk');
+        } catch (err) {
+          log.warn(`[Runtime] Could not save normalized config: ${err.message}`);
+        }
+      }
+
       run = this._buildRunContext(configPath, config);
 
       log.info(`Bot starting - ${config.characters.length} character(s)`);
@@ -656,6 +671,16 @@ export class RuntimeManager {
     } catch (err) {
       log.warn(`[Runtime] Hot-reload failed to read config: ${err.message}`);
       return;
+    }
+
+    // Skip reload if this file change was our own normalization write-back
+    if (this._lastSavedHash) {
+      const currentHash = hashCanonicalJson(config);
+      if (currentHash === this._lastSavedHash) {
+        this._lastSavedHash = null;
+        return;
+      }
+      this._lastSavedHash = null;
     }
 
     loadNpcBuyList(config);

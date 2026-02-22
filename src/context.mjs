@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = Object.freeze({
       targetQuantity: 5,
       poisonBias: true,
       respectNonPotionUtility: true,
+      monsterTypes: ['elite', 'boss'],
     },
     bankTravel: {
       enabled: false,

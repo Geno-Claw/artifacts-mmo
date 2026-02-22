@@ -10,6 +10,7 @@ import {
 import {
   ConfigStoreError,
   loadConfigSnapshot,
+  normalizeConfig,
   saveConfigAtomically,
   validateBotConfig,
 } from './services/config-store.mjs';
@@ -557,7 +558,9 @@ export async function startDashboardServer({
           }
 
           try {
-            const validation = await validateBotConfig(body.config);
+            const { config: normalizedConfig } = await normalizeConfig(body.config);
+
+            const validation = await validateBotConfig(normalizedConfig);
             if (!validation.ok) {
               sendError(
                 res,
@@ -583,7 +586,7 @@ export async function startDashboardServer({
               return;
             }
 
-            const saved = await saveConfigAtomically(body.config);
+            const saved = await saveConfigAtomically(normalizedConfig);
             sendJson(res, 200, {
               ok: true,
               hash: saved.hash,
