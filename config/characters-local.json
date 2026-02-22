@@ -22,6 +22,7 @@
         {
           "craftBlacklist": {},
           "goals": {
+            "achievement": 40,
             "alchemy": 10,
             "combat": 50,
             "cooking": 40,
@@ -42,6 +43,7 @@
           "taskCollection": {},
           "type": "skillRotation",
           "weights": {
+            "achievement": 2,
             "alchemy": 0,
             "combat": 0,
             "cooking": 0,
@@ -78,6 +80,7 @@
         {
           "craftBlacklist": {},
           "goals": {
+            "achievement": 30,
             "alchemy": 10,
             "combat": 50,
             "cooking": 40,
@@ -96,6 +99,7 @@
           "taskCollection": {},
           "type": "skillRotation",
           "weights": {
+            "achievement": 0,
             "alchemy": 1,
             "combat": 1,
             "cooking": 3,
@@ -132,6 +136,7 @@
         {
           "craftBlacklist": {},
           "goals": {
+            "achievement": 30,
             "alchemy": 10,
             "combat": 50,
             "cooking": 40,
@@ -149,6 +154,7 @@
           },
           "type": "skillRotation",
           "weights": {
+            "achievement": 0,
             "alchemy": 0,
             "combat": 0,
             "cooking": 5,
@@ -185,6 +191,7 @@
         {
           "craftBlacklist": {},
           "goals": {
+            "achievement": 30,
             "alchemy": 10,
             "combat": 50,
             "cooking": 40,
@@ -202,6 +209,7 @@
           },
           "type": "skillRotation",
           "weights": {
+            "achievement": 0,
             "alchemy": 0,
             "combat": 0,
             "cooking": 0,
@@ -238,6 +246,7 @@
         {
           "craftBlacklist": {},
           "goals": {
+            "achievement": 30,
             "alchemy": 10,
             "combat": 50,
             "cooking": 40,
@@ -255,6 +264,7 @@
           },
           "type": "skillRotation",
           "weights": {
+            "achievement": 0,
             "alchemy": 0,
             "combat": 0,
             "cooking": 0,
