@@ -76,6 +76,9 @@
           "npcEvents": true
         },
         {
+          "type": "completeTask"
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "achievement": 40,
@@ -142,6 +145,9 @@
           "npcEvents": true
         },
         {
+          "type": "completeTask"
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "achievement": 30,
@@ -204,6 +210,9 @@
           "monsterEvents": true,
           "resourceEvents": true,
           "npcEvents": true
+        },
+        {
+          "type": "completeTask"
         },
         {
           "craftBlacklist": {},
@@ -269,6 +278,9 @@
           "npcEvents": true
         },
         {
+          "type": "completeTask"
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "achievement": 30,
@@ -330,6 +342,9 @@
           "monsterEvents": true,
           "resourceEvents": true,
           "npcEvents": true
+        },
+        {
+          "type": "completeTask"
         },
         {
           "craftBlacklist": {},

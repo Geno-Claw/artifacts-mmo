@@ -5,6 +5,7 @@ import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult, NoPathError } from '../../helpers.mjs';
 import { restBeforeFight, withdrawFoodForFights } from '../../services/food-manager.mjs';
+import { hpNeededForFight } from '../../services/combat-simulator.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
@@ -65,7 +66,20 @@ export async function executeCombat(ctx, routine) {
   }
   if (!(await restBeforeFight(ctx, monsterCode))) {
     const context = claim ? 'order fight' : 'combat';
-    log.warn(`[${ctx.name}] ${context}: can't rest before fighting ${monsterCode}, attempting fight anyway`);
+    const minHp = hpNeededForFight(ctx, monsterCode);
+    if (minHp === null) {
+      log.warn(`[${ctx.name}] ${context}: ${monsterCode} unbeatable, rotating`);
+      ctx.recordLoss(monsterCode);
+      const losses = ctx.consecutiveLosses(monsterCode);
+      if (claim && losses >= routine.maxLosses) {
+        await routine._blockAndReleaseClaim(ctx, 'combat_losses');
+      } else if (!claim && losses >= routine.maxLosses) {
+        await routine.rotation.forceRotate(ctx);
+      }
+      return true;
+    }
+    log.info(`[${ctx.name}] ${context}: insufficient HP for ${monsterCode}, yielding for rest`);
+    return true;
   }
 
   const result = await fightOnce(ctx);

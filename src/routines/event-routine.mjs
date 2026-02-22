@@ -17,10 +17,13 @@ import { canCharacterBeatEvent } from '../services/event-simulation.mjs';
 import { equipForCombat, equipForGathering } from '../services/gear-loadout.mjs';
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError } from '../helpers.mjs';
 import { restBeforeFight } from '../services/food-manager.mjs';
+import { hpNeededForFight } from '../services/combat-simulator.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
 import { getItemsForNpc } from '../services/npc-buy-config.mjs';
 import { getOrderBoardSnapshot } from '../services/order-board.mjs';
-import { globalCount } from '../services/inventory-manager.mjs';
+import { globalCount, getBankSummary } from '../services/inventory-manager.mjs';
+import { withdrawGoldFromBank } from '../services/bank-ops.mjs';
+import * as npcEventLock from '../services/npc-event-lock.mjs';
 
 const TAG = 'Event';
 
@@ -53,6 +56,8 @@ export class EventRoutine extends BaseRoutine {
     this._prepared = false;
     /** Per-event cooldown tracking: { eventCode: timestampMs } */
     this._eventCooldowns = {};
+    /** Character name holding the NPC lock (for release in _clearTarget). */
+    this._lockCharName = null;
   }
 
   updateConfig(cfg = {}) {
@@ -75,9 +80,8 @@ export class EventRoutine extends BaseRoutine {
       if (eventManager.isEventActive(this._targetEvent.code)) {
         return true;
       }
-      // Event expired — clear target
-      this._targetEvent = null;
-      this._prepared = false;
+      // Event expired — clear target (and release NPC lock if held)
+      this._clearTarget();
     }
 
     // Find a new event target
@@ -202,7 +206,16 @@ export class EventRoutine extends BaseRoutine {
 
     // Rest / eat before fight
     if (!(await restBeforeFight(ctx, monsterCode))) {
-      log.warn(`[${ctx.name}] ${TAG}: can't rest before ${monsterCode}, fighting anyway`);
+      const minHp = hpNeededForFight(ctx, monsterCode);
+      if (minHp === null) {
+        log.warn(`[${ctx.name}] ${TAG}: ${monsterCode} unbeatable, giving up on event`);
+        ctx.recordLoss(monsterCode);
+        this._setCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
+      log.info(`[${ctx.name}] ${TAG}: insufficient HP for ${monsterCode}, yielding for rest`);
+      return false;
     }
 
     // Fight
@@ -250,6 +263,12 @@ export class EventRoutine extends BaseRoutine {
       }
 
       const resource = gameData.getResource(resourceCode);
+      if (resource && resource.level > ctx.skillLevel(resource.skill)) {
+        log.info(`[${ctx.name}] ${TAG}: ${resourceCode} requires ${resource.skill} lv${resource.level}, have lv${ctx.skillLevel(resource.skill)} — skipping`);
+        this._setCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
       if (resource?.skill) {
         await equipForGathering(ctx, resource.skill);
       }
@@ -290,7 +309,18 @@ export class EventRoutine extends BaseRoutine {
       }
     }
 
-    const result = await gatherOnce(ctx);
+    let result;
+    try {
+      result = await gatherOnce(ctx);
+    } catch (err) {
+      if (err.code === 493) {
+        log.warn(`[${ctx.name}] ${TAG}: ${resourceCode} — skill too low (493), adding cooldown`);
+        this._setCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
+      throw err;
+    }
     const items = result.details?.items || [];
     const xp = result.details?.xp || 0;
     log.info(`[${ctx.name}] ${TAG} ${resourceCode}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} +${xp}xp`);
@@ -320,8 +350,48 @@ export class EventRoutine extends BaseRoutine {
       return false;
     }
 
-    // First iteration: travel to NPC
+    // First iteration: acquire lock, prepare gold, travel
     if (!this._prepared) {
+      // Acquire cross-character NPC lock
+      if (!npcEventLock.acquire(ctx.name, npcCode, target.code)) {
+        const holder = npcEventLock.getHolder();
+        log.info(`[${ctx.name}] ${TAG}: NPC lock held by ${holder?.charName}, deferring`);
+        this._setCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
+      this._lockCharName = ctx.name;
+
+      // Build gold-aware shopping list to determine how much gold we need
+      const { items, totalCost, goldNeeded } = this._buildGoldAwareShoppingList(ctx, npcCode);
+      if (items.length === 0) {
+        log.info(`[${ctx.name}] ${TAG}: nothing affordable to buy from ${npcCode}`);
+        this._setCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
+
+      log.info(`[${ctx.name}] ${TAG}: ${npcCode} shopping plan: ${items.map(i => `${i.code}x${i.quantity} @${i.unitPrice}g`).join(', ')} | total ${totalCost}g, need ${goldNeeded}g from bank`);
+
+      // Withdraw gold from bank if needed
+      if (goldNeeded > 0) {
+        try {
+          await withdrawGoldFromBank(ctx, goldNeeded);
+          log.info(`[${ctx.name}] ${TAG}: withdrew ${goldNeeded}g from bank for NPC purchases`);
+        } catch (err) {
+          log.warn(`[${ctx.name}] ${TAG}: gold withdrawal failed: ${err.message}, proceeding with carried gold`);
+          // Don't abort — buy what we can with carried gold
+        }
+      }
+
+      // Re-check event still active after bank trip
+      if (!eventManager.isEventActive(target.code)) {
+        log.info(`[${ctx.name}] ${TAG}: ${target.code} despawned during gold withdrawal`);
+        this._clearTarget();
+        return false;
+      }
+
+      // Travel to NPC
       try {
         await moveTo(ctx, map.x, map.y);
       } catch (err) {
@@ -336,10 +406,29 @@ export class EventRoutine extends BaseRoutine {
       this._prepared = true;
     }
 
-    // Build shopping list
+    // Re-travel if we moved (e.g., after bank deposit preemption)
+    if (!ctx.isAt(map.x, map.y)) {
+      if (!eventManager.isEventActive(target.code)) {
+        this._clearTarget();
+        return false;
+      }
+      try {
+        await moveTo(ctx, map.x, map.y);
+      } catch (err) {
+        if (err instanceof NoPathError) {
+          log.warn(`[${ctx.name}] ${TAG}: no path to NPC at (${map.x},${map.y})`);
+          this._setCooldown(target.code);
+          this._clearTarget();
+          return false;
+        }
+        throw err;
+      }
+    }
+
+    // Build shopping list each iteration (quantities change after purchases)
     const shoppingList = this._buildNpcShoppingList(ctx, npcCode);
     if (shoppingList.length === 0) {
-      log.info(`[${ctx.name}] ${TAG}: nothing to buy from ${npcCode}`);
+      log.info(`[${ctx.name}] ${TAG}: nothing left to buy from ${npcCode}`);
       this._clearTarget();
       return false;
     }
@@ -355,13 +444,28 @@ export class EventRoutine extends BaseRoutine {
       return false;
     }
 
+    // Constrain buyQty to what we can afford
+    let finalQty = buyQty;
+    const unitPrice = gameData.getNpcBuyPrice(npcCode, item.code);
+    if (unitPrice != null && unitPrice > 0) {
+      const carriedGold = ctx.get().gold || 0;
+      const maxAffordable = Math.floor(carriedGold / unitPrice);
+      finalQty = Math.min(buyQty, maxAffordable);
+      if (finalQty <= 0) {
+        log.warn(`[${ctx.name}] ${TAG}: insufficient gold (${carriedGold}g) to buy ${item.code} @${unitPrice}g from ${npcCode}`);
+        this._setCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
+    }
+
     try {
-      const result = await api.npcBuy(item.code, buyQty, ctx.name);
+      const result = await api.npcBuy(item.code, finalQty, ctx.name);
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
 
       const cost = result.transaction?.total_price || 0;
-      log.info(`[${ctx.name}] ${TAG} ${npcCode}: bought ${item.code} x${buyQty} for ${cost}g (${item.reason})`);
+      log.info(`[${ctx.name}] ${TAG} ${npcCode}: bought ${item.code} x${finalQty} for ${cost}g (${item.reason})`);
     } catch (err) {
       if (err.code === 598) {
         log.warn(`[${ctx.name}] ${TAG}: NPC not on map (598), event may have despawned`);
@@ -375,6 +479,7 @@ export class EventRoutine extends BaseRoutine {
       }
       if (err.code === 492) {
         log.warn(`[${ctx.name}] ${TAG}: not enough gold to buy ${item.code} from ${npcCode}`);
+        this._setCooldown(target.code);
         this._clearTarget();
         return false;
       }
@@ -449,6 +554,40 @@ export class EventRoutine extends BaseRoutine {
     return result;
   }
 
+  /**
+   * Gold-aware shopping list — trims quantities to what the character can afford
+   * using carried gold + bank gold.
+   * @returns {{ items: Array, totalCost: number, goldNeeded: number }}
+   */
+  _buildGoldAwareShoppingList(ctx, npcCode) {
+    const raw = this._buildNpcShoppingList(ctx, npcCode);
+    if (raw.length === 0) return { items: [], totalCost: 0, goldNeeded: 0 };
+
+    const carriedGold = ctx.get().gold || 0;
+    const bankGold = getBankSummary().gold || 0;
+    const totalAvailable = carriedGold + bankGold;
+
+    let runningCost = 0;
+    const items = [];
+
+    for (const entry of raw) {
+      const unitPrice = gameData.getNpcBuyPrice(npcCode, entry.code);
+      if (unitPrice == null || unitPrice <= 0) continue;
+
+      const maxAffordable = Math.floor((totalAvailable - runningCost) / unitPrice);
+      if (maxAffordable <= 0) continue;
+
+      const qty = Math.min(entry.quantity, maxAffordable);
+      const cost = qty * unitPrice;
+      runningCost += cost;
+
+      items.push({ ...entry, quantity: qty, unitPrice, totalCost: cost });
+    }
+
+    const goldNeeded = Math.max(0, runningCost - carriedGold);
+    return { items, totalCost: runningCost, goldNeeded };
+  }
+
   // --- Event selection ---
 
   _findBestEvent(ctx) {
@@ -470,7 +609,10 @@ export class EventRoutine extends BaseRoutine {
           continue;
         }
 
-        const monsterCode = evt.contentCode;
+        const monsterCode = evt.definition?.content?.code || evt.contentCode;
+        if (monsterCode !== evt.contentCode) {
+          log.info(`[${ctx.name}] ${TAG}: resolved ${evt.contentCode} → monster ${monsterCode} from definition`);
+        }
         const monster = gameData.getMonster(monsterCode);
 
         if (monster) {
@@ -526,7 +668,10 @@ export class EventRoutine extends BaseRoutine {
         if (this._isOnCooldown(evt.code, now)) continue;
         if (eventManager.getTimeRemaining(evt.code) < this.minTimeRemainingMs) continue;
 
-        const resourceCode = evt.contentCode;
+        const resourceCode = evt.definition?.content?.code || evt.contentCode;
+        if (resourceCode !== evt.contentCode) {
+          log.info(`[${ctx.name}] ${TAG}: resolved ${evt.contentCode} → resource ${resourceCode} from definition`);
+        }
 
         // If a global gather list is configured, only respond to listed resources
         if (gatherList.length > 0 && !gatherList.includes(resourceCode)) continue;
@@ -547,11 +692,14 @@ export class EventRoutine extends BaseRoutine {
       }
     }
 
-    // NPC events
+    // NPC events (single-character lock — only one char handles NPC events at a time)
     if (this.npcEvents) {
       for (const evt of eventManager.getActiveNpcEvents()) {
         if (this._isOnCooldown(evt.code, now)) continue;
         if (eventManager.getTimeRemaining(evt.code) < this.minTimeRemainingMs) continue;
+
+        // Skip if another character already holds the NPC event lock
+        if (npcEventLock.isHeld() && !npcEventLock.isHeldBy(ctx.name)) continue;
 
         const npcCode = evt.contentCode;
 
@@ -598,8 +746,12 @@ export class EventRoutine extends BaseRoutine {
   }
 
   _clearTarget() {
+    if (this._targetEvent?.type === 'npc' && this._lockCharName) {
+      npcEventLock.release(this._lockCharName);
+    }
     this._targetEvent = null;
     this._prepared = false;
+    this._lockCharName = null;
   }
 
   // --- NPC skip list (persists across events of same NPC type) ---

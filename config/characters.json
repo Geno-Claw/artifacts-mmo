@@ -29,12 +29,8 @@
     ],
     "gemstone_merchant": [
       {
-        "code": "iron_ore",
-        "maxTotal": 50
-      },
-      {
         "code": "coal",
-        "maxTotal": 50
+        "maxTotal": 10
       }
     ],
     "timber_merchant": [],
@@ -69,6 +65,9 @@
           "monsterEvents": true,
           "resourceEvents": true,
           "npcEvents": true
+        },
+        {
+          "type": "completeTask"
         },
         {
           "type": "skillRotation",
@@ -157,6 +156,9 @@
           "npcEvents": true
         },
         {
+          "type": "completeTask"
+        },
+        {
           "type": "skillRotation",
           "weights": {
             "mining": 0,
@@ -243,6 +245,9 @@
           "npcEvents": true
         },
         {
+          "type": "completeTask"
+        },
+        {
           "type": "skillRotation",
           "weights": {
             "mining": 0,
@@ -327,6 +332,9 @@
           "npcEvents": true
         },
         {
+          "type": "completeTask"
+        },
+        {
           "type": "skillRotation",
           "weights": {
             "mining": 0,
@@ -409,6 +417,9 @@
           "monsterEvents": true,
           "resourceEvents": true,
           "npcEvents": true
+        },
+        {
+          "type": "completeTask"
         },
         {
           "type": "skillRotation",

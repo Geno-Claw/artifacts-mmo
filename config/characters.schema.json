@@ -62,7 +62,7 @@
                 { "$ref": "#/$defs/gatherMaterialsRoutine" },
                 { "$ref": "#/$defs/craftGearRoutine" },
                 { "$ref": "#/$defs/acceptNpcTaskRoutine" },
-                { "$ref": "#/$defs/completeNpcTaskRoutine" },
+                { "$ref": "#/$defs/completeTaskRoutine" },
                 { "$ref": "#/$defs/fightTaskMonsterRoutine" },
                 { "$ref": "#/$defs/cancelNpcTaskRoutine" }
               ]
@@ -357,13 +357,13 @@
       }
     },
 
-    "completeNpcTaskRoutine": {
+    "completeTaskRoutine": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "completeNpcTask" },
-        "priority": { "type": "number", "default": 60, "description": "Execution priority (default 60)" }
+        "type": { "const": "completeTask" },
+        "priority": { "type": "number", "default": 45, "description": "Execution priority (default 45)" }
       }
     },
 

@@ -6,6 +6,7 @@ import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult } from '../../helpers.mjs';
 import { restBeforeFight, withdrawFoodForFights } from '../../services/food-manager.mjs';
+import { hpNeededForFight } from '../../services/combat-simulator.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
@@ -136,7 +137,14 @@ export async function runNpcTaskFlow(ctx, routine) {
 
   await moveTo(ctx, monsterLoc.x, monsterLoc.y);
   if (!(await restBeforeFight(ctx, monster))) {
-    log.warn(`[${ctx.name}] NPC Task: can't rest before fighting ${monster}, attempting fight anyway`);
+    const minHp = hpNeededForFight(ctx, monster);
+    if (minHp === null) {
+      log.warn(`[${ctx.name}] NPC Task: ${monster} unbeatable, skipping`);
+      routine.rotation.goalProgress = routine.rotation.goalTarget;
+      return true;
+    }
+    log.info(`[${ctx.name}] NPC Task: insufficient HP for ${monster}, yielding for rest`);
+    return true;
   }
 
   const result = await fightOnce(ctx);

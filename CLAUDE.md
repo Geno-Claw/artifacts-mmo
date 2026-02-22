@@ -77,6 +77,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. Key concepts:
 - Persistent state files (gear-state, order-board) write to `./report/` with atomic writes
 
 ## API Docs
-https://api.artifactsmmo.com/openapi.json
-
-https://docs.artifactsmmo.com/
+- Local copy of OpenAPI spec: [`docs/openapi.json`](docs/openapi.json) — full endpoint/schema reference, read this for API discovery
+- Online docs: https://docs.artifactsmmo.com/
+- Live spec (may be newer): https://api.artifactsmmo.com/openapi.json

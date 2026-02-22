@@ -112,6 +112,8 @@ export async function restUntil(ctx, hpPct = 80) {
   if (ctx.hpPercent() >= hpPct) return true;
 
   // Phase 2: Fall back to rest API for remaining HP deficit
+  let restRetries = 0;
+  const MAX_REST_RETRIES = 3;
   while (ctx.hpPercent() < hpPct && !api.isShuttingDown()) {
     const c = ctx.get();
     log.info(`[${ctx.name}] Resting (${c.hp}/${c.max_hp} HP, want ${hpPct}%)`);
@@ -119,10 +121,17 @@ export async function restUntil(ctx, hpPct = 80) {
       const result = await api.rest(ctx.name);
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
+      restRetries = 0;
     } catch (err) {
       if (isConditionNotMet(err)) {
-        log.warn(`[${ctx.name}] Rest unavailable right now (${err.message}); stopping rest attempts`);
-        return false;
+        restRetries++;
+        if (restRetries >= MAX_REST_RETRIES) {
+          log.warn(`[${ctx.name}] Rest failed ${MAX_REST_RETRIES} times (${err.message}); giving up`);
+          return false;
+        }
+        log.warn(`[${ctx.name}] Rest unavailable (${err.message}), retry ${restRetries}/${MAX_REST_RETRIES}`);
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
       }
       throw err;
     }

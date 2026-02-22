@@ -7,6 +7,7 @@ import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, gatherOnce, fightOnce, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
 import { restBeforeFight } from '../../services/food-manager.mjs';
+import { hpNeededForFight } from '../../services/combat-simulator.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { depositBankItems } from '../../services/bank-ops.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
@@ -187,10 +188,15 @@ export async function executeCrafting(ctx, routine) {
 
       await prepareCombatPotions(ctx, monsterCode);
 
-      // Try to rest first, but don't skip crafting if rest is unavailable.
-      // Dedicated crafters may still need to attempt low-HP fights for drops.
       if (!(await restBeforeFight(ctx, monsterCode))) {
-        log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: can't rest before fighting ${monsterCode} for ${step.itemCode}, attempting fight anyway`);
+        const minHp = hpNeededForFight(ctx, monsterCode);
+        if (minHp === null) {
+          log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: ${monsterCode} unbeatable for ${step.itemCode}, rotating`);
+          await routine.rotation.forceRotate(ctx);
+          return true;
+        }
+        log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: insufficient HP for ${monsterCode}, yielding for rest`);
+        return true;
       }
 
       await moveTo(ctx, monsterLoc.x, monsterLoc.y);
