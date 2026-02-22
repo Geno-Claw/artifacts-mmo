@@ -40,6 +40,9 @@
     "timber_merchant": [],
     "fish_merchant": []
   },
+  "events": {
+    "gatherResources": []
+  },
   "characters": [
     {
       "name": "GenoClaw",

@@ -130,6 +130,18 @@ export class EventRoutine extends BaseRoutine {
         return false;
       }
 
+      // Simulate fight BEFORE equipping gear (avoid wasteful gear swaps)
+      const sim = await canCharacterBeatEvent(ctx, monsterCode, {
+        minWinrate: this.minWinrate,
+      });
+      log.info(`[${ctx.name}] ${TAG}: ${monsterCode} simulation: ${sim.winrate}% winrate (${sim.source}) → ${sim.canWin ? 'GO' : 'SKIP'}`);
+      if (!sim.canWin) {
+        log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — winrate ${sim.winrate}% < ${this.minWinrate}% threshold`);
+        this._setSimCooldown(target.code);
+        this._clearTarget();
+        return false;
+      }
+
       const { ready = true } = await equipForCombat(ctx, monsterCode);
       if (!ready) {
         log.warn(`[${ctx.name}] ${TAG}: gear not ready for ${monsterCode}, deferring`);
@@ -162,6 +174,25 @@ export class EventRoutine extends BaseRoutine {
       this._prepared = true;
     }
 
+    // Re-travel if we moved (e.g., after bank deposit)
+    if (!ctx.isAt(map.x, map.y)) {
+      if (!eventManager.isEventActive(target.code)) {
+        this._clearTarget();
+        return false;
+      }
+      try {
+        await moveTo(ctx, map.x, map.y);
+      } catch (err) {
+        if (err instanceof NoPathError) {
+          log.warn(`[${ctx.name}] ${TAG}: no path to event at (${map.x},${map.y})`);
+          this._setCooldown(target.code);
+          this._clearTarget();
+          return false;
+        }
+        throw err;
+      }
+    }
+
     // Check active before fight
     if (!eventManager.isEventActive(target.code)) {
       log.info(`[${ctx.name}] ${TAG}: ${target.code} despawned before fight`);
@@ -183,9 +214,8 @@ export class EventRoutine extends BaseRoutine {
       log.info(`[${ctx.name}] ${TAG} ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''}`);
 
       if (ctx.inventoryFull()) {
-        log.info(`[${ctx.name}] ${TAG}: inventory full, yielding`);
-        this._clearTarget();
-        return false;
+        log.info(`[${ctx.name}] ${TAG}: inventory full, yielding for deposit`);
+        return false; // Preserve target + prepared state for resumption
       }
 
       // Check time remaining
@@ -245,15 +275,29 @@ export class EventRoutine extends BaseRoutine {
       return false;
     }
 
+    // Re-travel if we moved (e.g., after bank deposit)
+    if (!ctx.isAt(map.x, map.y)) {
+      try {
+        await moveTo(ctx, map.x, map.y);
+      } catch (err) {
+        if (err instanceof NoPathError) {
+          log.warn(`[${ctx.name}] ${TAG}: no path to event at (${map.x},${map.y})`);
+          this._setCooldown(target.code);
+          this._clearTarget();
+          return false;
+        }
+        throw err;
+      }
+    }
+
     const result = await gatherOnce(ctx);
     const items = result.details?.items || [];
     const xp = result.details?.xp || 0;
     log.info(`[${ctx.name}] ${TAG} ${resourceCode}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} +${xp}xp`);
 
     if (ctx.inventoryFull()) {
-      log.info(`[${ctx.name}] ${TAG}: inventory full, yielding`);
-      this._clearTarget();
-      return false;
+      log.info(`[${ctx.name}] ${TAG}: inventory full, yielding for deposit`);
+      return false; // Preserve target + prepared state for resumption
     }
 
     if (eventManager.getTimeRemaining(target.code) < 30_000) {
@@ -414,42 +458,79 @@ export class EventRoutine extends BaseRoutine {
 
     // Monster events
     if (this.monsterEvents) {
-      for (const evt of eventManager.getActiveMonsterEvents()) {
-        if (this._isOnCooldown(evt.code, now)) continue;
-        if (eventManager.getTimeRemaining(evt.code) < this.minTimeRemainingMs) continue;
+      const monsterEvents = eventManager.getActiveMonsterEvents();
+      for (const evt of monsterEvents) {
+        if (this._isOnCooldown(evt.code, now)) {
+          log.info(`[${ctx.name}] ${TAG}: skipping ${evt.contentCode} — on cooldown`);
+          continue;
+        }
+        const ttl = eventManager.getTimeRemaining(evt.code);
+        if (ttl < this.minTimeRemainingMs) {
+          log.info(`[${ctx.name}] ${TAG}: skipping ${evt.contentCode} — expires too soon (${Math.round(ttl / 1000)}s remaining)`);
+          continue;
+        }
 
         const monsterCode = evt.contentCode;
         const monster = gameData.getMonster(monsterCode);
-        if (!monster) continue;
 
-        // Skip boss (group deferred) and optionally elite
-        if (monster.type === 'boss') continue;
-        if (monster.type === 'elite' && this.maxMonsterType === 'normal') continue;
+        if (monster) {
+          // Skip boss (group deferred) and optionally elite
+          if (monster.type === 'boss') {
+            log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — boss type (group required)`);
+            continue;
+          }
+          if (monster.type === 'elite' && this.maxMonsterType === 'normal') {
+            log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — elite type exceeds max "${this.maxMonsterType}"`);
+            continue;
+          }
 
-        // Score: higher-level = better, elite bonus
-        const levelScore = monster.level || 0;
-        const typeBonus = monster.type === 'elite' ? 20 : 0;
-        const score = levelScore + typeBonus;
+          // Score: higher-level = better, elite bonus
+          const levelScore = monster.level || 0;
+          const typeBonus = monster.type === 'elite' ? 20 : 0;
+          const score = levelScore + typeBonus;
 
-        if (score > bestScore) {
-          bestScore = score;
-          best = {
-            code: evt.code,
-            type: 'monster',
-            monsterCode,
-            map: evt.map,
-          };
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              code: evt.code,
+              type: 'monster',
+              monsterCode,
+              map: evt.map,
+            };
+          }
+        } else {
+          // Event-only monster not in game data — still fightable
+          log.info(`[${ctx.name}] ${TAG}: ${monsterCode} not in game data (event-only monster), attempting anyway`);
+          const score = 10; // default score for unknown monsters
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              code: evt.code,
+              type: 'monster',
+              monsterCode,
+              map: evt.map,
+            };
+          }
         }
+      }
+      if (monsterEvents.length > 0 && !best) {
+        log.info(`[${ctx.name}] ${TAG}: ${monsterEvents.length} active monster event(s) but none eligible`);
       }
     }
 
     // Resource events
     if (this.resourceEvents) {
+      const gatherList = eventManager.getGatherResources();
+
       for (const evt of eventManager.getActiveResourceEvents()) {
         if (this._isOnCooldown(evt.code, now)) continue;
         if (eventManager.getTimeRemaining(evt.code) < this.minTimeRemainingMs) continue;
 
         const resourceCode = evt.contentCode;
+
+        // If a global gather list is configured, only respond to listed resources
+        if (gatherList.length > 0 && !gatherList.includes(resourceCode)) continue;
+
         const resource = gameData.getResource(resourceCode);
         if (resource && resource.level > ctx.skillLevel(resource.skill)) continue;
 
@@ -499,11 +580,21 @@ export class EventRoutine extends BaseRoutine {
 
   _isOnCooldown(eventCode, now) {
     const last = this._eventCooldowns[eventCode];
-    return !!last && (now - last) < this.cooldownMs;
+    if (last && (now - last) < this.cooldownMs) return true;
+    // Sim failure cooldown: 5 min (matches sim cache TTL)
+    const simLast = this._simCooldowns?.[eventCode];
+    if (simLast && (now - simLast) < 5 * 60_000) return true;
+    return false;
   }
 
   _setCooldown(eventCode) {
     this._eventCooldowns[eventCode] = Date.now();
+  }
+
+  /** Longer cooldown for simulation failures — avoids preemption thrashing. */
+  _setSimCooldown(eventCode) {
+    if (!this._simCooldowns) this._simCooldowns = {};
+    this._simCooldowns[eventCode] = Date.now();
   }
 
   _clearTarget() {

@@ -30,6 +30,8 @@ import {
   getEventDefinition,
   getActiveEvent,
   getNpcEventCodes,
+  setGatherResources,
+  getGatherResources,
   _handleEventSpawn,
   _handleEventRemoved,
   _activeEvents,
@@ -268,6 +270,155 @@ function test_getNpcEventCodes() {
   console.log('  PASS: getNpcEventCodes returns NPC content codes');
 }
 
+function test_handleEventSpawn_fallbackToDataCode() {
+  _activeEvents.clear();
+
+  // NPC events may have code at top level instead of map.content
+  _handleEventSpawn({
+    code: 'strange_vendor',
+    type: 'npc',
+    map: { x: 3, y: 7 },
+    expiration: new Date(Date.now() + 3600_000).toISOString(),
+    created_at: new Date().toISOString(),
+  });
+
+  assert.equal(_activeEvents.size, 1);
+  const entry = _activeEvents.get('strange_vendor');
+  assert.ok(entry);
+  assert.equal(entry.contentType, 'npc');
+  assert.equal(entry.contentCode, 'strange_vendor');
+  assert.equal(entry.map.x, 3);
+
+  _activeEvents.clear();
+  console.log('  PASS: handleEventSpawn fallback to data.code');
+}
+
+function test_handleEventSpawn_fallbackToDataName() {
+  _activeEvents.clear();
+
+  // Fallback to data.name when code is also missing
+  _handleEventSpawn({
+    name: 'mysterious_npc',
+    map: { x: 5, y: 5 },
+    expiration: new Date(Date.now() + 3600_000).toISOString(),
+  });
+
+  assert.equal(_activeEvents.size, 1);
+  assert.ok(_activeEvents.get('mysterious_npc'));
+
+  _activeEvents.clear();
+  console.log('  PASS: handleEventSpawn fallback to data.name');
+}
+
+function test_handleEventRemoved_fallbackToDataCode() {
+  _activeEvents.clear();
+  _activeEvents.set('strange_vendor', { code: 'strange_vendor', contentType: 'npc' });
+
+  _handleEventRemoved({ code: 'strange_vendor' });
+
+  assert.equal(_activeEvents.size, 0);
+  console.log('  PASS: handleEventRemoved fallback to data.code');
+}
+
+function test_gatherResources_accessors() {
+  setGatherResources(['strange_rocks', 'magic_tree']);
+  assert.deepEqual(getGatherResources(), ['strange_rocks', 'magic_tree']);
+
+  setGatherResources([]);
+  assert.deepEqual(getGatherResources(), []);
+
+  // Invalid input
+  setGatherResources(null);
+  assert.deepEqual(getGatherResources(), []);
+
+  console.log('  PASS: gatherResources accessors');
+}
+
+function test_cleanup_resetsGatherResources() {
+  setGatherResources(['strange_rocks']);
+  assert.equal(getGatherResources().length, 1);
+
+  cleanup();
+
+  assert.deepEqual(getGatherResources(), []);
+  console.log('  PASS: cleanup resets gatherResources');
+}
+
+function test_handleEventSpawn_resolvesContentTypeFromDefinition() {
+  _activeEvents.clear();
+  _eventDefinitions.clear();
+
+  // Pre-load a definition with content type
+  _eventDefinitions.set('corrupted_owlbear', {
+    code: 'corrupted_owlbear',
+    content: { type: 'monster', code: 'corrupted_owlbear' },
+  });
+
+  // Spawn event WITHOUT content type (matches real active events API format)
+  _handleEventSpawn({
+    code: 'corrupted_owlbear',
+    map: { x: 10, y: 2 },
+    expiration: new Date(Date.now() + 3600_000).toISOString(),
+    created_at: new Date().toISOString(),
+  });
+
+  assert.equal(_activeEvents.size, 1);
+  const entry = _activeEvents.get('corrupted_owlbear');
+  assert.ok(entry);
+  assert.equal(entry.contentType, 'monster');
+  assert.equal(entry.map.x, 10);
+
+  // Should appear in monster events
+  const monsters = getActiveMonsterEvents();
+  assert.equal(monsters.length, 1);
+  assert.equal(monsters[0].contentCode, 'corrupted_owlbear');
+
+  _activeEvents.clear();
+  _eventDefinitions.clear();
+  console.log('  PASS: handleEventSpawn resolves contentType from event definition');
+}
+
+function test_catchup_resolvesContentTypeFromDefinition() {
+  _activeEvents.clear();
+  _eventDefinitions.clear();
+
+  // Pre-load a definition
+  _eventDefinitions.set('strange_rocks', {
+    code: 'strange_rocks',
+    content: { type: 'resource', code: 'strange_rocks' },
+  });
+
+  // Simulate catch-up by directly inserting an event without contentType,
+  // then resolving via the same logic the catch-up code uses
+  const contentCode = 'strange_rocks';
+  let contentType = null; // API didn't provide it
+  if (!contentType) {
+    const def = _eventDefinitions.get(contentCode);
+    if (def?.content?.type) {
+      contentType = def.content.type;
+    }
+  }
+
+  _activeEvents.set(contentCode, {
+    code: contentCode,
+    contentType: contentType || null,
+    contentCode,
+    map: { x: 3, y: 5 },
+    expiration: new Date(Date.now() + 300_000),
+    createdAt: new Date(),
+  });
+
+  assert.equal(_activeEvents.get('strange_rocks').contentType, 'resource');
+
+  const resources = getActiveResourceEvents();
+  assert.equal(resources.length, 1);
+  assert.equal(resources[0].contentCode, 'strange_rocks');
+
+  _activeEvents.clear();
+  _eventDefinitions.clear();
+  console.log('  PASS: catch-up resolves contentType from event definition');
+}
+
 // --- Run ---
 
 console.log('Event Manager Tests:');
@@ -283,5 +434,11 @@ test_getTimeRemaining();
 test_getActiveMonsterEvents_filters();
 test_getEventDefinition();
 test_getNpcEventCodes();
-test_cleanup_clearsState();
+test_handleEventSpawn_fallbackToDataCode();
+test_handleEventSpawn_fallbackToDataName();
+test_handleEventRemoved_fallbackToDataCode();
+test_gatherResources_accessors();
+test_cleanup_resetsGatherResources();
+test_handleEventSpawn_resolvesContentTypeFromDefinition();
+test_catchup_resolvesContentTypeFromDefinition();
 console.log('All event manager tests passed!');

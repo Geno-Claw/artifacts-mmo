@@ -35,6 +35,7 @@ import {
   initialize as initEventManager,
   cleanup as cleanupEventManager,
   getNpcEventCodes,
+  setGatherResources,
 } from './services/event-manager.mjs';
 import { loadNpcCatalogs } from './services/game-data.mjs';
 import { loadNpcBuyList } from './services/npc-buy-config.mjs';
@@ -493,6 +494,7 @@ export class RuntimeManager {
       }
 
       await initEventManager();
+      setGatherResources(config.events?.gatherResources || []);
 
       const npcCodes = getNpcEventCodes();
       if (npcCodes.length > 0) await loadNpcCatalogs(npcCodes);
@@ -657,6 +659,7 @@ export class RuntimeManager {
     }
 
     loadNpcBuyList(config);
+    setGatherResources(config.events?.gatherResources || []);
 
     for (const entry of run.schedulerEntries) {
       const charCfg = config.characters.find(c => c.name === entry.name);

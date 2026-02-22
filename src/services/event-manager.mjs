@@ -21,6 +21,9 @@ let eventDefinitions = new Map();
 /** @type {Map<string, { code, contentType, contentCode, map, expiration, createdAt }>} */
 let activeEvents = new Map();
 
+/** @type {string[]} resource codes to gather from events (empty = all) */
+let gatherResources = [];
+
 let initialized = false;
 let unsubSpawn = null;
 let unsubRemoved = null;
@@ -30,11 +33,22 @@ let unsubRemoved = null;
 function handleEventSpawn(data) {
   if (!data) return;
 
-  const contentCode = data.content?.code || data.map?.content?.code;
-  const contentType = data.content?.type || data.map?.content?.type;
+  const contentCode = data.content?.code || data.map?.content?.code || data.code || data.name || null;
+  let contentType = data.content?.type || data.map?.content?.type || data.type || null;
   if (!contentCode) {
-    log.warn(`${TAG} event_spawn missing content code`);
+    log.warn(`${TAG} event_spawn: no identifier found, raw: ${JSON.stringify(data).slice(0, 500)}`);
     return;
+  }
+
+  // Resolve contentType from event definitions if the spawn message didn't include it
+  if (!contentType) {
+    const def = eventDefinitions.get(contentCode);
+    if (def?.content?.type) {
+      contentType = def.content.type;
+      log.info(`${TAG} Resolved contentType="${contentType}" for ${contentCode} from event definition`);
+    } else {
+      log.warn(`${TAG} event_spawn: no contentType for ${contentCode}, raw keys: ${Object.keys(data).join(',')}`);
+    }
   }
 
   const entry = {
@@ -56,9 +70,9 @@ function handleEventSpawn(data) {
 function handleEventRemoved(data) {
   if (!data) return;
 
-  const contentCode = data.content?.code || data.map?.content?.code;
+  const contentCode = data.content?.code || data.map?.content?.code || data.code || data.name || null;
   if (!contentCode) {
-    log.warn(`${TAG} event_removed missing content code`);
+    log.warn(`${TAG} event_removed: no identifier found, raw: ${JSON.stringify(data).slice(0, 500)}`);
     return;
   }
 
@@ -87,21 +101,38 @@ export async function initialize() {
   try {
     const active = await loadAllPages(api.getActiveEvents);
     for (const evt of active) {
-      const contentCode = evt.content?.code || evt.map?.content?.code;
+      const contentCode = evt.content?.code || evt.map?.content?.code || evt.code || evt.name;
       if (!contentCode) continue;
-      const contentType = evt.content?.type || evt.map?.content?.type;
+      let contentType = evt.content?.type || evt.map?.content?.type || evt.type || null;
+
+      // Resolve contentType from event definitions if the active events API didn't include it
+      if (!contentType) {
+        const def = eventDefinitions.get(contentCode);
+        if (def?.content?.type) {
+          contentType = def.content.type;
+          log.info(`${TAG} Resolved contentType="${contentType}" for ${contentCode} from event definition`);
+        } else {
+          log.warn(`${TAG} No contentType for ${contentCode}, raw keys: ${Object.keys(evt).join(',')}`);
+        }
+      }
+
+      const map = evt.map ? { x: evt.map.x, y: evt.map.y } : null;
+      const expiration = evt.expiration ? new Date(evt.expiration) : null;
       activeEvents.set(contentCode, {
         code: contentCode,
         contentType: contentType || null,
         contentCode,
-        map: evt.map ? { x: evt.map.x, y: evt.map.y } : null,
-        expiration: evt.expiration ? new Date(evt.expiration) : null,
+        map,
+        expiration,
         createdAt: evt.created_at ? new Date(evt.created_at) : null,
       });
+
+      const loc = map ? `(${map.x},${map.y})` : '?';
+      const ttl = expiration ? `${Math.round((expiration.getTime() - Date.now()) / 60_000)}m` : '?';
+      log.info(`${TAG} Caught up: ${contentCode} [${contentType || 'unknown'}] at ${loc}, expires in ${ttl}`);
     }
     if (activeEvents.size > 0) {
-      const codes = [...activeEvents.keys()].join(', ');
-      log.info(`${TAG} Caught up ${activeEvents.size} active event(s): ${codes}`);
+      log.info(`${TAG} Caught up ${activeEvents.size} active event(s)`);
     }
   } catch (err) {
     log.warn(`${TAG} Could not fetch active events: ${err.message}`);
@@ -115,11 +146,25 @@ export async function initialize() {
   log.info(`${TAG} Initialized`);
 }
 
+// --- Gather resources config ---
+
+export function setGatherResources(codes) {
+  gatherResources = Array.isArray(codes) ? [...codes] : [];
+  if (gatherResources.length > 0) {
+    log.info(`${TAG} Gather resources: ${gatherResources.join(', ')}`);
+  }
+}
+
+export function getGatherResources() {
+  return gatherResources;
+}
+
 export async function cleanup() {
   if (unsubSpawn) { unsubSpawn(); unsubSpawn = null; }
   if (unsubRemoved) { unsubRemoved(); unsubRemoved = null; }
   activeEvents.clear();
   eventDefinitions.clear();
+  gatherResources = [];
   initialized = false;
 }
 
@@ -210,4 +255,4 @@ export function getNpcEventCodes() {
 // --- Testing helpers ---
 
 export { handleEventSpawn as _handleEventSpawn, handleEventRemoved as _handleEventRemoved };
-export { activeEvents as _activeEvents, eventDefinitions as _eventDefinitions };
+export { activeEvents as _activeEvents, eventDefinitions as _eventDefinitions, gatherResources as _gatherResources };

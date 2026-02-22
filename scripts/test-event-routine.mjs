@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict';
 import { EventRoutine } from '../src/routines/event-routine.mjs';
-import { _activeEvents, _eventDefinitions } from '../src/services/event-manager.mjs';
+import { _activeEvents, _eventDefinitions, setGatherResources } from '../src/services/event-manager.mjs';
 
 // --- Helpers ---
 
@@ -154,32 +154,33 @@ function test_canRun_noActiveEvents() {
 }
 
 function test_canRun_npcEvent() {
-  // NPC events don't need gameData lookups, so they work without cache
+  // NPC events now require a non-empty shopping list (from npcBuyList config + order board).
+  // Without npc-buy-config loaded, _buildNpcShoppingList returns [] → NPC event skipped.
   const routine = new EventRoutine({ monsterEvents: false, resourceEvents: false, npcEvents: true });
   const ctx = makeCtx();
   setActiveEvent('fish_merchant', 'npc');
 
-  assert.equal(routine.canRun(ctx), true);
-  assert.ok(routine._targetEvent);
-  assert.equal(routine._targetEvent.type, 'npc');
-  assert.equal(routine._targetEvent.code, 'fish_merchant');
+  // Without npc buy config, no items to buy → NPC event skipped
+  assert.equal(routine.canRun(ctx), false);
 
   clearEvents();
   routine._clearTarget();
-  console.log('  PASS: canRun finds NPC event (no game data needed)');
+  console.log('  PASS: canRun skips NPC event when no shopping list');
 }
 
 function test_canRun_monsterEvent_noGameData() {
-  // Without game-data cache, getMonster returns null → monster events skipped
+  // Without game-data cache, getMonster returns null → event-only monster, still accepted
   const routine = new EventRoutine({ resourceEvents: false, npcEvents: false });
   const ctx = makeCtx();
   setActiveEvent('demon', 'monster');
 
-  // getMonster('demon') returns null (cache not initialized) → skipped
-  assert.equal(routine.canRun(ctx), false);
+  // getMonster('demon') returns null (event-only monster) → accepted with default score
+  assert.equal(routine.canRun(ctx), true);
+  assert.equal(routine._targetEvent.monsterCode, 'demon');
 
   clearEvents();
-  console.log('  PASS: canRun skips monster events when game data unavailable');
+  routine._clearTarget();
+  console.log('  PASS: canRun accepts event-only monster not in game data');
 }
 
 function test_canRun_resourceEvent_noGameData() {
@@ -201,9 +202,10 @@ function test_canRun_resourceEvent_noGameData() {
 }
 
 function test_canRun_eventExpiringSoon() {
-  const routine = new EventRoutine({ minTimeRemainingMs: 120_000, monsterEvents: false, npcEvents: true });
+  // Use resource event (no game-data dependency for skill check when resource is unknown)
+  const routine = new EventRoutine({ minTimeRemainingMs: 120_000, monsterEvents: false, resourceEvents: true, npcEvents: false });
   const ctx = makeCtx();
-  setActiveEvent('fish_merchant', 'npc', { expiresInMs: 60_000 }); // 1 min left < 2 min min
+  setActiveEvent('strange_rocks', 'resource', { expiresInMs: 60_000 }); // 1 min left < 2 min min
 
   assert.equal(routine.canRun(ctx), false);
 
@@ -212,10 +214,11 @@ function test_canRun_eventExpiringSoon() {
 }
 
 function test_canRun_eventOnCooldown() {
-  const routine = new EventRoutine({ cooldownMs: 60_000, monsterEvents: false, npcEvents: true });
-  routine._eventCooldowns['fish_merchant'] = Date.now();
+  // Use resource event (no game-data dependency)
+  const routine = new EventRoutine({ cooldownMs: 60_000, monsterEvents: false, resourceEvents: true, npcEvents: false });
+  routine._eventCooldowns['strange_rocks'] = Date.now();
   const ctx = makeCtx();
-  setActiveEvent('fish_merchant', 'npc');
+  setActiveEvent('strange_rocks', 'resource');
 
   assert.equal(routine.canRun(ctx), false);
 
@@ -225,17 +228,18 @@ function test_canRun_eventOnCooldown() {
 }
 
 function test_canRun_stickyTarget() {
-  const routine = new EventRoutine({ monsterEvents: false, npcEvents: true });
+  // Use resource events (no game-data dependency)
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: true, npcEvents: false });
   const ctx = makeCtx();
-  setActiveEvent('fish_merchant', 'npc');
+  setActiveEvent('strange_rocks', 'resource');
 
   assert.equal(routine.canRun(ctx), true);
-  assert.equal(routine._targetEvent.code, 'fish_merchant');
+  assert.equal(routine._targetEvent.code, 'strange_rocks');
 
-  // Another NPC appears — shouldn't switch
-  setActiveEvent('gemstone_merchant', 'npc');
+  // Another resource appears — shouldn't switch
+  setActiveEvent('magic_tree', 'resource');
   assert.equal(routine.canRun(ctx), true);
-  assert.equal(routine._targetEvent.code, 'fish_merchant'); // Still sticky
+  assert.equal(routine._targetEvent.code, 'strange_rocks'); // Still sticky
 
   clearEvents();
   routine._clearTarget();
@@ -243,19 +247,20 @@ function test_canRun_stickyTarget() {
 }
 
 function test_canRun_clearsExpiredTarget() {
-  const routine = new EventRoutine({ monsterEvents: false, npcEvents: true });
+  // Use resource events (no game-data dependency)
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: true, npcEvents: false });
   const ctx = makeCtx();
-  setActiveEvent('fish_merchant', 'npc');
+  setActiveEvent('strange_rocks', 'resource');
 
   routine.canRun(ctx);
-  assert.equal(routine._targetEvent.code, 'fish_merchant');
+  assert.equal(routine._targetEvent.code, 'strange_rocks');
 
   // Remove the event
-  _activeEvents.delete('fish_merchant');
-  setActiveEvent('gemstone_merchant', 'npc');
+  _activeEvents.delete('strange_rocks');
+  setActiveEvent('magic_tree', 'resource');
 
   assert.equal(routine.canRun(ctx), true);
-  assert.equal(routine._targetEvent.code, 'gemstone_merchant');
+  assert.equal(routine._targetEvent.code, 'magic_tree');
 
   clearEvents();
   routine._clearTarget();
@@ -306,6 +311,91 @@ function test_isOnCooldown() {
   console.log('  PASS: _isOnCooldown respects cooldownMs');
 }
 
+// --- Gather list filter tests ---
+
+function test_findBestEvent_gatherListFilter() {
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: true, npcEvents: false });
+  const ctx = makeCtx({ skills: { mining: 10 } });
+
+  setActiveEvent('strange_rocks', 'resource');
+  setActiveEvent('magic_tree', 'resource');
+
+  // With filter: only magic_tree allowed
+  setGatherResources(['magic_tree']);
+  routine._clearTarget();
+  assert.equal(routine.canRun(ctx), true);
+  assert.equal(routine._targetEvent.resourceCode, 'magic_tree');
+
+  clearEvents();
+  routine._clearTarget();
+  setGatherResources([]);
+  console.log('  PASS: _findBestEvent respects gatherResources filter');
+}
+
+function test_findBestEvent_emptyGatherList() {
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: true, npcEvents: false });
+  const ctx = makeCtx({ skills: { mining: 10 } });
+
+  setActiveEvent('strange_rocks', 'resource');
+
+  // Empty list = all resource events eligible (backward compat)
+  setGatherResources([]);
+  routine._clearTarget();
+  assert.equal(routine.canRun(ctx), true);
+  assert.equal(routine._targetEvent.resourceCode, 'strange_rocks');
+
+  clearEvents();
+  routine._clearTarget();
+  console.log('  PASS: _findBestEvent allows all when gatherResources empty');
+}
+
+function test_findBestEvent_gatherListNoMatch() {
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: true, npcEvents: false });
+  const ctx = makeCtx({ skills: { mining: 10 } });
+
+  setActiveEvent('strange_rocks', 'resource');
+
+  // Filter excludes all available events
+  setGatherResources(['magic_tree']);
+  routine._clearTarget();
+  assert.equal(routine.canRun(ctx), false);
+
+  clearEvents();
+  routine._clearTarget();
+  setGatherResources([]);
+  console.log('  PASS: _findBestEvent returns null when no events match gather list');
+}
+
+// --- Inventory-full target preservation tests ---
+
+function test_inventoryFull_preservesTarget() {
+  const routine = new EventRoutine({ monsterEvents: false, npcEvents: false });
+  const ctx = makeCtx();
+  setActiveEvent('strange_rocks', 'resource');
+
+  routine.canRun(ctx);
+  assert.ok(routine._targetEvent);
+  routine._prepared = true;
+
+  // When inventory is full, canRun returns false but target should be preserved
+  const fullCtx = makeCtx({ inventoryFull: true });
+  assert.equal(routine.canRun(fullCtx), false);
+
+  // Target and prepared state should still be set
+  assert.ok(routine._targetEvent);
+  assert.equal(routine._targetEvent.code, 'strange_rocks');
+  assert.equal(routine._prepared, true);
+
+  // When inventory clears, should resume same target
+  assert.equal(routine.canRun(ctx), true);
+  assert.equal(routine._targetEvent.code, 'strange_rocks');
+  assert.equal(routine._prepared, true);
+
+  clearEvents();
+  routine._clearTarget();
+  console.log('  PASS: inventory full preserves target and prepared state');
+}
+
 // --- Run ---
 
 console.log('Event Routine Tests:');
@@ -327,4 +417,8 @@ test_canRun_clearsExpiredTarget();
 test_clearTarget();
 test_setCooldown();
 test_isOnCooldown();
+test_findBestEvent_gatherListFilter();
+test_findBestEvent_emptyGatherList();
+test_findBestEvent_gatherListNoMatch();
+test_inventoryFull_preservesTarget();
 console.log('All event routine tests passed!');

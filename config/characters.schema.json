@@ -4,6 +4,7 @@
   "type": "object",
   "required": ["characters"],
   "properties": {
+    "events": { "$ref": "#/$defs/eventsConfig" },
     "npcBuyList": {
       "type": "object",
       "description": "Items to buy from NPC merchants during events. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for all NPCs.",
@@ -72,6 +73,20 @@
     }
   },
   "$defs": {
+    "eventsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Global event settings shared across all characters",
+      "properties": {
+        "gatherResources": {
+          "type": "array",
+          "description": "Resource content codes to gather from events. All characters with event routine enabled will respond. Empty = gather all resource events.",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+
     "characterSettings": {
       "type": "object",
       "additionalProperties": false,
