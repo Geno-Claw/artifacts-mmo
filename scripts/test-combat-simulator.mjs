@@ -115,8 +115,8 @@ test('basic fight — char wins', () => {
   const mon = makeMonster({ hp: 200, attack_fire: 20, initiative: 50 });
   const result = simulateCombat(char, mon);
   assert.equal(result.win, true);
-  // 200hp / 50dmg = 4 turns to kill. Char takes 3 hits (char goes first) = 60 damage.
-  assert.equal(result.turns, 4);
+  // 200hp / 50dmg = 4 char attacks. Kill at turn 7 (turns 1,3,5,7). Char takes 3 hits = 60 damage.
+  assert.equal(result.turns, 7);
   assert.equal(result.remainingHp, 940);
 });
 
@@ -161,33 +161,28 @@ test('barrier absorbs damage and refreshes every 5 turns', () => {
   assert.equal(resultBarrier.win, true);
 });
 
-test('barrier refreshes at turn 6', () => {
-  // Barrier 200, monster HP 1000, char damage 100/turn
-  // Turn 1: barrier=200, attack does 0 to HP (100 absorbed by 200 barrier → barrier=100)
-  // Turn 2: attack does 0 to HP (100 absorbed → barrier=0)
-  // Turn 3: attack does 100 to HP → HP=900
-  // Turn 4: attack does 100 → HP=800
-  // Turn 5: attack does 100 → HP=700
-  // Turn 6: barrier refresh to 200, then attack: 100 absorbed → barrier=100
-  // So at turn 6, barrier refreshes. This extends the fight.
+test('barrier refreshes every 5 monster turns', () => {
+  // Barrier starts at 200. Char goes first (higher init).
+  // Char attacks on odd turns (1,3,5,...), monster on even turns (2,4,6,...).
+  // Barrier refresh at monTurnCount 5 = game turn 10 (monster's 5th action).
   const char = makeChar({ hp: 5000, attack_fire: 100, initiative: 200 });
   const mon = makeMonster({ hp: 1000, attack_fire: 5, initiative: 50, effects: [{ code: 'barrier', value: 200 }] });
   const result = simulateCombat(char, mon);
   assert.equal(result.win, true);
-  // Without barrier: 1000/100 = 10 turns. With barrier: more turns needed.
-  assert.ok(result.turns > 10, `turns ${result.turns} should be > 10`);
+  // Without barrier: 1000/100 = 10 attacks = turn 19. With barrier: more turns needed.
+  assert.ok(result.turns > 19, `turns ${result.turns} should be > 19`);
 });
 
 console.log('\nReconstitution:');
 
 test('monster full heals at specified turn', () => {
   const char = makeChar({ hp: 5000, attack_fire: 100, initiative: 200 });
-  // Monster has 500 HP, reconstitutes at turn 5 (resets to 500)
-  const mon = makeMonster({ hp: 500, attack_fire: 5, initiative: 50, effects: [{ code: 'reconstitution', value: 5 }] });
+  // Monster has 500 HP, reconstitutes at monster turn 3 (monTurnCount=3 = game turn 6)
+  const mon = makeMonster({ hp: 500, attack_fire: 5, initiative: 50, effects: [{ code: 'reconstitution', value: 3 }] });
   const resultNoRecon = simulateCombat(char, makeMonster({ hp: 500, attack_fire: 5, initiative: 50 }));
   const resultRecon = simulateCombat(char, mon);
 
-  assert.equal(resultNoRecon.turns, 5); // 500/100 = 5 turns
+  assert.equal(resultNoRecon.turns, 9); // 500/100 = 5 attacks, kill at turn 9
   assert.ok(resultRecon.turns > resultNoRecon.turns, `recon turns ${resultRecon.turns} should be > ${resultNoRecon.turns}`);
   assert.equal(resultRecon.win, true);
 });
@@ -490,13 +485,13 @@ console.log('\nFast path regression:');
 test('no-effects fight matches expected values exactly', () => {
   // Char: 1000hp, 50 fire attack, init 100
   // Monster: 500hp, 30 fire attack, init 50
-  // Char goes first. 500/50=10 turns. Char takes 9*30=270 damage.
+  // Char goes first. 500/50=10 char attacks, kill at turn 19. Char takes 9*30=270 damage.
   const char = makeChar({ hp: 1000, attack_fire: 50, initiative: 100 });
   const mon = makeMonster({ hp: 500, attack_fire: 30, initiative: 50 });
   const result = simulateCombat(char, mon);
 
   assert.equal(result.win, true);
-  assert.equal(result.turns, 10);
+  assert.equal(result.turns, 19);
   assert.equal(result.remainingHp, 730);
   assert.ok(Math.abs(result.hpLostPercent - 27) < 0.1);
 });

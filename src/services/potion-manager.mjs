@@ -152,7 +152,7 @@ function scorePotionCandidate(item, charStats, monster, { poisonBias = true, hea
 
   if (sim.win) score += 1_000_000;
   score += Math.round((100 - sim.hpLostPercent) * 1000);
-  score += Math.round((100 - sim.turns) * 10);
+  score += Math.round(Math.max(0, 100 - sim.turns) * 5);
 
   if (poisonBias && hasMonsterPoison(monster) && effectValue(item, 'antipoison') > 0) {
     score += 500;

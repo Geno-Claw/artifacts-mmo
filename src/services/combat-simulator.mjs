@@ -149,7 +149,7 @@ export function simulateCombat(charStats, monsterStats, options = {}) {
   return simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx);
 }
 
-/** Fast path — no effects, constant damage per turn. Matches legacy behavior. */
+/** Fast path — no effects, constant damage per turn. */
 function simulateFastPath(charStats, monsterStats) {
   const charDmg = calcTurnDamage(charStats, monsterStats);
   const monsterDmg = calcTurnDamage(monsterStats, charStats);
@@ -160,23 +160,24 @@ function simulateFastPath(charStats, monsterStats) {
   const maxHp = charHp;
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
-    if (first) {
+    const charTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
+
+    if (charTurn) {
       monsterHp -= charDmg;
       if (monsterHp <= 0) return makeResult(true, turn, charHp, maxHp);
-      charHp -= monsterDmg;
-      if (charHp <= 0) return makeResult(false, turn, 0, maxHp);
     } else {
       charHp -= monsterDmg;
       if (charHp <= 0) return makeResult(false, turn, 0, maxHp);
-      monsterHp -= charDmg;
-      if (monsterHp <= 0) return makeResult(true, turn, charHp, maxHp);
     }
   }
 
   return makeResult(false, MAX_TURNS, charHp, maxHp);
 }
 
-/** Full turn-by-turn simulation with effects. */
+/**
+ * Full simulation with effects — alternating individual turns.
+ * Each loop iteration = 1 entity attacks (matching the API's turn model).
+ */
 function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
   const charMaxHp = charStats.max_hp || charStats.hp;
   const monMaxHp = monsterStats.hp;
@@ -208,73 +209,48 @@ function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
   let restoreUsed = false;
 
   // --- Expected-value frenzy damage bonuses ---
-  // Each turn there's a critChance of proccing +x% damage for the next turn.
-  // Modeled as a constant average bonus: critChance * frenzyPct.
   const charFrenzyAvg = (runeFx.frenzy || 0) * charCrit;
   const monFrenzyAvg = (monFx.frenzy || 0) * monCrit;
 
+  // Per-entity turn counters for periodic effects
+  let charTurnCount = 0;
+  let monTurnCount = 0;
+
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
-    // ========== START-OF-TURN EFFECTS ==========
+    const isCharTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
 
-    // Reconstitution: monster full heals at a specific turn
-    if (monFx.reconstitution && turn === monFx.reconstitution) {
-      monHp = monMaxHp;
-    }
+    if (isCharTurn) {
+      charTurnCount++;
 
-    // Monster healing (every 3 turns, starting turn 4)
-    if (monFx.healing && turn > 1 && (turn - 1) % 3 === 0) {
-      monHp = Math.min(monMaxHp, monHp + Math.round(monMaxHp * monFx.healing / 100));
-    }
+      // --- Character's turn effects (before attack) ---
 
-    // Barrier refresh (every 5 turns after the initial)
-    if (barrierMax > 0 && turn > 1 && (turn - 1) % 5 === 0) {
-      barrierHp = barrierMax;
-    }
+      // Poison tick (every char turn)
+      if (poisonDmg > 0) {
+        charHp -= poisonDmg;
+        if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+      }
 
-    // Void drain (every 4 turns)
-    if (monFx.void_drain && turn > 1 && (turn - 1) % 4 === 0) {
-      const drained = Math.round(charHp * monFx.void_drain / 100);
-      charHp -= drained;
-      monHp = Math.min(monMaxHp, monHp + drained);
-      if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
-    }
+      // Monster burn → player DoT (decays 10% each tick, integer floor — API-verified)
+      if (playerBurnDmg > 0) {
+        charHp -= playerBurnDmg;
+        playerBurnDmg = Math.floor(playerBurnDmg * 0.9);
+        if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+      }
 
-    // Poison tick (every turn from turn 1)
-    if (poisonDmg > 0) {
-      charHp -= poisonDmg;
-      if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
-    }
+      // Player rune burn → monster DoT (bypasses barrier)
+      if (monBurnDmg > 0) {
+        monHp -= monBurnDmg;
+        monBurnDmg = Math.floor(monBurnDmg * 0.9);
+        // Don't check monster death — char attack follows
+      }
 
-    // Monster burn → player DoT (decays 10% each turn)
-    if (playerBurnDmg > 0) {
-      charHp -= Math.round(playerBurnDmg);
-      playerBurnDmg *= 0.9;
-      if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
-    }
+      // Player rune healing (every 3 of char's turns)
+      if (runeFx.healing && charTurnCount % 3 === 0) {
+        charHp = Math.min(charMaxHp, charHp + Math.round(charMaxHp * runeFx.healing / 100));
+      }
 
-    // Player rune burn → monster DoT (bypasses barrier — it's not a direct attack)
-    if (monBurnDmg > 0) {
-      monHp -= Math.round(monBurnDmg);
-      monBurnDmg *= 0.9;
-      // Don't check monster death yet — attack phase follows
-    }
-
-    // Player rune healing (every 3 turns)
-    if (runeFx.healing && turn > 1 && (turn - 1) % 3 === 0) {
-      charHp = Math.min(charMaxHp, charHp + Math.round(charMaxHp * runeFx.healing / 100));
-    }
-
-    // ========== ATTACK PHASE ==========
-
-    // Compute current damage values (change each turn due to corrupted/berserker/frenzy/bubble)
-    // Player → monster: bubble adds monster resistance
-    const charDmg = calcDamage(charStats, monsterStats, -bubbleRes, charFrenzyAvg);
-    // Monster → player: corrupted reduces player resistance, berserker/frenzy boost monster damage
-    const monDmgBonus = (berserkerActive ? berserkerPct : 0) + monFrenzyAvg;
-    const monDmg = calcDamage(monsterStats, charStats, corruptedPct * corruptedStacks, monDmgBonus);
-
-    if (first) {
-      // --- Player attacks ---
+      // --- Character attacks ---
+      const charDmg = calcDamage(charStats, monsterStats, -bubbleRes, charFrenzyAvg);
       let dmg = charDmg;
       if (barrierHp > 0) {
         const absorbed = Math.min(dmg, barrierHp);
@@ -297,7 +273,44 @@ function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
 
       if (monHp <= 0) return makeResult(true, turn, charHp, charMaxHp);
 
+      // Restore utility: one-shot heal when HP drops below 50%
+      if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
+        charHp = Math.min(charMaxHp, charHp + restoreHp);
+        restoreUsed = true;
+      }
+    } else {
+      monTurnCount++;
+
+      // --- Monster's turn effects (before attack) ---
+
+      // Reconstitution: monster full heals at a specific monster-turn count
+      if (monFx.reconstitution && monTurnCount === monFx.reconstitution) {
+        monHp = monMaxHp;
+      }
+
+      // Monster healing (every 3 of monster's turns)
+      if (monFx.healing && monTurnCount % 3 === 0) {
+        monHp = Math.min(monMaxHp, monHp + Math.round(monMaxHp * monFx.healing / 100));
+      }
+
+      // Barrier refresh (every 5 of monster's turns)
+      if (barrierMax > 0 && monTurnCount % 5 === 0) {
+        barrierHp = barrierMax;
+      }
+
+      // Void drain (every 4 of monster's turns)
+      if (monFx.void_drain && monTurnCount % 4 === 0) {
+        const drained = Math.round(charHp * monFx.void_drain / 100);
+        charHp -= drained;
+        monHp = Math.min(monMaxHp, monHp + drained);
+        if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+      }
+
+      // Protective bubble rotation happens each monster turn (modeled as avg)
+
       // --- Monster attacks ---
+      const monDmgBonus = (berserkerActive ? berserkerPct : 0) + monFrenzyAvg;
+      const monDmg = calcDamage(monsterStats, charStats, corruptedPct * corruptedStacks, monDmgBonus);
       charHp -= monDmg;
 
       // Monster lifesteal (expected value)
@@ -306,44 +319,12 @@ function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
       }
 
       if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
-    } else {
-      // --- Monster attacks first ---
-      charHp -= monDmg;
 
-      if (monFx.lifesteal && monCrit > 0) {
-        monHp = Math.min(monMaxHp, monHp + Math.round(monCrit * monFx.lifesteal / 100 * sumAttack(monsterStats)));
+      // Restore utility: one-shot heal when HP drops below 50%
+      if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
+        charHp = Math.min(charMaxHp, charHp + restoreHp);
+        restoreUsed = true;
       }
-
-      if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
-
-      // --- Player attacks ---
-      let dmg = charDmg;
-      if (barrierHp > 0) {
-        const absorbed = Math.min(dmg, barrierHp);
-        barrierHp -= absorbed;
-        dmg -= absorbed;
-      }
-      monHp -= dmg;
-
-      if (corruptedPct > 0) corruptedStacks++;
-
-      if (runeFx.lifesteal && charCrit > 0) {
-        charHp = Math.min(charMaxHp, charHp + Math.round(charCrit * runeFx.lifesteal / 100 * sumAttack(charStats)));
-      }
-
-      if (berserkerPct > 0 && !berserkerActive && monHp > 0 && monHp < monMaxHp * 0.25) {
-        berserkerActive = true;
-      }
-
-      if (monHp <= 0) return makeResult(true, turn, charHp, charMaxHp);
-    }
-
-    // ========== POST-TURN TRIGGERS ==========
-
-    // Restore utility: one-shot heal when HP drops below 50%
-    if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
-      charHp = Math.min(charMaxHp, charHp + restoreHp);
-      restoreUsed = true;
     }
   }
 
