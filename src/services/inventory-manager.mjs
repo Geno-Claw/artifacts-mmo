@@ -220,6 +220,13 @@ export function applyBankDelta(items, op, meta = {}) {
   }
 }
 
+export function applyBankGoldDelta(quantity, op) {
+  const qty = Number(quantity) || 0;
+  if (qty <= 0) return;
+  if (op === 'deposit') bankGold += qty;
+  else if (op === 'withdraw') bankGold = Math.max(0, bankGold - qty);
+}
+
 export function bankCount(code) {
   return bank.get(code) || 0;
 }

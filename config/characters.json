@@ -1,6 +1,45 @@
 {
   "$schema": "./characters.schema.json",
-  "npcBuyList": {},
+  "npcBuyList": {
+    "_any": [
+      {
+        "code": "recall_potion",
+        "maxTotal": 5
+      },
+      {
+        "code": "forest_bank_potion",
+        "maxTotal": 5
+      }
+    ],
+    "nomadic_merchant": [
+      {
+        "code": "minor_health_potion",
+        "maxTotal": 1
+      },
+      {
+        "code": "small_antidote",
+        "maxTotal": 1
+      }
+    ],
+    "herbal_merchant": [
+      {
+        "code": "glowstem_leaf",
+        "maxTotal": 10
+      }
+    ],
+    "gemstone_merchant": [
+      {
+        "code": "iron_ore",
+        "maxTotal": 50
+      },
+      {
+        "code": "coal",
+        "maxTotal": 50
+      }
+    ],
+    "timber_merchant": [],
+    "fish_merchant": []
+  },
   "characters": [
     {
       "name": "GenoClaw",
@@ -17,13 +56,16 @@
           "depositGold": true
         },
         {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "type": "skillRotation",
@@ -100,13 +142,16 @@
           "depositGold": true
         },
         {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "type": "skillRotation",
@@ -183,13 +228,16 @@
           "depositGold": true
         },
         {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "type": "skillRotation",
@@ -264,13 +312,16 @@
           "depositGold": true
         },
         {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "type": "skillRotation",
@@ -345,13 +396,16 @@
           "depositGold": true
         },
         {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "type": "skillRotation",

@@ -1,5 +1,53 @@
 {
   "$schema": "./characters.schema.json",
+  "npcBuyList": {
+    "_any": [
+      {
+        "code": "recall_potion",
+        "maxTotal": 1
+      },
+      {
+        "code": "forest_bank_potion",
+        "maxTotal": 1
+      }
+    ],
+    "nomadic_merchant": [
+      {
+        "code": "minor_health_potion",
+        "maxTotal": 1
+      },
+      {
+        "code": "small_antidote",
+        "maxTotal": 1
+      }
+    ],
+    "herbal_merchant": [
+      {
+        "code": "sunflower",
+        "maxTotal": 200
+      },
+      {
+        "code": "nettle_leaf",
+        "maxTotal": 200
+      },
+      {
+        "code": "glowstem_leaf",
+        "maxTotal": 200
+      }
+    ],
+    "gemstone_merchant": [
+      {
+        "code": "iron_ore",
+        "maxTotal": 50
+      },
+      {
+        "code": "coal",
+        "maxTotal": 100
+      }
+    ],
+    "timber_merchant": [],
+    "fish_merchant": []
+  },
   "characters": [
     {
       "name": "GenoDev",
@@ -17,13 +65,15 @@
         },
         {
           "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "craftBlacklist": {},
@@ -81,13 +131,15 @@
         },
         {
           "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "craftBlacklist": {},
@@ -143,13 +195,15 @@
         },
         {
           "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "craftBlacklist": {},
@@ -204,13 +258,15 @@
         },
         {
           "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "craftBlacklist": {},
@@ -265,13 +321,15 @@
         },
         {
           "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
           "type": "bankExpansion"
         },
         {
           "type": "event",
           "enabled": true,
           "monsterEvents": true,
-          "resourceEvents": true
+          "resourceEvents": true,
+          "npcEvents": true
         },
         {
           "craftBlacklist": {},

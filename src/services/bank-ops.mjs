@@ -9,6 +9,7 @@ import { toPositiveInt } from '../utils.mjs';
 import { recordDeposits } from './order-board.mjs';
 import {
   applyBankDelta,
+  applyBankGoldDelta,
   availableBankCount,
   getBankItems,
   invalidateBank,
@@ -369,6 +370,7 @@ export async function withdrawGoldFromBank(ctx, quantity, _opts = {}) {
   await ensureAtBank(ctx);
   const action = await _api.withdrawGold(qty, ctx.name);
   ctx.applyActionResult(action);
+  applyBankGoldDelta(qty, 'withdraw');
   await _api.waitForCooldown(action);
   return action;
 }
@@ -382,6 +384,7 @@ export async function depositGoldToBank(ctx, quantity, _opts = {}) {
   await ensureAtBank(ctx);
   const action = await _api.depositGold(qty, ctx.name);
   ctx.applyActionResult(action);
+  applyBankGoldDelta(qty, 'deposit');
   await _api.waitForCooldown(action);
   return action;
 }
