@@ -9,6 +9,9 @@ export class Scheduler {
   constructor(ctx, routines = []) {
     this.ctx = ctx;
     this.routines = [...routines].sort((a, b) => b.priority - a.priority);
+    for (const r of this.routines) {
+      r._peerRoutines = this.routines;
+    }
 
     this.stopRequested = false;
     this.runningPromise = null;

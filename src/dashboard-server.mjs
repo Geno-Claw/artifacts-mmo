@@ -18,6 +18,7 @@ import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './servic
 import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
 import { clearGearState } from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
+import { findItems } from './services/game-data.mjs';
 import { toPositiveInt } from './utils.mjs';
 import {
   isSandbox,
@@ -905,6 +906,19 @@ export async function startDashboardServer({
 
       if (pathname === '/api/ui/bank') {
         sendJson(res, 200, getBankSummary({ includeItems: true }));
+        return;
+      }
+
+      if (pathname === '/api/items') {
+        let items;
+        try {
+          items = findItems({});
+        } catch {
+          items = [];
+        }
+        const slim = items.map(i => ({ code: i.code, name: i.name, type: i.type, level: i.level }));
+        slim.sort((a, b) => a.code.localeCompare(b.code));
+        sendJson(res, 200, slim);
         return;
       }
 

@@ -32,6 +32,12 @@ function normalizeCharacter(raw) {
     maxHp,
     xp,
     maxXp,
+    gold: Math.max(0, toNumber(raw?.gold, 0)),
+    position: {
+      x: raw?.position?.x ?? null,
+      y: raw?.position?.y ?? null,
+      layer: raw?.position?.layer ?? null,
+    },
     taskLabel,
     gameLogLatest,
     gameLogLatestType,

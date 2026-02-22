@@ -119,7 +119,7 @@ export async function executeCrafting(ctx, routine) {
         continue;
       }
 
-      // Gather one batch from the resource
+      // Gather from the resource in a loop (stay on-site to avoid deposit-bank preemption)
       const loc = await gameData.getResourceLocation(step.resource.code);
       if (!loc) {
         if (claimMode) {
@@ -135,10 +135,22 @@ export async function executeCrafting(ctx, routine) {
       await equipForGathering(ctx, step.resource.skill);
 
       await moveTo(ctx, loc.x, loc.y);
-      const result = await gatherOnce(ctx);
-      const items = result.details?.items || [];
-      log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: gathering ${step.itemCode} for ${recipe.code} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'}`);
-      return !ctx.inventoryFull();
+      while (ctx.itemCount(step.itemCode) < needed && !ctx.inventoryFull()) {
+        // Yield for urgent routines (e.g. events)
+        if (routine._hasUrgentPreemption(ctx)) {
+          log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: yielding gather loop for urgent routine`);
+          return true;
+        }
+        const result = await gatherOnce(ctx);
+        const items = result.details?.items || [];
+        log.info(
+          `[${ctx.name}] ${routine.rotation.currentSkill}: gathering ${step.itemCode} for ${recipe.code} — ` +
+          `got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} ` +
+          `(${ctx.itemCount(step.itemCode)}/${needed})`,
+        );
+      }
+      if (ctx.inventoryFull()) return false;
+      continue;
     }
 
     if (step.type === 'fight') {

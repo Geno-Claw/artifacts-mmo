@@ -143,6 +143,7 @@ async function run() {
     max_hp: 200,
     xp: 5600,
     max_xp: 8000,
+    gold: 5000,
     x: 3,
     y: 9,
     layer: 'overworld',
@@ -160,6 +161,7 @@ async function run() {
   assert.equal(afterChar.maxHp, 200);
   assert.equal(afterChar.xp, 5600);
   assert.equal(afterChar.maxXp, 8000);
+  assert.equal(afterChar.gold, 5000, 'gold should be included in SSE snapshot');
   assert.equal(afterChar.position.x, 3);
   assert.equal(afterChar.position.y, 9);
   assert.equal(afterChar.position.layer, 'overworld');
@@ -303,9 +305,9 @@ async function run() {
   assert.equal(detail.skills.some(skill => skill.code === 'mining'), true);
   assert.equal(detail.inventory.some(item => item.code === 'copper_ore'), true);
   assert.equal(detail.equipment.some(item => item.slot === 'weapon'), true);
-  assert.equal(detail.logHistory.length, 50, 'detail.logHistory should be capped at 50 entries');
+  assert.equal(detail.logHistory.length, 75, 'detail.logHistory should retain all 75 entries (cap is 500)');
   assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-74'), true);
-  assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-0'), false);
+  assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-0'), true);
 
   // --- Cooldown extraction from character snapshot ---
 

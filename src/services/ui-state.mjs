@@ -4,7 +4,7 @@
  */
 
 const DEFAULT_STALE_AFTER_MS = 120_000;
-const MAX_LOG_HISTORY = 50;
+const MAX_LOG_HISTORY = 500;
 const DEFAULT_LOG_LIMIT = 20;
 const KNOWN_SKILL_CODES = Object.freeze([
   'mining',
@@ -220,6 +220,7 @@ function cloneCharacterState(char, serverTimeMs) {
     maxHp: char.maxHp,
     xp: char.xp,
     maxXp: char.maxXp,
+    gold: char.gold,
     position: { ...char.position },
     routine: { ...char.routine },
     cooldown: { ...char.cooldown },

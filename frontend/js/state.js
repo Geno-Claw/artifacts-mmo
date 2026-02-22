@@ -71,6 +71,9 @@ const modalRefs = {
 
 const sandboxState = {
   characters: [],
+  items: [],
+  itemsFetched: false,
+  itemCombobox: null,
   status: 'idle',
   resultMessage: '',
   resultTone: '',

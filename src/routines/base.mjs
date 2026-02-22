@@ -27,6 +27,14 @@ export class BaseRoutine {
     return true;
   }
 
+  /** Check if an urgent higher-priority routine needs to run. */
+  _hasUrgentPreemption(ctx) {
+    if (!this._peerRoutines) return false;
+    return this._peerRoutines.some(
+      r => r.priority > this.priority && r.urgent && r.canRun(ctx),
+    );
+  }
+
   async execute(_char) {
     throw new Error(`${this.name}: execute() not implemented`);
   }

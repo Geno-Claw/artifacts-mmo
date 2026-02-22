@@ -33,7 +33,7 @@ const MODAL_KIND_LABELS = {
   skills: 'Skills',
   inven: 'Inventory',
   equip: 'Equipment',
-  stats: 'Stats',
+  stats: 'Logs',
   achiev: 'Achievements',
   config: 'Config',
   bank: 'Bank',

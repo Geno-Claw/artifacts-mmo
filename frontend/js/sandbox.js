@@ -14,6 +14,11 @@ function openSandboxModal() {
   sandboxRefs.host.hidden = false;
   document.body.classList.add('modal-open');
   renderSandboxModalContent();
+  fetchSandboxItems().then(() => {
+    if (sandboxState.itemCombobox) {
+      sandboxState.itemCombobox.setItems(sandboxState.items);
+    }
+  });
 }
 
 function closeSandboxModal() {
@@ -21,6 +26,10 @@ function closeSandboxModal() {
   sandboxRefs.host.hidden = true;
   document.body.classList.remove('modal-open');
   clearSandboxBanner();
+  if (sandboxState.itemCombobox) {
+    sandboxState.itemCombobox.destroy();
+    sandboxState.itemCombobox = null;
+  }
 }
 
 function setSandboxBanner(message, tone) {
@@ -101,7 +110,7 @@ function renderSandboxModalContent() {
         </div>
         <div class="sandbox-form-row">
           <label class="sandbox-label">Item Code</label>
-          <input class="sandbox-input" type="text" name="code" placeholder="e.g. copper_ore" required>
+          <div class="sandbox-combobox-host" data-combobox="give-item-code"></div>
         </div>
         <div class="sandbox-form-row">
           <label class="sandbox-label">Quantity</label>
@@ -149,6 +158,35 @@ function renderSandboxModalContent() {
       </form>
     </section>
   `;
+
+  // Instantiate item combobox after DOM is ready
+  if (sandboxState.itemCombobox) {
+    sandboxState.itemCombobox.destroy();
+    sandboxState.itemCombobox = null;
+  }
+  const comboboxHost = sandboxRefs.content.querySelector('[data-combobox="give-item-code"]');
+  if (comboboxHost) {
+    sandboxState.itemCombobox = createCombobox({
+      container: comboboxHost,
+      name: 'code',
+      placeholder: 'Search items...',
+      items: sandboxState.items,
+    });
+  }
+}
+
+async function fetchSandboxItems() {
+  if (sandboxState.itemsFetched) return;
+  try {
+    const base = window.__BASE_PATH__ || '';
+    const res = await fetch(`${base}/api/items`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    sandboxState.items = Array.isArray(data) ? data : [];
+    sandboxState.itemsFetched = true;
+  } catch {
+    // Silently fail — user can still type codes manually
+  }
 }
 
 async function handleSandboxSubmit(form) {

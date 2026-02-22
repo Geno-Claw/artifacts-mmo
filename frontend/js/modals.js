@@ -154,62 +154,33 @@ function renderBankModal(detail) {
 }
 
 function renderStatsModal(detail) {
-  const stats = detail?.stats && typeof detail.stats === 'object' ? detail.stats : {};
-  const identity = detail?.identity && typeof detail.identity === 'object' ? detail.identity : {};
-  const activeChar = appState.characters.get(modalState.activeCharacterName);
-  const taskText = safeText(
-    stats?.task?.label ?? stats?.taskLabel ?? stats?.task?.name ?? activeChar?.taskLabel,
-    '--'
-  );
-  const pos = stats?.position && typeof stats.position === 'object'
-    ? `${stats.position.x ?? '--'}, ${stats.position.y ?? '--'}${stats.position.layer != null ? ` @ ${stats.position.layer}` : ''}`
-    : '--';
-  const cards = [
-    { label: 'Status', value: safeText(identity?.status, safeText(activeChar?.status, '--')) },
-    { label: 'Level', value: formatNumberish(identity?.level ?? stats?.level ?? activeChar?.level, '--') },
-    { label: 'HP', value: `${formatNumberish(stats?.hp ?? activeChar?.hp, '--')} / ${formatNumberish(stats?.maxHp ?? activeChar?.maxHp, '--')}` },
-    { label: 'XP', value: `${formatNumberish(stats?.xp ?? activeChar?.xp, '--')} / ${formatNumberish(stats?.maxXp ?? activeChar?.maxXp, '--')}` },
-    { label: 'Gold', value: formatNumberish(stats?.gold, '--') },
-    { label: 'Position', value: pos },
-    { label: 'Task', value: taskText },
-    { label: 'Updated', value: formatTime(detail?.updatedAtMs) },
-  ];
-  const logs = normalizeLogHistory(detail?.logHistory).slice(0, 12);
+  const logs = normalizeLogHistory(detail?.logHistory);
 
-  const hasStats = cards.some((card) => hasMeaningfulStatValue(card.value));
-  if (!hasStats && logs.length === 0) {
-    return '<div class="modal-empty">No stats available for this character.</div>';
+  if (logs.length === 0) {
+    return '<div class="modal-empty">No log entries available for this character.</div>';
   }
 
-  const cardHtml = cards.map((card) => `
-    <article class="modal-stat">
-      <div class="modal-stat-label">${escapeHtml(card.label)}</div>
-      <div class="modal-stat-value">${escapeHtml(card.value)}</div>
-    </article>
-  `).join('');
-
-  const logHtml = logs.length > 0
-    ? `
-      <section class="modal-section">
-        <h3 class="modal-section-title">Recent Log History</h3>
-        <div class="modal-list">
-          ${logs.map((entry) => `
-            <div class="modal-list-item modal-list-item--two">
-              <span class="modal-list-main">${escapeHtml(entry.line)}</span>
-              <span class="modal-list-tag">${escapeHtml(entry.level.toUpperCase())} ${escapeHtml(formatTime(entry.atMs))}</span>
-            </div>
-          `).join('')}
-        </div>
-      </section>
-    `
-    : '';
+  const logItems = logs.map((entry) => {
+    const levelClass = entry.level === 'error'
+      ? ' log-entry--error'
+      : entry.level === 'warn'
+        ? ' log-entry--warn'
+        : '';
+    return `
+      <div class="modal-list-item modal-list-item--two${levelClass}">
+        <span class="modal-list-main">${escapeHtml(entry.line)}</span>
+        <span class="modal-list-tag">${escapeHtml(entry.level.toUpperCase())} ${escapeHtml(formatTime(entry.atMs))}</span>
+      </div>
+    `;
+  }).join('');
 
   return `
     <section class="modal-section">
-      <h3 class="modal-section-title">Runtime Stats</h3>
-      <div class="modal-grid">${cardHtml}</div>
+      <h3 class="modal-section-title">Log History (${logs.length})</h3>
+      <div class="modal-log-scroll">
+        <div class="modal-list">${logItems}</div>
+      </div>
     </section>
-    ${logHtml}
   `;
 }
 

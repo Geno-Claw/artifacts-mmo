@@ -674,6 +674,36 @@ body::before {
 }
 
 /* ============================================================
+   CARD META ROW (Gold / Position)
+   ============================================================ */
+.card-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 2px;
+}
+
+.card-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-meta-label {
+  font-size: 5px;
+  color: var(--ink-faint);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.card-meta-value {
+  font-size: 7px;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+
+/* ============================================================
    COOLDOWN TIMER
    ============================================================ */
 .cooldown-section {
@@ -1052,6 +1082,24 @@ body::before {
   display: block;
   margin-top: 3px;
   color: var(--ink);
+}
+
+/* Scrollable log container for Logs modal */
+.modal-log-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* Log entry level tinting */
+.log-entry--error {
+  background: rgba(200, 48, 40, 0.08);
+  border-left-color: rgba(200, 48, 40, 0.45);
+}
+
+.log-entry--warn {
+  background: rgba(200, 168, 80, 0.10);
+  border-left-color: rgba(200, 168, 80, 0.50);
 }
 
 .achievement-toolbar {
@@ -1546,4 +1594,82 @@ body::before {
   color: var(--vermillion-dark);
   letter-spacing: 0.5px;
   margin-top: 4px;
+}
+
+/* ============================================================
+   COMBOBOX — searchable dropdown selector
+   ============================================================ */
+.combobox {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.combobox-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.combobox-dropdown {
+  position: fixed;
+  z-index: 30;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--ink-faint);
+  box-shadow: 2px 3px 0 rgba(42, 36, 32, 0.12);
+}
+
+.combobox-dropdown[hidden] {
+  display: none;
+}
+
+.combobox-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 8px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  line-height: 1.4;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.combobox-row:hover,
+.combobox-row.is-highlighted {
+  background: var(--ink-wash);
+}
+
+.combobox-row.is-selected {
+  color: var(--indigo);
+}
+
+.combobox-row-code {
+  flex-shrink: 0;
+}
+
+.combobox-row-name {
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.combobox-row-meta {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-size: 5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.combobox-empty {
+  padding: 8px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink-faint);
+  letter-spacing: 1px;
 }

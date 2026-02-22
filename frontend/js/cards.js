@@ -39,6 +39,17 @@ function buildCard(char, index) {
         </div>
       </div>
 
+      <div class="card-meta-row">
+        <span class="card-meta-item" data-gold="${key}">
+          <span class="card-meta-label">GOLD</span>
+          <span class="card-meta-value">0</span>
+        </span>
+        <span class="card-meta-item" data-pos="${key}">
+          <span class="card-meta-label">POS</span>
+          <span class="card-meta-value">--</span>
+        </span>
+      </div>
+
       <div class="cooldown-section">
         <div class="cooldown-label">COOLDOWN</div>
         <div class="cooldown-bar-track">
@@ -66,7 +77,7 @@ function buildCard(char, index) {
           <button class="action-btn" type="button" data-modal-kind="skills" title="Skills" aria-haspopup="dialog">SKILLS</button>
         </div>
         <div class="btn-row">
-          <button class="action-btn" type="button" data-modal-kind="stats" title="Stats" aria-haspopup="dialog">STATS</button>
+          <button class="action-btn" type="button" data-modal-kind="stats" title="Logs" aria-haspopup="dialog">LOGS</button>
         </div>
       </div>
     </div>
@@ -85,6 +96,8 @@ function buildCard(char, index) {
     xpText: card.querySelector(`[data-xp-text="${key}"]`),
     cdBar: card.querySelector(`[data-cd-bar="${key}"]`),
     cdText: card.querySelector(`[data-cd-text="${key}"]`),
+    goldEl: card.querySelector(`[data-gold="${key}"] .card-meta-value`),
+    posEl: card.querySelector(`[data-pos="${key}"] .card-meta-value`),
     logText: card.querySelector(`[data-log="${key}"]`),
     taskText: card.querySelector(`[data-task="${key}"]`),
   };
@@ -146,6 +159,19 @@ function applyCharacterState(char) {
 
   refs.xpFill.style.width = `${statPct(char.xp, char.maxXp).toFixed(1)}%`;
   refs.xpText.textContent = `${char.xp} / ${char.maxXp}`;
+
+  if (refs.goldEl) {
+    refs.goldEl.textContent = formatGold(char.gold);
+  }
+  if (refs.posEl) {
+    const pos = char.position;
+    if (pos && (pos.x != null || pos.y != null)) {
+      const layerSuffix = pos.layer != null ? ` @ ${pos.layer}` : '';
+      refs.posEl.textContent = `${pos.x ?? '--'},${pos.y ?? '--'}${layerSuffix}`;
+    } else {
+      refs.posEl.textContent = '--';
+    }
+  }
 
   if (char.gameLogLatestAtMs) {
     const icon = logTypeIcon(char.gameLogLatestType);

@@ -994,9 +994,9 @@ async function run() {
     assert.equal(detail.skills.length > 0, true, 'Expected non-empty normalized skills');
     assert.equal(detail.inventory.length > 0, true, 'Expected non-empty normalized inventory');
     assert.equal(detail.equipment.length > 0, true, 'Expected non-empty normalized equipment');
-    assert.equal(detail.logHistory.length, 50, 'Expected detail logHistory cap at 50 entries');
+    assert.equal(detail.logHistory.length, 65, 'Expected all 65 detail log entries retained (cap is 500)');
     assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-64'), true);
-    assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-0'), false);
+    assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-0'), true);
 
     const missingRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Missing')}`);
     assert.equal(missingRes.status, 404);
