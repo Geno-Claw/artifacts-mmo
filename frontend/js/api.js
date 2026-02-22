@@ -549,6 +549,10 @@ function openCharacterModal(name, kind) {
     openBankModal();
     return;
   }
+  if (kind === 'achiev') {
+    openAchievementsModal();
+    return;
+  }
 
   modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
     ? document.activeElement
@@ -558,9 +562,7 @@ function openCharacterModal(name, kind) {
   modalState.status = 'loading';
   modalState.detail = null;
   modalState.errorText = '';
-  modalState.activeSnapshotUpdatedAtMs = kind === 'achiev'
-    ? 0
-    : (appState.characters.get(name)?.lastUpdatedAtMs || 0);
+  modalState.activeSnapshotUpdatedAtMs = appState.characters.get(name)?.lastUpdatedAtMs || 0;
   modalState.achievementFilter = 'all';
   modalState.achievementTypeFilter = 'all';
   modalState.achievementExpandedSet.clear();
@@ -580,11 +582,7 @@ function openCharacterModal(name, kind) {
     else modalRefs.dialog.focus();
   });
 
-  if (kind === 'achiev') {
-    fetchAccountAchievementsDetail();
-  } else {
-    fetchCharacterDetail(name);
-  }
+  fetchCharacterDetail(name);
 }
 
 function openConfigModal() {
@@ -644,6 +642,35 @@ function openBankModal() {
   });
 
   fetchBankDetail();
+}
+
+function openAchievementsModal() {
+  if (!modalRefs.host || !modalRefs.dialog) return;
+
+  modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  modalState.activeCharacterName = ACHIEV_MODAL_NAME;
+  modalState.activeKind = 'achiev';
+  modalState.status = 'loading';
+  modalState.detail = null;
+  modalState.errorText = '';
+  modalState.activeSnapshotUpdatedAtMs = 0;
+  modalState.achievementFilter = 'all';
+  modalState.achievementTypeFilter = 'all';
+  modalState.achievementExpandedSet.clear();
+  modalState.achievementSearch = '';
+
+  modalRefs.host.hidden = false;
+  document.body.classList.add('modal-open');
+  renderModal();
+
+  requestAnimationFrame(() => {
+    if (modalRefs.closeBtn) modalRefs.closeBtn.focus();
+    else modalRefs.dialog.focus();
+  });
+
+  fetchAccountAchievementsDetail();
 }
 
 async function fetchBankDetail() {

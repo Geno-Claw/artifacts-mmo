@@ -29,7 +29,7 @@ import { executeCrafting, equipForCraftFight, handleUnwinnableCraftFight, invent
 import { executeNpcTask, executeItemTask, executeTaskByType, inferTaskType, runNpcTaskFlow } from './npc-tasks.mjs';
 import { runItemTaskFlow, craftForItemTask, craftAndTradeItemTaskFromInventory, placeOrderAndCancel, cancelItemTask, withdrawForItemTask, shouldTradeItemTaskNow, gatherForItemTask, tradeItemTask } from './item-tasks.mjs';
 import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, inventorySnapshotForTargets } from './task-exchange.mjs';
-import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit } from './order-claims.mjs';
+import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit, enqueueFightOrderForDeficit } from './order-claims.mjs';
 import { executeAchievement } from './achievements.mjs';
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
@@ -287,4 +287,5 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _depositClaimItemsIfNeeded(ctx, opts) { return depositClaimItemsIfNeeded(ctx, this, opts); }
   async _blockAndReleaseClaim(ctx, reason) { return blockAndReleaseClaim(ctx, this, reason); }
   _enqueueGatherOrderForDeficit(step, order, ctx, deficit) { return enqueueGatherOrderForDeficit(this, step, order, ctx, deficit); }
+  _enqueueFightOrderForDeficit(step, order, ctx, deficit) { return enqueueFightOrderForDeficit(this, step, order, ctx, deficit); }
 }

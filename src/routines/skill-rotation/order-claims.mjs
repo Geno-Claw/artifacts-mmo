@@ -225,6 +225,22 @@ export async function acquireCraftOrderClaim(ctx, routine, craftSkill) {
           }
         }
       }
+      // Queue fight orders for combat drops that this character can't obtain
+      if (viability.reason?.startsWith('combat_not_viable:')) {
+        const item = routine._getCraftClaimItem(order);
+        const plan = item?.craft ? routine._resolveRecipeChain(item.craft) : null;
+        if (plan) {
+          const bankItems = bank instanceof Map ? bank : new Map();
+          for (const step of plan) {
+            if (step.type !== 'fight' || !step.monster) continue;
+            const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+            const deficit = step.quantity - have;
+            if (deficit > 0) {
+              routine._enqueueFightOrderForDeficit(step, order, ctx, deficit);
+            }
+          }
+        }
+      }
       routine._blockUnclaimableOrderForChar(order, ctx, viability.reason);
       continue;
     }
@@ -323,6 +339,24 @@ export function enqueueGatherOrderForDeficit(routine, step, order, ctx, deficit)
     log.info(`[${ctx.name}] Order claim: queued gather order for ${step.itemCode} x${deficit} (${step.resource.skill} lv${step.resource.level})`);
   } catch (err) {
     log.warn(`[${ctx.name}] Could not queue gather order for ${step.itemCode}: ${err?.message || String(err)}`);
+  }
+}
+
+export function enqueueFightOrderForDeficit(routine, step, order, ctx, deficit) {
+  if (!step?.monster || !routine.rotation) return;
+  try {
+    routine.rotation._enqueueOrder({
+      requesterName: ctx.name,
+      recipeCode: order?.itemCode || '',
+      itemCode: step.itemCode,
+      sourceType: 'fight',
+      sourceCode: step.monster.code,
+      sourceLevel: step.monster.level,
+      quantity: Math.max(1, Math.floor(Number(deficit) || 0)),
+    });
+    log.info(`[${ctx.name}] Order claim: queued fight order for ${step.itemCode} x${deficit} from ${step.monster.code}`);
+  } catch (err) {
+    log.warn(`[${ctx.name}] Could not queue fight order for ${step.itemCode}: ${err?.message || String(err)}`);
   }
 }
 

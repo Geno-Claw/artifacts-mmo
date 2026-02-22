@@ -328,6 +328,24 @@ export async function handleUnwinnableCraftFight(ctx, routine, { monsterCode, it
 
   log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: skipping ${recipeCode || 'recipe'} fight step ${monsterCode} -> ${itemCode || 'drop'} (sim ${simOutcome}, hpLost ${hpLost})`);
 
+  // Queue fight order so another character can farm the drop
+  if (monsterCode && itemCode && routine.rotation) {
+    const monster = gameData.getMonster(monsterCode);
+    if (monster) {
+      try {
+        routine.rotation._enqueueOrder({
+          requesterName: ctx.name,
+          recipeCode: recipeCode || '',
+          itemCode,
+          sourceType: 'fight',
+          sourceCode: monsterCode,
+          sourceLevel: monster.level,
+          quantity: 1,
+        });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
   if (claimMode) {
     await routine._blockAndReleaseClaim(ctx, 'combat_not_viable');
     return true;

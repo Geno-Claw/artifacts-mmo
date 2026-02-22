@@ -70,6 +70,7 @@ function setupModalFramework() {
   bankRefs.goldValue = document.getElementById('bankGoldValue');
   bankRefs.slotsValue = document.getElementById('bankSlotsValue');
   bankRefs.openBtn = document.getElementById('openBankBtn');
+  bankRefs.achievBtn = document.getElementById('openAchievBtn');
 
   const cardsContainer = document.getElementById('cardsContainer');
   if (cardsContainer) {
@@ -80,6 +81,9 @@ function setupModalFramework() {
   }
   if (bankRefs.openBtn) {
     bankRefs.openBtn.addEventListener('click', () => openBankModal());
+  }
+  if (bankRefs.achievBtn) {
+    bankRefs.achievBtn.addEventListener('click', () => openAchievementsModal());
   }
   if (controlRefs.restartBtn) {
     controlRefs.restartBtn.addEventListener('click', onRuntimeControlButtonClick);

@@ -18,6 +18,7 @@ const bankRefs = {
   goldValue: null,
   slotsValue: null,
   openBtn: null,
+  achievBtn: null,
 };
 
 const cardRefs = new Map();

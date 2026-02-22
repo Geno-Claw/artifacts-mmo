@@ -67,7 +67,6 @@ function buildCard(char, index) {
         </div>
         <div class="btn-row">
           <button class="action-btn" type="button" data-modal-kind="stats" title="Stats" aria-haspopup="dialog">STATS</button>
-          <button class="action-btn" type="button" data-modal-kind="achiev" title="Achievements" aria-haspopup="dialog">ACHIEV</button>
         </div>
       </div>
     </div>

@@ -28,6 +28,7 @@ function logTypeIcon(type) {
 
 const CONFIG_MODAL_NAME = '__config__';
 const BANK_MODAL_NAME = '__bank__';
+const ACHIEV_MODAL_NAME = '__achiev__';
 const MODAL_KIND_LABELS = {
   skills: 'Skills',
   inven: 'Inventory',

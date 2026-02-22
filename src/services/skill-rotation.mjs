@@ -498,6 +498,7 @@ export class SkillRotation {
       }
 
       let viable = true;
+      let blocked = false;
       for (const step of candidate.fightSteps) {
         const monsterCode = step.monster.code;
         if (!simCache.has(monsterCode)) {
@@ -509,13 +510,13 @@ export class SkillRotation {
           viable = false;
           this._queueFightOrder(step, candidate.recipe, ctx);
           log.info(`[${ctx.name}] Rotation: ${candidate.recipe.code} needs ${step.itemCode} from ${monsterCode} — can't win fight, skipping`);
-          if (skill && candidate.recipe?.code) {
+          if (!blocked && skill && candidate.recipe?.code) {
             this.blockRecipe(skill, candidate.recipe.code, {
               reason: `combat not viable vs ${monsterCode}`,
               ctx,
             });
+            blocked = true;
           }
-          break;
         }
       }
       if (viable) verified.push(candidate);
