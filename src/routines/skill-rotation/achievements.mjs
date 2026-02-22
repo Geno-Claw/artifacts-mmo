@@ -545,8 +545,9 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
     }
 
     case 'task': {
+      // 1 task ≈ 200 kills worth of effort (accept → fight ~20-30× → complete)
       return {
-        score: 5 * remaining,
+        score: 200 * remaining,
         action: { type: 'task' },
       };
     }

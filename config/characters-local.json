@@ -54,7 +54,7 @@
             "mining": 0,
             "npc_task": 0,
             "weaponcrafting": 0,
-            "woodcutting": 1
+            "woodcutting": 0
           }
         }
       ]
@@ -154,17 +154,17 @@
           },
           "type": "skillRotation",
           "weights": {
-            "achievement": 0,
+            "achievement": 1,
             "alchemy": 0,
             "combat": 0,
-            "cooking": 5,
-            "fishing": 2,
+            "cooking": 1,
+            "fishing": 0,
             "gearcrafting": 0,
             "item_task": 0,
             "jewelrycrafting": 1,
             "mining": 0,
             "npc_task": 0,
-            "weaponcrafting": 0,
+            "weaponcrafting": 1,
             "woodcutting": 0
           }
         }
@@ -209,7 +209,7 @@
           },
           "type": "skillRotation",
           "weights": {
-            "achievement": 0,
+            "achievement": 2,
             "alchemy": 0,
             "combat": 0,
             "cooking": 0,
@@ -264,7 +264,7 @@
           },
           "type": "skillRotation",
           "weights": {
-            "achievement": 0,
+            "achievement": 2,
             "alchemy": 0,
             "combat": 0,
             "cooking": 0,

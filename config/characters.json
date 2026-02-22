@@ -24,15 +24,15 @@
             "mining": 0,
             "woodcutting": 0,
             "fishing": 0,
-            "cooking": 0,
+            "cooking": 1,
             "alchemy": 0,
-            "weaponcrafting": 5,
+            "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 0,
-            "npc_task": 0,
+            "npc_task": 1,
             "item_task": 0,
-            "achievement": 1
+            "achievement": 2
           },
           "goals": {
             "mining": 100,
@@ -102,14 +102,14 @@
             "woodcutting": 0,
             "fishing": 0,
             "cooking": 1,
-            "alchemy": 1,
-            "weaponcrafting": 5,
+            "alchemy": 2,
+            "weaponcrafting": 0,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
             "item_task": 0,
-            "achievement": 0
+            "achievement": 1
           },
           "goals": {
             "mining": 50,
@@ -183,10 +183,10 @@
             "weaponcrafting": 5,
             "gearcrafting": 0,
             "jewelrycrafting": 0,
-            "combat": 0,
+            "combat": 1,
             "npc_task": 0,
             "item_task": 0,
-            "achievement": 0
+            "achievement": 1
           },
           "goals": {
             "mining": 20,
@@ -330,8 +330,8 @@
             "fishing": 0,
             "cooking": 0,
             "alchemy": 0,
-            "weaponcrafting": 0,
-            "gearcrafting": 5,
+            "weaponcrafting": 1,
+            "gearcrafting": 1,
             "jewelrycrafting": 0,
             "combat": 0,
             "npc_task": 0,
