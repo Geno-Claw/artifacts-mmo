@@ -114,12 +114,16 @@ function extractCharacterConfig(charCfg = {}) {
   const potionTargetQty = potionEnabled ? toPositiveInt(combatPotions.targetQuantity, 0) : 0;
 
   const potionPoisonBias = potionEnabled ? combatPotions.poisonBias !== false : false;
+  const potionMonsterTypes = potionEnabled && Array.isArray(combatPotions.monsterTypes)
+    ? combatPotions.monsterTypes
+    : null;
 
   return {
     createOrders,
     potionEnabled,
     potionTargetQty,
     potionPoisonBias,
+    potionMonsterTypes,
   };
 }
 

@@ -304,6 +304,90 @@ async function testRespectNonPotionUtility() {
   assert.equal(unequipCalls.length, 0, 'non-potion utility should not be unequipped');
 }
 
+async function testSkipsPotionsForDisallowedMonsterType() {
+  const char = {
+    name: 'TypeFilter',
+    level: 40,
+    hp: 300,
+    max_hp: 300,
+    initiative: 10,
+    critical_strike: 0,
+    attack_fire: 20,
+    attack_earth: 0,
+    attack_water: 0,
+    attack_air: 0,
+    res_fire: 0,
+    res_earth: 0,
+    res_water: 0,
+    res_air: 0,
+    dmg: 0,
+    dmg_fire: 0,
+    dmg_earth: 0,
+    dmg_water: 0,
+    dmg_air: 0,
+    utility1_slot: '',
+    utility1_slot_quantity: 0,
+    utility2_slot: '',
+    utility2_slot_quantity: 0,
+    inventory_max_items: 100,
+    inventory: [{ code: 'greater_health_potion', quantity: 20 }],
+  };
+  // Only use potions for elite and boss
+  const ctx = makeCtx(char, {
+    potions: {
+      enabled: true,
+      combat: { enabled: true, monsterTypes: ['elite', 'boss'] },
+    },
+  });
+
+  const potionItem = {
+    code: 'greater_health_potion',
+    type: 'utility',
+    subtype: 'potion',
+    level: 40,
+    effects: [{ code: 'restore', value: 200 }],
+    conditions: [],
+  };
+  const normalWolf = { code: 'wolf', type: 'normal', hp: 200, initiative: 1, attack_fire: 10, attack_earth: 0, attack_water: 0, attack_air: 0, res_fire: 0, res_earth: 0, res_water: 0, res_air: 0, critical_strike: 0 };
+  const eliteWolf = { ...normalWolf, code: 'elite_wolf', type: 'elite' };
+
+  const equipCalls = [];
+
+  _setDepsForTests({
+    gameData: {
+      getMonster(code) {
+        if (code === 'wolf') return normalWolf;
+        if (code === 'elite_wolf') return eliteWolf;
+        return null;
+      },
+      async getBankItems() { return new Map([[potionItem.code, 100]]); },
+      findItems() { return [potionItem]; },
+      getItem(code) { return code === potionItem.code ? potionItem : null; },
+    },
+    canUseItem: () => true,
+    withdrawBankItems: async () => ({ withdrawn: [], skipped: [], failed: [] }),
+    api: {
+      async equipItem(slot, code, _name, quantity) {
+        equipCalls.push({ slot, code, quantity });
+        char[`${slot}_slot`] = code;
+        char[`${slot}_slot_quantity`] = quantity;
+        return { cooldown: { remaining_seconds: 0 } };
+      },
+      async unequipItem() { return { cooldown: { remaining_seconds: 0 } }; },
+      async waitForCooldown() {},
+    },
+  });
+
+  // Normal monster — should skip potions
+  const normalResult = await prepareCombatPotions(ctx, 'wolf');
+  assert.equal(normalResult.selected, null, 'should skip potions for normal monster');
+  assert.equal(equipCalls.length, 0, 'should not equip anything for normal monster');
+
+  // Elite monster — should use potions
+  const eliteResult = await prepareCombatPotions(ctx, 'elite_wolf');
+  assert.ok(eliteResult.selected, 'should prepare potions for elite monster');
+}
+
 async function run() {
   await testUtility1PrefersRestore();
   await testUtility1FallsBackToSplash();
@@ -311,6 +395,7 @@ async function run() {
   await testUtility2ExcludesUtility1();
   await testRefillWhenBelowThreshold();
   await testRespectNonPotionUtility();
+  await testSkipsPotionsForDisallowedMonsterType();
 
   _resetForTests();
   console.log('potion-manager tests passed');

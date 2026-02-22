@@ -23,6 +23,7 @@ const DEFAULT_COMBAT_SETTINGS = Object.freeze({
   targetQuantity: 20,
   poisonBias: true,
   respectNonPotionUtility: true,
+  monsterTypes: ['normal', 'elite', 'boss'],
 });
 
 function getCombatSettings(ctx) {
@@ -332,6 +333,9 @@ export async function prepareCombatPotions(ctx, monsterCode) {
   const monster = _gameData.getMonster(monsterCode);
   if (!monster) return { selected: null };
 
+  const allowedTypes = settings.monsterTypes || DEFAULT_COMBAT_SETTINGS.monsterTypes;
+  if (!allowedTypes.includes(monster.type || 'normal')) return { selected: null };
+
   const bankItems = await _gameData.getBankItems();
   const candidates = collectPotionCandidates(ctx, bankItems);
   if (candidates.length === 0) return { selected: null };
@@ -391,11 +395,13 @@ export function computeDesiredPotionsForMonsters(ctx, monsterCodes, settings = {
   if (candidates.length === 0) return new Set();
 
   const mergedSettings = { ...DEFAULT_COMBAT_SETTINGS, ...settings };
+  const allowedTypes = mergedSettings.monsterTypes || DEFAULT_COMBAT_SETTINGS.monsterTypes;
   const desiredCodes = new Set();
 
   for (const monsterCode of monsterCodes) {
     const monster = _gameData.getMonster(monsterCode);
     if (!monster) continue;
+    if (!allowedTypes.includes(monster.type || 'normal')) continue;
 
     const charStats = c;
     const u1 = chooseUtility1(candidates, charStats, monster, mergedSettings);

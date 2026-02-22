@@ -107,7 +107,10 @@ function computePotionRequirements(ctx, cfg, monsterCodes, deps) {
 
   // Simulation-derived: find ideal potions across all beatable monsters.
   if (deps?.computeDesiredPotionsFn && monsterCodes.length > 0) {
-    const settings = { poisonBias: cfg.potionPoisonBias !== false };
+    const settings = {
+      poisonBias: cfg.potionPoisonBias !== false,
+      monsterTypes: cfg.potionMonsterTypes || undefined,
+    };
     const desiredCodes = deps.computeDesiredPotionsFn(ctx, monsterCodes, settings);
     for (const code of desiredCodes) {
       incrementCount(required, code, cfg.potionTargetQty);

@@ -521,6 +521,54 @@ async function testDesiredPotionsDisabledWhenPotionsOff(basePath) {
   await flushGearState();
 }
 
+async function testDesiredPotionsFiltersMonsterTypes() {
+  const healPotion = makePotion('heal_pot', [{ code: 'restore', value: 100 }], 10);
+  const allPotions = [healPotion];
+
+  const wolf = makeMonster('wolf', { level: 5, type: 'normal' });
+  const goblinElite = makeMonster('goblin_elite', { level: 8, type: 'elite' });
+  const dragon = makeMonster('dragon', { level: 15, type: 'boss' });
+
+  setPotionDeps({
+    gameData: {
+      findItems: () => allPotions,
+      getItem: (code) => allPotions.find(p => p.code === code) || null,
+      getMonster: (code) => {
+        if (code === 'wolf') return wolf;
+        if (code === 'goblin_elite') return goblinElite;
+        if (code === 'dragon') return dragon;
+        return null;
+      },
+    },
+    canUseItem: () => true,
+    simulateCombat: (stats) => ({
+      win: true,
+      turns: 8,
+      hpLostPercent: 20,
+      remainingHp: stats.max_hp * 0.8,
+    }),
+  });
+
+  const ctx = makeCtx({ name: 'Test', level: 20 });
+
+  // Only elite + boss — should skip wolf (normal)
+  const eliteBoss = computeDesiredPotionsForMonsters(ctx, ['wolf', 'goblin_elite', 'dragon'], {
+    monsterTypes: ['elite', 'boss'],
+  });
+  // Still finds potions (from goblin_elite and dragon)
+  assert.ok(eliteBoss.size > 0, 'should find potions for elite+boss');
+
+  // Only normal — should skip goblin_elite and dragon
+  const normalOnly = computeDesiredPotionsForMonsters(ctx, ['goblin_elite', 'dragon'], {
+    monsterTypes: ['normal'],
+  });
+  assert.equal(normalOnly.size, 0, 'should find no potions when no normal monsters in list');
+
+  // Default (all types) — should include all
+  const allTypes = computeDesiredPotionsForMonsters(ctx, ['wolf', 'goblin_elite', 'dragon']);
+  assert.ok(allTypes.size > 0, 'default should include all monster types');
+}
+
 // ── runner ──
 
 async function run() {
@@ -530,6 +578,7 @@ async function run() {
   await testDesiredPotionsEmptyWhenNoPotions();
   await testDesiredPotionsEmptyWhenNoMonsters();
   await testDesiredPotionsRespectsCanUseItem();
+  await testDesiredPotionsFiltersMonsterTypes();
   resetPotionDeps();
 
   // gear-state integration tests
