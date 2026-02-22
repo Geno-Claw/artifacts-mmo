@@ -31,6 +31,7 @@
                 { "$ref": "#/$defs/restRoutine" },
                 { "$ref": "#/$defs/depositBankRoutine" },
                 { "$ref": "#/$defs/bankExpansionRoutine" },
+                { "$ref": "#/$defs/eventRoutine" },
                 { "$ref": "#/$defs/skillRotationRoutine" },
                 { "$ref": "#/$defs/fightMonstersRoutine" },
                 { "$ref": "#/$defs/gatherResourceRoutine" },
@@ -138,6 +139,24 @@
         "checkIntervalMs": { "type": "number", "default": 300000, "minimum": 10000, "description": "Minimum milliseconds between bank capacity checks (default 5 min)" },
         "maxGoldPct": { "type": "number", "default": 0.7, "minimum": 0, "maximum": 1, "description": "Only buy expansion if cost <= this fraction of total gold (bank + character)" },
         "goldBuffer": { "type": "number", "default": 0, "minimum": 0, "description": "Minimum gold to keep after purchase (bank + character). 0 = no minimum." }
+      }
+    },
+
+    "eventRoutine": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "event" },
+        "priority": { "type": "number", "default": 90, "description": "Execution priority (default 90, between rest and bank)" },
+        "enabled": { "type": "boolean", "default": true, "description": "Enable/disable event participation" },
+        "monsterEvents": { "type": "boolean", "default": true, "description": "Participate in monster spawn events" },
+        "resourceEvents": { "type": "boolean", "default": true, "description": "Participate in resource node events" },
+        "npcEvents": { "type": "boolean", "default": false, "description": "Participate in NPC merchant events" },
+        "minTimeRemainingMs": { "type": "number", "default": 120000, "minimum": 10000, "description": "Minimum event time remaining (ms) before participating" },
+        "maxMonsterType": { "type": "string", "enum": ["normal", "elite"], "default": "elite", "description": "Maximum monster type to attempt solo (boss requires group, deferred)" },
+        "cooldownMs": { "type": "number", "default": 60000, "minimum": 0, "description": "Per-event cooldown (ms) between participation attempts" },
+        "minWinrate": { "type": "number", "default": 80, "minimum": 0, "maximum": 100, "description": "Minimum simulation winrate to attempt an event monster" }
       }
     },
 

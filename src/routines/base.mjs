@@ -6,11 +6,12 @@
  *   execute(char) → boolean — for loop routines: true=continue, false=stop
  */
 export class BaseRoutine {
-  constructor({ name, type, priority = 0, loop = false }) {
+  constructor({ name, type, priority = 0, loop = false, urgent = false }) {
     this.name = name;
     this.configType = type || null;
     this.priority = priority;
     this.loop = loop;
+    this.urgent = urgent;
   }
 
   /** Hot-reload: patch config fields in-place, preserving runtime state. */

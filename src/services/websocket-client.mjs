@@ -42,6 +42,7 @@ function onOpen() {
   lastConnectedAt = Date.now();
 
   const authMsg = { token: config.token };
+  if (config.subscriptions) authMsg.subscriptions = config.subscriptions;
   ws.send(JSON.stringify(authMsg));
 }
 
@@ -113,14 +114,14 @@ function connect() {
   }
 }
 
-export async function initialize({ url, token }) {
+export async function initialize({ url, token, subscriptions = null }) {
   if (!url || !token) {
     throw new Error('WebSocket client requires url and token');
   }
 
   await cleanup();
 
-  config = { url, token };
+  config = { url, token, subscriptions };
   intentionalClose = false;
   reconnectAttempts = 0;
 

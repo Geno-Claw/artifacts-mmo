@@ -344,6 +344,24 @@ export async function getServerStatus() {
   return request('GET', '/');
 }
 
+// --- Events ---
+
+export async function getEvents(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/events${qs ? '?' + qs : ''}`);
+}
+
+export async function getActiveEvents(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('GET', `/events/active${qs ? '?' + qs : ''}`);
+}
+
+// --- Simulation ---
+
+export async function simulateFight(body) {
+  return request('POST', '/simulation/fight_simulation', body);
+}
+
 // --- Utility ---
 
 let _cooldownAbort = new AbortController();

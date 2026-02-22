@@ -20,6 +20,12 @@
           "type": "bankExpansion"
         },
         {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "achievement": 40,
@@ -78,6 +84,12 @@
           "type": "bankExpansion"
         },
         {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "achievement": 30,
@@ -132,6 +144,12 @@
         {
           "goldBuffer": 1000,
           "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true
         },
         {
           "craftBlacklist": {},
@@ -189,6 +207,12 @@
           "type": "bankExpansion"
         },
         {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true
+        },
+        {
           "craftBlacklist": {},
           "goals": {
             "achievement": 30,
@@ -242,6 +266,12 @@
         {
           "goldBuffer": 1000,
           "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true
         },
         {
           "craftBlacklist": {},

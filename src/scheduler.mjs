@@ -153,7 +153,7 @@ export class Scheduler {
             const preempt = this.routines.find(
               r => r.priority > routine.priority && r.canRun(this.ctx),
             );
-            if (preempt && routine.canBePreempted(this.ctx)) {
+            if (preempt && (preempt.urgent || routine.canBePreempted(this.ctx))) {
               log.info(`[${this.ctx.name}] ${routine.name}: preempted by ${preempt.name}`);
               break;
             }

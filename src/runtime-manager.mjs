@@ -31,6 +31,10 @@ import {
   getState as getWebSocketState,
   subscribe as wsSubscribe,
 } from './services/websocket-client.mjs';
+import {
+  initialize as initEventManager,
+  cleanup as cleanupEventManager,
+} from './services/event-manager.mjs';
 
 /**
  * Extract a lightweight detail object from account_log content per action type.
@@ -404,6 +408,12 @@ export class RuntimeManager {
     }
 
     try {
+      await cleanupEventManager();
+    } catch (err) {
+      log.warn(`[Runtime] Event manager cleanup failed: ${err?.message || String(err)}`);
+    }
+
+    try {
       await cleanupWebSocket();
     } catch (err) {
       log.warn(`[Runtime] WebSocket cleanup failed: ${err?.message || String(err)}`);
@@ -472,8 +482,14 @@ export class RuntimeManager {
 
       const wsUrl = process.env.WEBSOCKET_URL;
       if (wsUrl) {
-        await initWebSocket({ url: wsUrl, token: process.env.ARTIFACTS_TOKEN });
+        await initWebSocket({
+          url: wsUrl,
+          token: process.env.ARTIFACTS_TOKEN,
+          subscriptions: ['event_spawn', 'event_removed', 'account_log'],
+        });
       }
+
+      await initEventManager();
 
       for (const charCfg of config.characters) {
         const { scheduler, ctx } = await this._createScheduler(charCfg);
