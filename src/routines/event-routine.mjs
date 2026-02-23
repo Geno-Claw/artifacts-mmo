@@ -75,13 +75,18 @@ export class EventRoutine extends BaseRoutine {
     if (!this.enabled) return false;
     if (ctx.inventoryFull()) return false;
 
-    // If we have a target, check it's still valid
+    // If we have a target, check it's still valid (and not on cooldown)
     if (this._targetEvent) {
       if (eventManager.isEventActive(this._targetEvent.code)) {
-        return true;
+        if (!this._isOnCooldown(this._targetEvent.code, Date.now())) {
+          return true;
+        }
+        // Target is on cooldown — clear it and look for another
+        this._clearTarget();
+      } else {
+        // Event expired — clear target (and release NPC lock if held)
+        this._clearTarget();
       }
-      // Event expired — clear target (and release NPC lock if held)
-      this._clearTarget();
     }
 
     // Find a new event target
@@ -109,6 +114,10 @@ export class EventRoutine extends BaseRoutine {
       return false;
     }
 
+    return this._executeByType(ctx, target);
+  }
+
+  async _executeByType(ctx, target) {
     switch (target.type) {
       case 'monster': return this._executeMonster(ctx, target);
       case 'resource': return this._executeResource(ctx, target);
@@ -729,9 +738,9 @@ export class EventRoutine extends BaseRoutine {
   _isOnCooldown(eventCode, now) {
     const last = this._eventCooldowns[eventCode];
     if (last && (now - last) < this.cooldownMs) return true;
-    // Sim failure cooldown: 5 min (matches sim cache TTL)
-    const simLast = this._simCooldowns?.[eventCode];
-    if (simLast && (now - simLast) < 5 * 60_000) return true;
+    // Sim failure cooldown: lasts until the event expires (stored as expiry timestamp)
+    const simExpiry = this._simCooldowns?.[eventCode];
+    if (simExpiry && now < simExpiry) return true;
     return false;
   }
 
@@ -739,10 +748,16 @@ export class EventRoutine extends BaseRoutine {
     this._eventCooldowns[eventCode] = Date.now();
   }
 
-  /** Longer cooldown for simulation failures — avoids preemption thrashing. */
+  /**
+   * Cooldown for simulation failures — lasts until the event expires so we
+   * don't repeatedly try (and fail) the same event.
+   * @param {string} eventCode
+   */
   _setSimCooldown(eventCode) {
     if (!this._simCooldowns) this._simCooldowns = {};
-    this._simCooldowns[eventCode] = Date.now();
+    const ttl = eventManager.getTimeRemaining(eventCode);
+    // Store the expiry time rather than the start time
+    this._simCooldowns[eventCode] = Date.now() + Math.max(ttl, 60_000);
   }
 
   _clearTarget() {
