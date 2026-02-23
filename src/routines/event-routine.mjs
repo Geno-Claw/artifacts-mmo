@@ -58,6 +58,8 @@ export class EventRoutine extends BaseRoutine {
     this._eventCooldowns = {};
     /** Character name holding the NPC lock (for release in _clearTarget). */
     this._lockCharName = null;
+    /** Backoff timestamp — canRun() returns false until this passes. */
+    this._canRunBackoffUntil = 0;
   }
 
   updateConfig(cfg = {}) {
@@ -74,6 +76,12 @@ export class EventRoutine extends BaseRoutine {
   canRun(ctx) {
     if (!this.enabled) return false;
     if (ctx.inventoryFull()) return false;
+
+    // Backoff after event routine can't act — prevents preemption thrashing
+    // where gather loop yields, event runs but fails, gather yields again.
+    if (this._canRunBackoffUntil && Date.now() < this._canRunBackoffUntil) {
+      return false;
+    }
 
     // If we have a target, check it's still valid (and not on cooldown)
     if (this._targetEvent) {
@@ -105,16 +113,28 @@ export class EventRoutine extends BaseRoutine {
 
   async execute(ctx) {
     const target = this._targetEvent;
-    if (!target) return false;
+    if (!target) {
+      this._canRunBackoffUntil = Date.now() + 30_000;
+      return false;
+    }
 
     // Check event still active
     if (!eventManager.isEventActive(target.code)) {
       log.info(`[${ctx.name}] ${TAG}: ${target.code} despawned, aborting`);
       this._clearTarget();
+      this._canRunBackoffUntil = Date.now() + 30_000;
       return false;
     }
 
-    return this._executeByType(ctx, target);
+    const result = await this._executeByType(ctx, target);
+    if (!result) {
+      // Event couldn't act (sim fail, cooldown, etc.) — back off 30s
+      this._canRunBackoffUntil = Date.now() + 30_000;
+    } else {
+      // Successfully acted — clear any backoff
+      this._canRunBackoffUntil = 0;
+    }
+    return result;
   }
 
   async _executeByType(ctx, target) {
