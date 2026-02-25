@@ -108,12 +108,14 @@ export async function executeCrafting(ctx, routine) {
       const needed = rawMaterialNeeded(ctx, plan, step.itemCode, routine._currentBatch);
       if (ctx.itemCount(step.itemCode) >= needed) continue;
 
-      const usableSpace = routine._usableInventorySpace(ctx);
-      if (usableSpace <= 0) {
-        const reserve = routine._inventoryReserve(ctx);
+      // Reserve only guards bank withdrawals (preventing overflow). Gathering
+      // uses the natural inventoryFull() check in the loop below, so we don't
+      // block here — avoids deadlock when inventory is above deposit threshold
+      // but below capacity.
+      if (ctx.inventoryFull()) {
         log.info(
           `[${ctx.name}] ${routine.rotation.currentSkill}: gather paused for ${step.itemCode}; ` +
-          `inventory reserve reached (${ctx.inventoryCount()}/${ctx.inventoryCapacity()}, reserve ${reserve})`,
+          `inventory full (${ctx.inventoryCount()}/${ctx.inventoryCapacity()})`,
         );
         reserveGatherBlocked = true;
         continue;
