@@ -151,6 +151,10 @@ export async function restBeforeFight(ctx, monsterCode) {
   if (c.hp >= minHp) return true;
 
   const targetPct = Math.ceil((minHp / c.max_hp) * 100);
+  if (targetPct > 100) {
+    log.warn(`[${ctx.name}] Cannot fight ${monsterCode} — need ${minHp}hp but max is ${c.max_hp}hp (${targetPct}%)`);
+    return false;
+  }
   log.info(`[${ctx.name}] Need ${minHp}hp (${targetPct}%) to fight ${monsterCode}, have ${c.hp}hp`);
   const recovered = await restUntil(ctx, targetPct);
   if (!recovered) {
