@@ -140,7 +140,24 @@ export class CharacterContext {
     return this.get().inventory_max_items || 0;
   }
 
+  /** Number of unique inventory slots available (grows with bag equipment). */
+  inventoryMaxSlots() {
+    return (this.get().inventory || []).length;
+  }
+
+  /** Number of unique inventory slots currently occupied. */
+  inventoryUsedSlots() {
+    return (this.get().inventory || []).filter(s => s.code && s.quantity > 0).length;
+  }
+
+  /** Number of empty slots available for new item types. */
+  inventoryEmptySlots() {
+    return Math.max(0, this.inventoryMaxSlots() - this.inventoryUsedSlots());
+  }
+
   inventoryFull() {
+    // Full if no empty unique slots OR total quantity hits max_items cap
+    if (this.inventoryEmptySlots() <= 0) return true;
     const cap = this.inventoryCapacity();
     if (cap === 0) return false;
     return this.inventoryCount() >= cap;

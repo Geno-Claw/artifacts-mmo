@@ -86,9 +86,13 @@ async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abortOnMis
   }
 
   if (bankNeeded.size > 0) {
-    // Ensure inventory space for swaps
+    // Ensure inventory space for swaps — check both unique slot availability
+    // and total quantity capacity. Bags increase both limits.
     const slotsNeedingUnequip = changes.filter(c => c.currentCode && c.targetCode).length;
-    if (ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity()) {
+    const newItemTypes = [...bankNeeded.keys()].filter(code => !ctx.hasItem(code)).length;
+    const needsSlotSpace = newItemTypes > 0 && ctx.inventoryEmptySlots() < newItemTypes + slotsNeedingUnequip;
+    const needsQtySpace = ctx.inventoryCount() + slotsNeedingUnequip >= ctx.inventoryCapacity();
+    if (needsSlotSpace || needsQtySpace) {
       await depositAll(ctx, { keepByCode: getOwnedKeepByCodeForInventory(ctx) });
     }
 

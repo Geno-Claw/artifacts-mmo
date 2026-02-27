@@ -67,8 +67,15 @@ function buildPlan(ctx, normalized, mode) {
   const skipped = [];
 
   let remainingSpace = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
+  let remainingSlots = Math.max(0, ctx.inventoryEmptySlots());
+  // Track which items we've already planned to withdraw (they'll occupy a slot)
+  const plannedCodes = new Set(
+    (ctx.get().inventory || []).filter(s => s.code && s.quantity > 0).map(s => s.code),
+  );
+
   for (const req of normalized) {
-    if (remainingSpace <= 0) {
+    const needsNewSlot = !plannedCodes.has(req.code);
+    if (remainingSpace <= 0 || (needsNewSlot && remainingSlots <= 0)) {
       skipped.push({ code: req.code, requested: req.requested, reason: 'inventory full' });
       continue;
     }
@@ -98,6 +105,7 @@ function buildPlan(ctx, normalized, mode) {
       }
       plan.push({ code: req.code, requested: req.requested, quantity: req.requested });
       remainingSpace -= req.requested;
+      if (needsNewSlot) { remainingSlots--; plannedCodes.add(req.code); }
       continue;
     }
 
@@ -113,6 +121,7 @@ function buildPlan(ctx, normalized, mode) {
 
     plan.push({ code: req.code, requested: req.requested, quantity: qty });
     remainingSpace -= qty;
+    if (needsNewSlot) { remainingSlots--; plannedCodes.add(req.code); }
   }
 
   return { plan, skipped };

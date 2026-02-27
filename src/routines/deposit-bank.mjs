@@ -44,6 +44,11 @@ export class DepositBankRoutine extends BaseRoutine {
 
     const keepByCode = this._buildKeepByCode(ctx);
     const depositableCount = this._countDepositableInventory(ctx, keepByCode);
+    if (depositableCount <= 0) return false;
+
+    // Always deposit if unique slots are full (no room for new item types)
+    if (ctx.inventoryEmptySlots() <= 0) return true;
+
     if (this.threshold <= 0) return depositableCount > 0;
     return (depositableCount / cap) >= this.threshold;
   }
