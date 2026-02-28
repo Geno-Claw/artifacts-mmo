@@ -141,6 +141,8 @@ export async function executeCrafting(ctx, routine) {
         // Yield for urgent routines (e.g. events)
         if (routine._hasUrgentPreemption(ctx)) {
           log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: yielding gather loop for urgent routine`);
+          // Small delay to prevent tight-loop thrashing if event routine can't act
+          await new Promise(r => setTimeout(r, 1000));
           return true;
         }
         const result = await gatherOnce(ctx);
