@@ -272,6 +272,63 @@ async function run() {
     assert.equal(staleOrder.status, 'open', 'expired persisted claim should be reopened');
     assert.equal(staleOrder.claim, null, 'expired persisted claim should be cleared');
 
+    // --- task_exchange orders ---
+    const exchangeOrder1 = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'jasper_crystal',
+      sourceType: 'task_exchange',
+      sourceCode: 'jasper_crystal',
+      quantity: 3,
+    });
+    assert.ok(exchangeOrder1, 'task_exchange order should be created');
+    assert.equal(exchangeOrder1.sourceType, 'task_exchange');
+    assert.equal(exchangeOrder1.itemCode, 'jasper_crystal');
+    assert.equal(exchangeOrder1.requestedQty, 3);
+    assert.equal(exchangeOrder1.gatherSkill, null, 'task_exchange orders should have null gatherSkill');
+    assert.equal(exchangeOrder1.craftSkill, null, 'task_exchange orders should have null craftSkill');
+
+    // Merge from a different requester
+    const exchangeMerged = createOrMergeOrder({
+      requesterName: 'CrafterB',
+      recipeCode: 'mystic_amulet',
+      itemCode: 'jasper_crystal',
+      sourceType: 'task_exchange',
+      sourceCode: 'jasper_crystal',
+      quantity: 2,
+    });
+    assert.equal(exchangeMerged.id, exchangeOrder1.id, 'task_exchange orders should merge by sourceType:sourceCode:itemCode');
+    assert.equal(exchangeMerged.requestedQty, 5, 'merged task_exchange order should aggregate qty');
+
+    // Claimable with sourceType filter
+    const exchangeClaimable = listClaimableOrders({
+      sourceType: 'task_exchange',
+      charName: 'Worker1',
+    });
+    assert.equal(exchangeClaimable.length, 1, 'task_exchange order should be claimable');
+    assert.equal(exchangeClaimable[0].sourceType, 'task_exchange');
+
+    // Should not appear in gather/fight/craft queries
+    const gatherClaimable = listClaimableOrders({ sourceType: 'gather', charName: 'Worker1' });
+    const noExchangeInGather = gatherClaimable.filter(o => o.sourceType === 'task_exchange');
+    assert.equal(noExchangeInGather.length, 0, 'task_exchange orders should not appear in gather queries');
+
+    // Claim and fulfill via deposits
+    const claimedExchange = claimOrder(exchangeOrder1.id, { charName: 'Worker1', leaseMs: 5_000 });
+    assert.ok(claimedExchange, 'worker should claim task_exchange order');
+    assert.equal(claimedExchange.status, 'claimed');
+
+    const exchangeDeposit = recordDeposits({
+      charName: 'Worker1',
+      items: [{ code: 'jasper_crystal', quantity: 5 }],
+    });
+    assert.equal(exchangeDeposit.length, 1, 'deposits should match task_exchange orders');
+
+    snapshot = getOrderBoardSnapshot();
+    const fulfilledExchange = snapshot.orders.find(row => row.id === exchangeOrder1.id);
+    assert.equal(fulfilledExchange.status, 'fulfilled', 'task_exchange order should be fulfilled');
+    assert.equal(fulfilledExchange.remainingQty, 0);
+
     const cleared = clearOrderBoard('test_clear');
     assert.equal(cleared.cleared >= 1, true, 'clearOrderBoard should clear active rows');
     assert.equal(getOrderBoardSnapshot().orders.length, 0, 'board should be empty after clear');

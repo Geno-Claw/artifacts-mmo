@@ -12,6 +12,7 @@ import {
 } from '../../services/order-board.mjs';
 import { depositBankItems } from '../../services/bank-ops.mjs';
 import { sortOrdersForClaim } from '../../services/order-priority.mjs';
+import { TASK_COIN_CODE, TASK_EXCHANGE_COST } from './constants.mjs';
 
 export async function clearActiveOrderClaim(ctx, routine, { reason = 'clear_claim' } = {}) {
   const active = routine._activeOrderClaim;
@@ -203,13 +204,19 @@ export async function acquireCraftOrderClaim(ctx, routine, craftSkill) {
     if (!viability.ok) {
       const missingCode = routine._parseMissingBankDependency(viability.reason);
       if (missingCode && routine._isTaskRewardCode(missingCode)) {
-        const proactive = await routine._maybeRunProactiveExchange(ctx, {
-          extraNeedItemCode: missingCode,
-          trigger: 'craft_claim',
-        });
-        if (proactive.attempted || proactive.resolved) {
-          bank = await routine._getBankItems(true);
-          viability = await routine._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
+        if (routine.orderBoard.createOrders) {
+          // Order-first: post exchange order for cross-character fulfillment
+          routine._enqueueTaskExchangeOrder(ctx, missingCode, 1);
+        } else {
+          // Legacy: try proactive self-exchange
+          const proactive = await routine._maybeRunProactiveExchange(ctx, {
+            extraNeedItemCode: missingCode,
+            trigger: 'craft_claim',
+          });
+          if (proactive.attempted || proactive.resolved) {
+            bank = await routine._getBankItems(true);
+            viability = await routine._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
+          }
         }
       }
     }
@@ -286,6 +293,9 @@ export async function ensureOrderClaim(ctx, routine, sourceType, opts = {}) {
   }
   if (sourceType === 'craft' && craftSkill) {
     return routine._acquireCraftOrderClaim(ctx, craftSkill);
+  }
+  if (sourceType === 'task_exchange') {
+    return routine._acquireTaskExchangeOrderClaim(ctx);
   }
   return null;
 }
@@ -374,5 +384,76 @@ export async function blockAndReleaseClaim(ctx, routine, reason = 'blocked') {
     log.warn(`[${ctx.name}] Could not block claim ${claim.orderId}: ${err?.message || String(err)}`);
   } finally {
     routine._activeOrderClaim = null;
+  }
+}
+
+export async function acquireTaskExchangeOrderClaim(ctx, routine) {
+  const orders = sortOrdersForClaim(listClaimableOrders({
+    sourceType: 'task_exchange',
+    charName: ctx.name,
+  }));
+  if (orders.length === 0) return null;
+
+  // Check coin availability before claiming
+  const invCoins = ctx.itemCount(TASK_COIN_CODE);
+  const bank = await routine._getBankItems();
+  const bankCoins = bank.get(TASK_COIN_CODE) || 0;
+  if (invCoins + bankCoins < TASK_EXCHANGE_COST) return null;
+
+  for (const order of orders) {
+    const active = routine._claimOrderForChar(ctx, order);
+    if (active) return active;
+  }
+  return null;
+}
+
+export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
+  const claim = routine._syncActiveClaimFromBoard();
+  if (!claim || claim.sourceType !== 'task_exchange') {
+    return { attempted: false, fulfilled: false };
+  }
+
+  const itemCode = claim.itemCode;
+  const targetMap = new Map([[itemCode, claim.remainingQty]]);
+
+  const result = await routine._runTaskExchange(ctx, {
+    targets: targetMap,
+    trigger: 'exchange_order',
+    proactive: false,
+  });
+
+  const fresh = routine._syncActiveClaimFromBoard();
+  if (!fresh) {
+    log.info(`[${ctx.name}] Exchange order fulfilled: ${itemCode}`);
+    return { attempted: true, fulfilled: true };
+  }
+
+  if (result.reason === 'insufficient_coins') {
+    await routine._blockAndReleaseClaim(ctx, 'insufficient_exchange_coins');
+    return { attempted: result.attempted, fulfilled: false, reason: 'insufficient_coins' };
+  }
+
+  if (result.reason === 'lock_busy' || result.reason === 'inventory_full') {
+    await routine._clearActiveOrderClaim(ctx, { reason: `exchange_${result.reason}` });
+    return { attempted: result.attempted, fulfilled: false, reason: result.reason };
+  }
+
+  return { attempted: result.attempted, fulfilled: false, reason: result.reason };
+}
+
+export function enqueueTaskExchangeOrder(routine, ctx, itemCode, deficit) {
+  if (!routine.rotation) return;
+  const qty = Math.max(1, Math.floor(Number(deficit) || 0));
+  try {
+    routine.rotation._enqueueOrder({
+      requesterName: ctx.name,
+      itemCode,
+      sourceType: 'task_exchange',
+      sourceCode: itemCode,
+      quantity: qty,
+    });
+    log.info(`[${ctx.name}] Queued task_exchange order for ${itemCode} x${qty}`);
+  } catch (err) {
+    log.warn(`[${ctx.name}] Could not queue task_exchange order for ${itemCode}: ${err?.message || String(err)}`);
   }
 }

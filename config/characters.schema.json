@@ -565,12 +565,12 @@
             "createOrders": {
               "type": "boolean",
               "default": true,
-              "description": "Allow posting orders when this character cannot self-obtain required gather/fight crafting dependencies"
+              "description": "Allow posting orders when this character cannot self-obtain required gather/fight/task-exchange crafting dependencies"
             },
             "fulfillOrders": {
               "type": "boolean",
               "default": true,
-              "description": "Allow claiming and fulfilling board orders during gather/combat rotation loops"
+              "description": "Allow claiming and fulfilling board orders during gather/combat/task-exchange rotation loops"
             },
             "leaseMs": {
               "type": "number",

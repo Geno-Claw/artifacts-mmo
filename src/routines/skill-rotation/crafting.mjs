@@ -84,14 +84,20 @@ export async function executeCrafting(ctx, routine) {
       const have = ctx.itemCount(step.itemCode);
       if (have >= step.quantity) continue; // have enough for at least 1 craft
       if (routine._isTaskRewardCode(step.itemCode)) {
-        const proactive = await routine._maybeRunProactiveExchange(ctx, {
-          extraNeedItemCode: step.itemCode,
-          trigger: claimMode ? 'craft_step_claim' : 'craft_step',
-        });
-        if (proactive.resolved) {
-          // Rewards are deposited to bank; force a fresh withdraw pass next tick.
-          routine.rotation.bankChecked = false;
-          return true;
+        if (routine.orderBoard.createOrders) {
+          // Order-first: post exchange order and defer to workers
+          routine._enqueueTaskExchangeOrder(ctx, step.itemCode, step.quantity - have);
+        } else {
+          // Legacy: try proactive self-exchange
+          const proactive = await routine._maybeRunProactiveExchange(ctx, {
+            extraNeedItemCode: step.itemCode,
+            trigger: claimMode ? 'craft_step_claim' : 'craft_step',
+          });
+          if (proactive.resolved) {
+            // Rewards are deposited to bank; force a fresh withdraw pass next tick.
+            routine.rotation.bankChecked = false;
+            return true;
+          }
         }
       }
       if (claimMode) {

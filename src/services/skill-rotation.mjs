@@ -450,7 +450,7 @@ export class SkillRotation {
     if (bankSteps.length > 0) {
       const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
       if (!allMet) {
-        this._trackExchangeNeeds(bankSteps, bank);
+        this._trackExchangeNeeds(bankSteps, bank, ctx);
         return null;
       }
     }
@@ -596,8 +596,10 @@ export class SkillRotation {
   /**
    * Record unmet bank-only deps that are obtainable via task exchange.
    * Called when a recipe is skipped due to missing bank ingredients.
+   * When createOrders is enabled, also enqueues task_exchange orders for
+   * cross-character coordination.
    */
-  _trackExchangeNeeds(bankSteps, bank) {
+  _trackExchangeNeeds(bankSteps, bank, ctx = null) {
     for (const step of bankSteps) {
       if (!this.gameData.isTaskReward(step.itemCode)) continue;
       const inBank = bank.get(step.itemCode) || 0;
@@ -605,6 +607,15 @@ export class SkillRotation {
       if (deficit > 0) {
         this._exchangeNeeds.set(step.itemCode,
           Math.max(this._exchangeNeeds.get(step.itemCode) || 0, deficit));
+        if (ctx && this.orderBoard.createOrders) {
+          this._enqueueOrder({
+            sourceType: 'task_exchange',
+            sourceCode: step.itemCode,
+            itemCode: step.itemCode,
+            requesterName: ctx.name,
+            quantity: deficit,
+          });
+        }
       }
     }
   }

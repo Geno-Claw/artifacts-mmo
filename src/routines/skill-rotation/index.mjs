@@ -20,7 +20,7 @@ import * as gameData from '../../services/game-data.mjs';
 import { SkillRotation } from '../../services/skill-rotation.mjs';
 import { MAX_LOSSES_DEFAULT } from '../../data/locations.mjs';
 import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
-import { GATHERING_SKILLS, CRAFTING_SKILLS } from './constants.mjs';
+import { GATHERING_SKILLS, CRAFTING_SKILLS, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
 
 // Executor imports
 import { executeGathering, trySmelting } from './gathering.mjs';
@@ -29,7 +29,7 @@ import { executeCrafting, equipForCraftFight, handleUnwinnableCraftFight, invent
 import { executeNpcTask, executeItemTask, executeTaskByType, inferTaskType, runNpcTaskFlow } from './npc-tasks.mjs';
 import { runItemTaskFlow, craftForItemTask, craftAndTradeItemTaskFromInventory, placeOrderAndCancel, cancelItemTask, withdrawForItemTask, shouldTradeItemTaskNow, gatherForItemTask, tradeItemTask } from './item-tasks.mjs';
 import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, inventorySnapshotForTargets } from './task-exchange.mjs';
-import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit, enqueueFightOrderForDeficit } from './order-claims.mjs';
+import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit, enqueueFightOrderForDeficit, acquireTaskExchangeOrderClaim, fulfillTaskExchangeOrderClaim, enqueueTaskExchangeOrder } from './order-claims.mjs';
 import { executeAchievement } from './achievements.mjs';
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
@@ -69,6 +69,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._foodWithdrawn = false;
     this._activeOrderClaim = null;
     this._nextProactiveExchangeAt = 0;
+    this._nextExchangeClaimAttemptAt = 0;
   }
 
   updateConfig({ maxLosses, orderBoard, ...rotationCfg } = {}) {
@@ -106,6 +107,20 @@ export class SkillRotationRoutine extends BaseRoutine {
     });
     if (proactive.attempted) {
       return true;
+    }
+
+    // Check for task_exchange orders to fulfill (any character, any skill)
+    if (this._canFulfillOrders() && !this._activeOrderClaim && this._nowMs() >= this._nextExchangeClaimAttemptAt) {
+      const exchangeClaim = await this._ensureOrderClaim(ctx, 'task_exchange');
+      if (exchangeClaim) {
+        const result = await this._fulfillTaskExchangeOrderClaim(ctx);
+        if (result.attempted) {
+          if (!result.fulfilled) {
+            this._nextExchangeClaimAttemptAt = this._nowMs() + PROACTIVE_EXCHANGE_BACKOFF_MS;
+          }
+          return true;
+        }
+      }
     }
 
     if (skill === 'alchemy') {
@@ -288,4 +303,7 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _blockAndReleaseClaim(ctx, reason) { return blockAndReleaseClaim(ctx, this, reason); }
   _enqueueGatherOrderForDeficit(step, order, ctx, deficit) { return enqueueGatherOrderForDeficit(this, step, order, ctx, deficit); }
   _enqueueFightOrderForDeficit(step, order, ctx, deficit) { return enqueueFightOrderForDeficit(this, step, order, ctx, deficit); }
+  async _acquireTaskExchangeOrderClaim(ctx) { return acquireTaskExchangeOrderClaim(ctx, this); }
+  async _fulfillTaskExchangeOrderClaim(ctx) { return fulfillTaskExchangeOrderClaim(ctx, this); }
+  _enqueueTaskExchangeOrder(ctx, itemCode, deficit) { return enqueueTaskExchangeOrder(this, ctx, itemCode, deficit); }
 }

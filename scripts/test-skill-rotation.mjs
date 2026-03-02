@@ -669,7 +669,9 @@ async function testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar() {
     );
 
     const snapshot = getOrderBoardSnapshot();
-    const blockedUntil = Number(snapshot.orders[0]?.blockedByChar?.Tester || 0);
+    const cheeseOrder = snapshot.orders.find(o => o.id === created.id);
+    assert.ok(cheeseOrder, 'cheese craft order should still exist in snapshot');
+    const blockedUntil = Number(cheeseOrder.blockedByChar?.Tester || 0);
     assert.ok(blockedUntil > Date.now(), 'blocked retry timestamp should be set for char');
   });
 }
@@ -738,6 +740,7 @@ async function testAcquireCraftClaimRetriesTaskRewardDependencyWithProactiveExch
     const routine = new SkillRotationRoutine({
       orderBoard: {
         enabled: true,
+        createOrders: false,
         fulfillOrders: true,
       },
     });
@@ -2090,6 +2093,165 @@ async function testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards() {
   }
 }
 
+async function testExecuteDispatchesTaskExchangeOrderClaim() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    // Create a task_exchange order on the board
+    const order = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'jasper_crystal',
+      sourceType: 'task_exchange',
+      sourceCode: 'jasper_crystal',
+      quantity: 2,
+    });
+    assert.ok(order, 'task_exchange order should be created');
+
+    let exchangeCalls = 0;
+    let combatCalls = 0;
+
+    routine._fulfillTaskExchangeOrderClaim = async () => {
+      exchangeCalls += 1;
+      return { attempted: true, fulfilled: true };
+    };
+    routine._maybeRunProactiveExchange = async () => ({ attempted: false });
+    routine._executeCombat = async () => { combatCalls += 1; return true; };
+
+    // Mock the bank items check for coin availability
+    routine._getBankItems = async () => new Map([['tasks_coin', 12]]);
+
+    routine.rotation = {
+      currentSkill: 'combat',
+      isGoalComplete: () => false,
+    };
+
+    const ctx = {
+      name: 'Worker1',
+      inventoryFull: () => false,
+      itemCount: (code) => code === 'tasks_coin' ? 6 : 0,
+    };
+
+    const result = await routine.execute(ctx);
+
+    assert.equal(result, true);
+    assert.equal(exchangeCalls, 1, 'execute should dispatch to exchange order fulfillment');
+    assert.equal(combatCalls, 0, 'combat dispatch should be skipped when exchange order claimed');
+  });
+}
+
+async function testExecuteBacksOffAfterFailedExchangeClaim() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    const order = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'jasper_crystal',
+      sourceType: 'task_exchange',
+      sourceCode: 'jasper_crystal',
+      quantity: 2,
+    });
+    assert.ok(order);
+
+    let exchangeCalls = 0;
+    let combatCalls = 0;
+
+    routine._fulfillTaskExchangeOrderClaim = async () => {
+      exchangeCalls += 1;
+      // Simulate failure and release claim
+      routine._activeOrderClaim = null;
+      return { attempted: true, fulfilled: false, reason: 'insufficient_coins' };
+    };
+    routine._maybeRunProactiveExchange = async () => ({ attempted: false });
+    routine._executeCombat = async () => { combatCalls += 1; return true; };
+    routine._getBankItems = async () => new Map([['tasks_coin', 12]]);
+
+    routine.rotation = {
+      currentSkill: 'combat',
+      isGoalComplete: () => false,
+    };
+
+    const ctx = {
+      name: 'Worker1',
+      inventoryFull: () => false,
+      itemCount: (code) => code === 'tasks_coin' ? 6 : 0,
+    };
+
+    // First call — claims and attempts exchange
+    await routine.execute(ctx);
+    assert.equal(exchangeCalls, 1);
+
+    // Second call — should be backed off, falls through to combat
+    combatCalls = 0;
+    exchangeCalls = 0;
+    await routine.execute(ctx);
+    assert.equal(exchangeCalls, 0, 'should not attempt exchange during backoff');
+    assert.equal(combatCalls, 1, 'should fall through to combat during backoff');
+  });
+}
+
+async function testCraftClaimPostsExchangeOrderWhenCreateOrdersEnabled() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, createOrders: true, fulfillOrders: true },
+    });
+
+    // Create a craft order that will have a missing bank dependency
+    const craftOrder = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'enchanted_ring',
+      sourceType: 'craft',
+      sourceCode: 'enchanted_ring',
+      craftSkill: 'jewelrycrafting',
+      sourceLevel: 20,
+      quantity: 1,
+    });
+    assert.ok(craftOrder);
+
+    let proactiveCalls = 0;
+    let enqueueCalls = [];
+
+    // Mock the craft claim viability to return missing_bank_dependency for a task reward
+    routine._canClaimCraftOrderNow = async () => ({
+      ok: false,
+      reason: 'missing_bank_dependency:jasper_crystal',
+    });
+    routine._isTaskRewardCode = () => true;
+    routine._parseMissingBankDependency = (reason) => {
+      const prefix = 'missing_bank_dependency:';
+      return reason.startsWith(prefix) ? reason.slice(prefix.length).trim() : '';
+    };
+    routine._maybeRunProactiveExchange = async () => {
+      proactiveCalls += 1;
+      return { attempted: false, resolved: false };
+    };
+    routine._blockUnclaimableOrderForChar = () => {};
+    routine._getBankItems = async () => new Map();
+    routine._enqueueTaskExchangeOrder = (_ctx, itemCode, deficit) => {
+      enqueueCalls.push({ itemCode, deficit });
+    };
+
+    const ctx = {
+      name: 'Tester',
+      inventoryFull: () => false,
+      itemCount: () => 0,
+      skillLevel: () => 30,
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(ctx, 'jewelrycrafting');
+    assert.equal(claim, null, 'craft claim should fail due to missing bank dependency');
+    assert.equal(proactiveCalls, 0, 'proactive exchange should NOT be called when createOrders=true');
+    assert.equal(enqueueCalls.length, 1, 'should enqueue a task_exchange order');
+    assert.equal(enqueueCalls[0].itemCode, 'jasper_crystal');
+  });
+}
+
 async function testCraftClaimSucceedsWhenBankCoversGatherDeficit() {
   await withTempOrderBoard(async () => {
     const routine = new SkillRotationRoutine({
@@ -2353,6 +2515,9 @@ async function run() {
   await testRoutineTriggersProactiveExchangeBeforeSkillDispatch();
   await testTaskExchangeLockPreventsConcurrentRuns();
   await testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards();
+  await testExecuteDispatchesTaskExchangeOrderClaim();
+  await testExecuteBacksOffAfterFailedExchangeClaim();
+  await testCraftClaimPostsExchangeOrderWhenCreateOrdersEnabled();
   await testCraftingWithdrawSkipsFinalRecipeOutput();
   await testCraftingWithdrawHonorsReserveMaxUnits();
   await testCraftClaimSucceedsWhenBankCoversGatherDeficit();

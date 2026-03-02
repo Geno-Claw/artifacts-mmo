@@ -36,6 +36,7 @@ function normalizeSourceType(value) {
   if (value === 'fight') return 'fight';
   if (value === 'gather') return 'gather';
   if (value === 'craft') return 'craft';
+  if (value === 'task_exchange') return 'task_exchange';
   return '';
 }
 
