@@ -272,6 +272,11 @@ function makeCtx(name = 'Tester', opts = {}) {
     inventoryCount() {
       return state.inventoryByChar[name] || 0;
     },
+    inventoryEmptySlots() {
+      const inventory = state.inventorySlotsByChar[name] || [];
+      const used = inventory.filter(s => s.code && s.quantity > 0).length;
+      return Math.max(0, (opts.maxSlots || 20) - used);
+    },
     isAt(x, y) {
       const pos = state.positionByChar[name] || { x: 0, y: 0 };
       return pos.x === x && pos.y === y;

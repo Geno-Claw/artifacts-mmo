@@ -1615,6 +1615,8 @@ async function testItemTaskWithdrawRespectsReserveCap() {
       isAt: () => true,
       inventoryCapacity: () => 120,
       inventoryCount: () => 105,
+      inventoryEmptySlots: () => 20,
+      get: () => ({ inventory: [] }),
       itemCount: () => 0,
       refresh: async () => {},
       applyActionResult() {},
@@ -1761,6 +1763,8 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
       isAt: () => true,
       inventoryCapacity: () => 20,
       inventoryCount: () => 0,
+      inventoryEmptySlots: () => 20,
+      get: () => ({ inventory: [] }),
       itemCount: () => 0,
       refresh: async () => {},
       applyActionResult() {},
@@ -1837,6 +1841,8 @@ async function testCraftingWithdrawHonorsReserveMaxUnits() {
       isAt: () => true,
       inventoryCapacity: () => 120,
       inventoryCount: () => 107,
+      inventoryEmptySlots: () => 20,
+      get: () => ({ inventory: [] }),
       itemCount: () => 0,
       refresh: async () => {},
       applyActionResult() {},
@@ -1891,6 +1897,10 @@ function makeMutableCtx(state) {
     },
     inventoryCapacity() {
       return 20;
+    },
+    inventoryEmptySlots() {
+      const used = [...state.inventory.entries()].filter(([, qty]) => qty > 0).length;
+      return Math.max(0, 20 - used);
     },
     taskCoins() {
       return state.inventory.get('tasks_coin') || 0;
