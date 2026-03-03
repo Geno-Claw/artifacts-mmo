@@ -1,6 +1,12 @@
 /**
  * Simple timestamped logging with optional subscribers.
+ *
+ * Set LOG_LEVEL=debug in .env (or at launch) to enable debug-level output.
  */
+
+const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const LEVELS = { debug: 0, info: 1, stat: 1, warn: 2, error: 3 };
+const activeLevel = LEVELS[LOG_LEVEL] ?? LEVELS.info;
 
 const sinks = new Set();
 
@@ -54,6 +60,11 @@ export function subscribeLogEvents(listener) {
   }
   sinks.add(listener);
   return () => sinks.delete(listener);
+}
+
+export function debug(msg) {
+  if (activeLevel > 0) return;
+  emit('debug', msg);
 }
 
 export function info(msg) {

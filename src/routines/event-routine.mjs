@@ -629,29 +629,29 @@ export class EventRoutine extends BaseRoutine {
       const monsterEvents = eventManager.getActiveMonsterEvents();
       for (const evt of monsterEvents) {
         if (this._isOnCooldown(evt.code, now)) {
-          log.info(`[${ctx.name}] ${TAG}: skipping ${evt.contentCode} — on cooldown`);
+          log.debug(`[${ctx.name}] ${TAG}: skipping ${evt.contentCode} — on cooldown`);
           continue;
         }
         const ttl = eventManager.getTimeRemaining(evt.code);
         if (ttl < this.minTimeRemainingMs) {
-          log.info(`[${ctx.name}] ${TAG}: skipping ${evt.contentCode} — expires too soon (${Math.round(ttl / 1000)}s remaining)`);
+          log.debug(`[${ctx.name}] ${TAG}: skipping ${evt.contentCode} — expires too soon (${Math.round(ttl / 1000)}s remaining)`);
           continue;
         }
 
         const monsterCode = evt.definition?.content?.code || evt.contentCode;
         if (monsterCode !== evt.contentCode) {
-          log.info(`[${ctx.name}] ${TAG}: resolved ${evt.contentCode} → monster ${monsterCode} from definition`);
+          log.debug(`[${ctx.name}] ${TAG}: resolved ${evt.contentCode} → monster ${monsterCode} from definition`);
         }
         const monster = gameData.getMonster(monsterCode);
 
         if (monster) {
           // Skip boss (group deferred) and optionally elite
           if (monster.type === 'boss') {
-            log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — boss type (group required)`);
+            log.debug(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — boss type (group required)`);
             continue;
           }
           if (monster.type === 'elite' && this.maxMonsterType === 'normal') {
-            log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — elite type exceeds max "${this.maxMonsterType}"`);
+            log.debug(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — elite type exceeds max "${this.maxMonsterType}"`);
             continue;
           }
 
@@ -671,7 +671,7 @@ export class EventRoutine extends BaseRoutine {
           }
         } else {
           // Event-only monster not in game data — still fightable
-          log.info(`[${ctx.name}] ${TAG}: ${monsterCode} not in game data (event-only monster), attempting anyway`);
+          log.debug(`[${ctx.name}] ${TAG}: ${monsterCode} not in game data (event-only monster), attempting anyway`);
           const score = 10; // default score for unknown monsters
           if (score > bestScore) {
             bestScore = score;
@@ -685,7 +685,7 @@ export class EventRoutine extends BaseRoutine {
         }
       }
       if (monsterEvents.length > 0 && !best) {
-        log.info(`[${ctx.name}] ${TAG}: ${monsterEvents.length} active monster event(s) but none eligible`);
+        log.debug(`[${ctx.name}] ${TAG}: ${monsterEvents.length} active monster event(s) but none eligible`);
       }
     }
 
