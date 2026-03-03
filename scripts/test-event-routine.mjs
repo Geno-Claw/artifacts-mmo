@@ -37,6 +37,7 @@ function makeCtx({
   level = 30,
   inventoryFull = false,
   skills = {},
+  itemCounts = {},
 } = {}) {
   return {
     name,
@@ -45,6 +46,7 @@ function makeCtx({
     inventoryCount() { return inventoryFull ? 100 : 10; },
     inventoryCapacity() { return 100; },
     skillLevel(skill) { return skills[skill] || 0; },
+    itemCount(code) { return itemCounts[code] || 0; },
     hpPercent() { return 100; },
     equippedItem(slot) { return null; },
     recordLoss() {},
@@ -533,6 +535,53 @@ function test_lockCharName_initialized() {
   console.log('  PASS: _lockCharName initialized to null');
 }
 
+// --- NPC buy error handling tests ---
+
+function test_npcBuyError_478_handled() {
+  const routine = new EventRoutine();
+  const ctx = makeCtx({ name: 'Trader' });
+  const target = { code: 'tailor_evt', type: 'npc', npcCode: 'tailor', map: { x: 1, y: 1 } };
+  const item = { code: 'hard_leather' };
+  const offer = { currency: 'cowhide', buyPrice: 3 };
+
+  routine._targetEvent = target;
+  routine._prepared = true;
+
+  const handled = routine._handleNpcBuyError(ctx, target, 'tailor', item, offer, { code: 478, message: 'Missing required item(s).' });
+
+  assert.equal(handled.handled, true);
+  assert.equal(handled.result, false);
+  assert.equal(routine._targetEvent, null);
+  assert.equal(routine._prepared, false);
+  assert.ok(routine._eventCooldowns[target.code] > 0);
+  console.log('  PASS: NPC buy error 478 is handled and routine backs off');
+}
+
+function test_npcBuyError_441_marksSkipAndContinues() {
+  const routine = new EventRoutine();
+  const ctx = makeCtx({ name: 'Trader' });
+  const target = { code: 'tailor_evt', type: 'npc', npcCode: 'tailor', map: { x: 1, y: 1 } };
+  const item = { code: 'hard_leather' };
+  const offer = { currency: 'cowhide', buyPrice: 3 };
+
+  routine._targetEvent = target;
+  const handled = routine._handleNpcBuyError(ctx, target, 'tailor', item, offer, { code: 441, message: 'Not available.' });
+
+  assert.equal(handled.handled, true);
+  assert.equal(handled.result, true);
+  assert.equal(routine._isNpcSkipItem('tailor', 'hard_leather'), true);
+  assert.equal(routine._targetEvent, target);
+  console.log('  PASS: NPC buy error 441 marks skip and keeps loop alive');
+}
+
+function test_npcCostFormatting_nonGold() {
+  const routine = new EventRoutine();
+  assert.equal(routine._formatUnitPrice(3, 'cowhide'), '3 cowhide');
+  assert.equal(routine._formatCost(9, 'cowhide'), '9 cowhide');
+  assert.equal(routine._formatUnitPrice(3, 'gold'), '3g');
+  console.log('  PASS: NPC currency formatting supports non-gold costs');
+}
+
 // --- Run ---
 
 console.log('Event Routine Tests:');
@@ -565,4 +614,7 @@ test_clearTarget_releasesNpcLock();
 test_clearTarget_doesNotReleaseForNonNpc();
 test_canRun_expiryReleasesNpcLock();
 test_lockCharName_initialized();
+test_npcBuyError_478_handled();
+test_npcBuyError_441_marksSkipAndContinues();
+test_npcCostFormatting_nonGold();
 console.log('All event routine tests passed!');

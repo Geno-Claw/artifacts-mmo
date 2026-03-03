@@ -22,6 +22,7 @@ let taskRewardsCache = null;    // Array of reward objects
 let taskRewardCodes = null;     // Set<itemCode> for fast lookup
 let npcItemsCache = null;       // Map<npcCode, Array<{code, npc, currency, buy_price, sell_price}>>
 let npcBuyableLookup = null;    // Map<npcCode, Set<itemCode>> — quick lookup for buyable items
+let npcBuyOfferLookup = null;   // Map<npcCode, Map<itemCode, { code, currency, buyPrice }>>
 
 // --- Unreachable location tracking (session-scoped) ---
 const unreachableLocations = new Set(); // "monster:frost_slime", "resource:iron_rocks"
@@ -362,6 +363,7 @@ export function getTransitionTiles() {
 export async function loadNpcCatalogs(npcCodes) {
   npcItemsCache = new Map();
   npcBuyableLookup = new Map();
+  npcBuyOfferLookup = new Map();
 
   for (const npcCode of npcCodes) {
     try {
@@ -378,16 +380,26 @@ export async function loadNpcCatalogs(npcCodes) {
       npcItemsCache.set(npcCode, items);
 
       const buyable = new Set();
+      const offers = new Map();
       for (const item of items) {
-        if (item.buy_price != null) buyable.add(item.code);
+        const code = typeof item?.code === 'string' ? item.code.trim() : '';
+        const currency = typeof item?.currency === 'string' ? item.currency.trim() : '';
+        const buyPriceRaw = Number(item?.buy_price);
+        if (!code || !currency || !Number.isFinite(buyPriceRaw) || buyPriceRaw <= 0) continue;
+
+        const buyPrice = Math.floor(buyPriceRaw);
+        buyable.add(code);
+        offers.set(code, { code, currency, buyPrice });
       }
       npcBuyableLookup.set(npcCode, buyable);
+      npcBuyOfferLookup.set(npcCode, offers);
 
       log.info(`[GameData] NPC ${npcCode}: ${items.length} items (${buyable.size} buyable)`);
     } catch (err) {
       log.warn(`[GameData] Could not load NPC items for ${npcCode}: ${err.message}`);
       npcItemsCache.set(npcCode, []);
       npcBuyableLookup.set(npcCode, new Set());
+      npcBuyOfferLookup.set(npcCode, new Map());
     }
   }
 }
@@ -396,7 +408,7 @@ export async function loadNpcCatalogs(npcCodes) {
 export function getNpcBuyableItems(npcCode) {
   const items = npcItemsCache?.get(npcCode);
   if (!items) return [];
-  return items.filter(i => i.buy_price != null);
+  return items.filter(i => getNpcBuyOffer(npcCode, i.code) != null);
 }
 
 /** Returns all items a given NPC has with sell_price set (items we can sell to them). */
@@ -411,12 +423,17 @@ export function canNpcSell(npcCode, itemCode) {
   return npcBuyableLookup?.get(npcCode)?.has(itemCode) || false;
 }
 
+/** Returns normalized buy-offer metadata for an NPC item, or null if unavailable. */
+export function getNpcBuyOffer(npcCode, itemCode) {
+  const offer = npcBuyOfferLookup?.get(npcCode)?.get(itemCode);
+  if (!offer) return null;
+  return { ...offer };
+}
+
 /** Returns the buy price for an item at a given NPC, or null if not buyable. */
 export function getNpcBuyPrice(npcCode, itemCode) {
-  const items = npcItemsCache?.get(npcCode);
-  if (!items) return null;
-  const item = items.find(i => i.code === itemCode);
-  return item?.buy_price ?? null;
+  const offer = getNpcBuyOffer(npcCode, itemCode);
+  return offer?.buyPrice ?? null;
 }
 
 // --- Equipment type helpers ---

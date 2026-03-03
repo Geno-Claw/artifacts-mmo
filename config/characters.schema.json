@@ -11,7 +11,7 @@
     },
     "npcBuyList": {
       "type": "object",
-      "description": "Items to buy from NPC merchants during events. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for all NPCs.",
+      "description": "Items to buy from NPC merchants during events. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for all NPCs. Currency is detected from NPC catalog metadata and may be gold or another item code.",
       "additionalProperties": {
         "type": "array",
         "items": {
