@@ -17,6 +17,7 @@ const TAG = 'Order Fulfillment';
 const DEFAULT_PRIORITY = 8;
 const DEFAULT_CRAFT_SCAN_LIMIT = 1;
 const DEFAULT_MAX_LOSSES = 2;
+const NO_CLAIM_BACKOFF_MS = 120_000; // 2 min backoff when no orders can be fulfilled
 const DEFAULT_ORDER_BOARD = Object.freeze({
   enabled: true,
   createOrders: true,
@@ -51,6 +52,7 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
     this.enabled = enabled === true;
     this.craftScanLimit = toPositiveInt(craftScanLimit, DEFAULT_CRAFT_SCAN_LIMIT);
     this._lastClaimOrderId = null;
+    this._noClaimBackoffUntil = 0;
   }
 
   updateConfig({ enabled, maxLosses, craftScanLimit, orderBoard } = {}) {
@@ -72,8 +74,14 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
     if (!this._canFulfillOrders()) return false;
     if (ctx.inventoryFull()) return false;
 
+    // Active claim or adoptable claim — always run.
     if (this._syncActiveClaimFromBoard()) return true;
     if (this._findAdoptableClaim(ctx)) return true;
+
+    // If we recently failed to claim anything, back off so lower-priority
+    // routines get a chance to run instead of spinning.
+    if (this._noClaimBackoffUntil > Date.now()) return false;
+
     return listClaimableOrders({ charName: ctx.name }).length > 0;
   }
 
@@ -92,8 +100,15 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
     }
     if (!claim) {
       this._lastClaimOrderId = null;
+      // Set backoff so we fall through to lower-priority routines
+      // instead of spinning on unfulfillable orders.
+      this._noClaimBackoffUntil = Date.now() + NO_CLAIM_BACKOFF_MS;
+      log.info(`[${ctx.name}] ${TAG}: no claimable orders — backing off ${NO_CLAIM_BACKOFF_MS / 1000}s`);
       return false;
     }
+
+    // Successfully claimed — clear any backoff.
+    this._noClaimBackoffUntil = 0;
 
     if (this._lastClaimOrderId !== claim.orderId) {
       this._lastClaimOrderId = claim.orderId;
