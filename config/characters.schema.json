@@ -78,6 +78,9 @@
                   "$ref": "#/$defs/skillRotationRoutine"
                 },
                 {
+                  "$ref": "#/$defs/orderFulfillmentRoutine"
+                },
+                {
                   "$ref": "#/$defs/fightMonstersRoutine"
                 },
                 {
@@ -564,12 +567,12 @@
             },
             "createOrders": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Allow posting orders when this character cannot self-obtain required gather/fight/task-exchange crafting dependencies"
             },
             "fulfillOrders": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Allow claiming and fulfilling board orders during gather/combat/task-exchange rotation loops"
             },
             "leaseMs": {
@@ -587,6 +590,80 @@
           },
           "default": {
             "enabled": false,
+            "createOrders": false,
+            "fulfillOrders": false,
+            "leaseMs": 120000,
+            "blockedRetryMs": 600000
+          }
+        }
+      }
+    },
+    "orderFulfillmentRoutine": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "orderFulfillment"
+        },
+        "priority": {
+          "type": "number",
+          "default": 8,
+          "description": "Execution priority (default 8, above skillRotation)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable dedicated order fulfillment behavior for this character"
+        },
+        "maxLosses": {
+          "type": "number",
+          "default": 2,
+          "description": "Consecutive combat losses before blocking a fight/craft claim"
+        },
+        "craftScanLimit": {
+          "type": "number",
+          "minimum": 1,
+          "default": 1,
+          "description": "Max number of blocked craft orders expanded into prerequisites per execute cycle"
+        },
+        "orderBoard": {
+          "type": "object",
+          "description": "Order board settings for dedicated order fulfillment.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Legacy master toggle; when true, both createOrders and fulfillOrders default to true unless explicitly overridden"
+            },
+            "createOrders": {
+              "type": "boolean",
+              "default": true,
+              "description": "Allow posting prerequisite board orders when blocked craft orders cannot be fulfilled directly"
+            },
+            "fulfillOrders": {
+              "type": "boolean",
+              "default": true,
+              "description": "Allow claiming and fulfilling board orders in this routine"
+            },
+            "leaseMs": {
+              "type": "number",
+              "minimum": 1000,
+              "default": 120000,
+              "description": "How long a claimed order lease lasts before another character can claim it"
+            },
+            "blockedRetryMs": {
+              "type": "number",
+              "minimum": 1000,
+              "default": 600000,
+              "description": "How long a character is blocked from retrying an order after marking it blocked"
+            }
+          },
+          "default": {
+            "enabled": true,
             "createOrders": true,
             "fulfillOrders": true,
             "leaseMs": 120000,

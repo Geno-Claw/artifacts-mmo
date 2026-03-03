@@ -108,6 +108,31 @@ async function testMinimalSkillRotation() {
   log('minimal skillRotation gets all defaults');
 }
 
+async function testMinimalOrderFulfillment() {
+  const input = {
+    characters: [
+      {
+        name: 'T',
+        routines: [{ type: 'orderFulfillment' }],
+      },
+    ],
+  };
+
+  const { config } = await normalizeConfig(input);
+  const r = config.characters[0].routines[0];
+  assert.equal(r.priority, 8);
+  assert.equal(r.enabled, true);
+  assert.equal(r.maxLosses, 2);
+  assert.equal(r.craftScanLimit, 1);
+  assert.equal(r.orderBoard.enabled, true);
+  assert.equal(r.orderBoard.createOrders, true);
+  assert.equal(r.orderBoard.fulfillOrders, true);
+  assert.equal(r.orderBoard.leaseMs, 120000);
+  assert.equal(r.orderBoard.blockedRetryMs, 600000);
+
+  log('minimal orderFulfillment gets all defaults');
+}
+
 async function testSettingsDeepMerge() {
   const input = {
     characters: [
@@ -354,6 +379,7 @@ async function run() {
   await testMinimalDepositBankRoutine();
   await testMinimalEventRoutine();
   await testMinimalSkillRotation();
+  await testMinimalOrderFulfillment();
   await testSettingsDeepMerge();
   await testSettingsCreatedWhenMissing();
   await testOneOfRoutingMixed();

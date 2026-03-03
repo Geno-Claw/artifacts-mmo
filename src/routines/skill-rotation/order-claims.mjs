@@ -100,6 +100,26 @@ export async function acquireGatherOrderClaim(ctx, routine) {
   return null;
 }
 
+export async function acquireGatherOrderClaimAnySkill(ctx, routine) {
+  const orders = sortOrdersForClaim(listClaimableOrders({
+    sourceType: 'gather',
+    charName: ctx.name,
+  }));
+
+  for (const order of orders) {
+    const gatherSkill = `${order?.gatherSkill || ''}`.trim();
+    const requiredLevel = Math.max(0, Number(order?.sourceLevel) || 0);
+    if (gatherSkill && ctx.skillLevel(gatherSkill) < requiredLevel) {
+      routine._blockUnclaimableOrderForChar(order, ctx, 'insufficient_skill');
+      continue;
+    }
+
+    const active = routine._claimOrderForChar(ctx, order);
+    if (active) return active;
+  }
+  return null;
+}
+
 export async function acquireCombatOrderClaim(ctx, routine) {
   const orders = sortOrdersForClaim(listClaimableOrders({
     sourceType: 'fight',
@@ -126,6 +146,23 @@ export function blockUnclaimableOrderForChar(routine, order, ctx, reason = 'cann
   } catch (err) {
     log.warn(`[${ctx.name}] Could not block unclaimable order ${order?.id || 'unknown'}: ${err?.message || String(err)}`);
   }
+}
+
+function normalizeCraftSkill(value) {
+  return `${value || ''}`.trim();
+}
+
+function resolveCraftSkillForOrder(routine, order) {
+  const fromOrder = normalizeCraftSkill(order?.craftSkill);
+  if (fromOrder) return fromOrder;
+  const item = routine._getCraftClaimItem(order);
+  return normalizeCraftSkill(item?.craft?.skill);
+}
+
+function craftSkillMatches(orderCraftSkill, requiredCraftSkill) {
+  const required = normalizeCraftSkill(requiredCraftSkill);
+  if (!required) return true;
+  return orderCraftSkill === required;
 }
 
 export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, bank, simCache) {
@@ -190,73 +227,169 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
   return { ok: true, reason: '' };
 }
 
-export async function acquireCraftOrderClaim(ctx, routine, craftSkill) {
-  const orders = sortOrdersForClaim(listClaimableOrders({
-    sourceType: 'craft',
-    craftSkill,
-    charName: ctx.name,
-  }));
-  let bank = await routine._getBankItems();
-  const simCache = new Map();
+async function maybeResolveTaskRewardCraftDependency(ctx, routine, order, orderCraftSkill, viability, bank, simCache) {
+  let nextViability = viability;
+  let nextBank = bank;
 
-  for (const order of orders) {
-    let viability = await routine._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
-    if (!viability.ok) {
-      const missingCode = routine._parseMissingBankDependency(viability.reason);
-      if (missingCode && routine._isTaskRewardCode(missingCode)) {
-        if (routine.orderBoard.createOrders) {
-          // Order-first: post exchange order for cross-character fulfillment
-          routine._enqueueTaskExchangeOrder(ctx, missingCode, 1);
-        } else {
-          // Legacy: try proactive self-exchange
-          const proactive = await routine._maybeRunProactiveExchange(ctx, {
-            extraNeedItemCode: missingCode,
-            trigger: 'craft_claim',
-          });
-          if (proactive.attempted || proactive.resolved) {
-            bank = await routine._getBankItems(true);
-            viability = await routine._canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache);
-          }
+  const missingCode = routine._parseMissingBankDependency(nextViability.reason);
+  if (!missingCode || !routine._isTaskRewardCode(missingCode)) {
+    return { viability: nextViability, bank: nextBank };
+  }
+
+  if (routine.orderBoard.createOrders) {
+    // Order-first: post exchange order for cross-character fulfillment
+    routine._enqueueTaskExchangeOrder(ctx, missingCode, 1);
+    return { viability: nextViability, bank: nextBank };
+  }
+
+  // Legacy: try proactive self-exchange
+  const proactive = await routine._maybeRunProactiveExchange(ctx, {
+    extraNeedItemCode: missingCode,
+    trigger: 'craft_claim',
+  });
+  if (proactive.attempted || proactive.resolved) {
+    nextBank = await routine._getBankItems(true);
+    nextViability = await routine._canClaimCraftOrderNow(ctx, order, orderCraftSkill, nextBank, simCache);
+  }
+
+  return { viability: nextViability, bank: nextBank };
+}
+
+function handleUnviableCraftOrder(routine, order, ctx, viability, bank) {
+  // Queue gather orders for deficit materials so other characters can help
+  if (viability.reason === 'insufficient_gather_skill' && viability.deficits?.length > 0) {
+    for (const step of viability.deficits) {
+      if (step.type !== 'gather' || !step.resource) continue;
+      const bankItems = bank instanceof Map ? bank : new Map();
+      const deficit = step.quantity - ctx.itemCount(step.itemCode) - (bankItems.get(step.itemCode) || 0);
+      if (deficit > 0) {
+        routine._enqueueGatherOrderForDeficit(step, order, ctx, deficit);
+      }
+    }
+  }
+
+  // Queue fight orders for combat drops that this character can't obtain
+  if (viability.reason?.startsWith('combat_not_viable:')) {
+    const item = routine._getCraftClaimItem(order);
+    const plan = item?.craft ? routine._resolveRecipeChain(item.craft) : null;
+    if (plan) {
+      const bankItems = bank instanceof Map ? bank : new Map();
+      for (const step of plan) {
+        if (step.type !== 'fight' || !step.monster) continue;
+        const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+        const deficit = step.quantity - have;
+        if (deficit > 0) {
+          routine._enqueueFightOrderForDeficit(step, order, ctx, deficit);
         }
       }
     }
-    if (!viability.ok) {
-      // Queue gather orders for deficit materials so other characters can help
-      if (viability.reason === 'insufficient_gather_skill' && viability.deficits?.length > 0) {
-        for (const step of viability.deficits) {
-          if (step.type !== 'gather' || !step.resource) continue;
-          const bankItems = bank instanceof Map ? bank : new Map();
-          const deficit = step.quantity - ctx.itemCount(step.itemCode) - (bankItems.get(step.itemCode) || 0);
-          if (deficit > 0) {
-            routine._enqueueGatherOrderForDeficit(step, order, ctx, deficit);
-          }
-        }
-      }
-      // Queue fight orders for combat drops that this character can't obtain
-      if (viability.reason?.startsWith('combat_not_viable:')) {
-        const item = routine._getCraftClaimItem(order);
-        const plan = item?.craft ? routine._resolveRecipeChain(item.craft) : null;
-        if (plan) {
-          const bankItems = bank instanceof Map ? bank : new Map();
-          for (const step of plan) {
-            if (step.type !== 'fight' || !step.monster) continue;
-            const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
-            const deficit = step.quantity - have;
-            if (deficit > 0) {
-              routine._enqueueFightOrderForDeficit(step, order, ctx, deficit);
-            }
-          }
-        }
-      }
-      routine._blockUnclaimableOrderForChar(order, ctx, viability.reason);
+  }
+
+  routine._blockUnclaimableOrderForChar(order, ctx, viability.reason);
+}
+
+function listCraftOrdersForClaim(ctx, craftSkill = '') {
+  const skill = normalizeCraftSkill(craftSkill);
+  return sortOrdersForClaim(listClaimableOrders({
+    sourceType: 'craft',
+    ...(skill ? { craftSkill: skill } : {}),
+    charName: ctx.name,
+  }));
+}
+
+async function tryClaimCraftOrder(ctx, routine, order, orderCraftSkill, bank, simCache, { allowSideEffects = true } = {}) {
+  let viability = await routine._canClaimCraftOrderNow(ctx, order, orderCraftSkill, bank, simCache);
+  let nextBank = bank;
+
+  if (!viability.ok && allowSideEffects) {
+    const taskRewardResult = await maybeResolveTaskRewardCraftDependency(
+      ctx,
+      routine,
+      order,
+      orderCraftSkill,
+      viability,
+      nextBank,
+      simCache,
+    );
+    viability = taskRewardResult.viability;
+    nextBank = taskRewardResult.bank;
+  }
+
+  if (!viability.ok) {
+    return { claim: null, viability, bank: nextBank };
+  }
+
+  const active = routine._claimOrderForChar(ctx, order);
+  return { claim: active, viability, bank: nextBank };
+}
+
+export async function acquireCraftOrderClaimAnySkill(
+  ctx,
+  routine,
+  { craftSkill = '', expandLimit = Number.POSITIVE_INFINITY, directFirst = false } = {},
+) {
+  const orders = listCraftOrdersForClaim(ctx, craftSkill);
+  if (orders.length === 0) return null;
+
+  let bank = await routine._getBankItems();
+  const simCache = new Map();
+  const pending = [];
+
+  for (const order of orders) {
+    const orderCraftSkill = resolveCraftSkillForOrder(routine, order);
+    if (!craftSkillMatches(orderCraftSkill, craftSkill)) continue;
+
+    const claimAttempt = await tryClaimCraftOrder(
+      ctx,
+      routine,
+      order,
+      orderCraftSkill,
+      bank,
+      simCache,
+      { allowSideEffects: !directFirst },
+    );
+    bank = claimAttempt.bank;
+    if (claimAttempt.claim) return claimAttempt.claim;
+
+    if (directFirst) {
+      pending.push({ order, orderCraftSkill, viability: claimAttempt.viability });
       continue;
     }
 
-    const active = routine._claimOrderForChar(ctx, order);
-    if (active) return active;
+    handleUnviableCraftOrder(routine, order, ctx, claimAttempt.viability, bank);
+  }
+
+  if (!directFirst) return null;
+
+  let expanded = 0;
+  for (const row of pending) {
+    if (expanded >= expandLimit) break;
+
+    const claimAttempt = await tryClaimCraftOrder(
+      ctx,
+      routine,
+      row.order,
+      row.orderCraftSkill,
+      bank,
+      simCache,
+      { allowSideEffects: true },
+    );
+    bank = claimAttempt.bank;
+    if (claimAttempt.claim) return claimAttempt.claim;
+
+    handleUnviableCraftOrder(routine, row.order, ctx, claimAttempt.viability, bank);
+    expanded += 1;
   }
 
   return null;
+}
+
+export async function acquireCraftOrderClaim(ctx, routine, craftSkill) {
+  return acquireCraftOrderClaimAnySkill(ctx, routine, {
+    craftSkill,
+    expandLimit: Number.POSITIVE_INFINITY,
+    directFirst: false,
+  });
 }
 
 export async function ensureOrderClaim(ctx, routine, sourceType, opts = {}) {

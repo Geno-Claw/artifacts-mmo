@@ -7,6 +7,7 @@ import { BankExpansionRoutine } from './bank-expansion.mjs';
 import { SkillRotationRoutine } from './skill-rotation/index.mjs';
 import { EventRoutine } from './event-routine.mjs';
 import { CompleteTaskRoutine } from './complete-task.mjs';
+import { OrderFulfillmentRoutine } from './order-fulfillment.mjs';
 
 const ROUTINE_TYPES = {
   rest:              (cfg) => new RestRoutine({ ...cfg, type: 'rest' }),
@@ -15,6 +16,7 @@ const ROUTINE_TYPES = {
   event:             (cfg) => new EventRoutine({ ...cfg, type: 'event' }),
   completeTask:      (cfg) => new CompleteTaskRoutine({ ...cfg, type: 'completeTask' }),
   skillRotation:     (cfg) => new SkillRotationRoutine({ ...cfg, type: 'skillRotation' }),
+  orderFulfillment:  (cfg) => new OrderFulfillmentRoutine({ ...cfg, type: 'orderFulfillment' }),
 };
 
 export function buildRoutines(routineConfigs) {

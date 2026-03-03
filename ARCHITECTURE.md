@@ -50,6 +50,7 @@ src/
     index.mjs             Re-exports all routine classes
     rest.mjs              Priority 100 — rest when HP low, eats food first
     deposit-bank.mjs      Priority 50  — bank when inventory full, recycle equipment, optional GE selling
+    order-fulfillment.mjs Priority 8   — dedicated order-board worker (gather/fight/craft/task_exchange)
     skill-rotation/       Priority 5   — weighted multi-skill rotation (see below)
       index.mjs           SkillRotationRoutine class — orchestrator with thin wrappers
       constants.mjs       Shared constants (skill sets, task coin config, reserve limits)
@@ -336,6 +337,7 @@ constants.mjs    — GATHERING_SKILLS, CRAFTING_SKILLS, TASK_COIN_CODE, reserve 
       "routines": [
         { "type": "rest", "triggerPct": 40, "targetPct": 80 },
         { "type": "depositBank", "threshold": 0.8, "recycleEquipment": true, "sellOnGE": true },
+        { "type": "orderFulfillment", "priority": 8, "craftScanLimit": 1, "orderBoard": { "enabled": true } },
         { "type": "skillRotation", "weights": { "mining": 1, "combat": 1 }, "goals": { "mining": 20 } }
       ]
     }
@@ -343,7 +345,9 @@ constants.mjs    — GATHERING_SKILLS, CRAFTING_SKILLS, TASK_COIN_CODE, reserve 
 }
 ```
 
-Routine types: `rest`, `depositBank`, `bankExpansion`, `skillRotation`. SkillRotation handles all gameplay (gathering, crafting, combat, NPC tasks, item tasks, order board fulfillment, task coin exchange) internally via its executor modules.
+Routine types: `rest`, `depositBank`, `bankExpansion`, `event`, `completeTask`, `orderFulfillment`, `skillRotation`.
+`orderFulfillment` is a dedicated board-worker routine that prioritizes gather/fight claims before craft/task-exchange and can expand blocked craft claims into prerequisite orders.
+`skillRotation` continues to handle full gameplay loops (gathering, crafting, combat, NPC tasks, item tasks, task coin exchange) and can still be run alongside `orderFulfillment`.
 Character `settings` can optionally include potion automation controls (`settings.potions.combat`, `settings.potions.bankTravel`).
 
 **Hot-reload:** Config changes are detected automatically via file watcher and applied between scheduler iterations without restart. Changes to weights, goals, thresholds, blacklists, and settings take effect within ~1s. Adding/removing routine types still requires a full restart.
@@ -362,6 +366,7 @@ Controls equipment recycling and GE selling:
 |-------|---------|---------|
 | 90–100 | Survival | Rest when HP low |
 | 50–70 | Maintenance | Bank deposits |
+| 8 | Order work | Dedicated order fulfillment loop |
 | 5 | Core gameplay | Skill rotation (handles all gathering, crafting, combat, tasks) |
 
 ## Adding a New Routine
