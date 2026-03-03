@@ -7,6 +7,7 @@ import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import { moveTo } from '../../helpers.mjs';
 import { depositBankItems, withdrawBankItems } from '../../services/bank-ops.mjs';
+import { globalCount } from '../../services/inventory-manager.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
 
@@ -53,6 +54,13 @@ export async function ensureExchangeCoinsInInventory(ctx, minCoins = TASK_EXCHAN
   const needed = Math.max(0, minCoins - invCoins);
   if (needed <= 0) {
     return { ok: true, available: invCoins };
+  }
+
+  // Check if bank actually has coins before traveling there
+  const totalGlobal = globalCount(TASK_COIN_CODE);
+  const bankCoins = totalGlobal - invCoins;
+  if (bankCoins <= 0) {
+    return { ok: false, available: invCoins };
   }
 
   const result = await withdrawBankItems(ctx, [{ code: TASK_COIN_CODE, quantity: needed }], {
