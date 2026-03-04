@@ -243,6 +243,45 @@ export async function executeCrafting(ctx, routine) {
       return !ctx.inventoryFull();
     }
 
+    if (step.type === 'npc_trade') {
+      // Buy item from NPC using currency materials already in inventory
+      const needed = step.quantity * routine._currentBatch;
+      if (ctx.itemCount(step.itemCode) >= needed) continue;
+
+      const buyQty = needed - ctx.itemCount(step.itemCode);
+      const currencyNeeded = buyQty * step.buyPrice;
+      if (ctx.itemCount(step.currency) < currencyNeeded) {
+        // Not enough currency yet — gather steps should handle it on next pass
+        log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${currencyNeeded}x ${step.currency} for NPC trade ${step.itemCode}, have ${ctx.itemCount(step.currency)}`);
+        continue;
+      }
+
+      // Find NPC location
+      const npcMaps = await api.getMaps({ content_type: 'npc', content_code: step.npcCode });
+      const npcTiles = Array.isArray(npcMaps) ? npcMaps : [];
+      const npcTile = npcTiles.find(t => {
+        const conds = t.access?.conditions;
+        return !Array.isArray(conds) || conds.length === 0;
+      }) || npcTiles[0];
+
+      if (!npcTile) {
+        log.warn(`[${ctx.name}] Cannot find NPC location for ${step.npcCode}`);
+        if (claimMode) {
+          await routine._blockAndReleaseClaim(ctx, `missing_npc_location:${step.npcCode}`);
+        } else {
+          await routine.rotation.forceRotate(ctx);
+        }
+        return true;
+      }
+
+      await moveTo(ctx, npcTile.x, npcTile.y);
+      const result = await api.npcBuy(step.itemCode, buyQty, ctx.name);
+      ctx.applyActionResult(result);
+      await api.waitForCooldown(result);
+      log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: NPC trade — bought ${step.itemCode} x${buyQty} from ${step.npcCode}`);
+      continue;
+    }
+
     if (step.type === 'craft') {
       // Skip intermediates we already have enough of (scaled by batch)
       if (i < plan.length - 1 && ctx.itemCount(step.itemCode) >= step.quantity * routine._currentBatch) continue;
@@ -406,7 +445,7 @@ export function batchSize(ctx, routine) {
   // Sum material quantities per single craft (bank + gather steps)
   let materialsPerCraft = 0;
   for (const step of plan) {
-    if (step.type === 'bank' || step.type === 'gather' || step.type === 'fight') {
+    if (step.type === 'bank' || step.type === 'gather' || step.type === 'fight' || step.type === 'npc_trade') {
       materialsPerCraft += step.quantity;
     }
   }

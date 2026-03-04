@@ -194,6 +194,22 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
     return { ok: false, reason: 'insufficient_gather_skill', deficits: planCheck.deficits };
   }
 
+  // Check npc_trade steps — ensure currency is obtainable
+  for (const step of plan) {
+    if (step.type !== 'npc_trade') continue;
+    const currencyNeeded = step.quantity * step.buyPrice;
+    const currencyHave = ctx.itemCount(step.currency) + (bankItems.get(step.currency) || 0);
+    // If we don't have enough currency, check if the plan includes a gather/fight step for it
+    if (currencyHave < currencyNeeded) {
+      const currencySource = plan.find(s =>
+        (s.type === 'gather' || s.type === 'fight') && s.itemCode === step.currency
+      );
+      if (!currencySource) {
+        return { ok: false, reason: `missing_npc_currency:${step.currency}` };
+      }
+    }
+  }
+
   for (const step of plan) {
     if (step.type !== 'bank') continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
@@ -264,6 +280,31 @@ function handleUnviableCraftOrder(routine, order, ctx, viability, bank) {
       const deficit = step.quantity - ctx.itemCount(step.itemCode) - (bankItems.get(step.itemCode) || 0);
       if (deficit > 0) {
         routine._enqueueGatherOrderForDeficit(step, order, ctx, deficit);
+      }
+    }
+  }
+
+  // Queue gather/fight orders for NPC currency materials this character can't obtain
+  if (viability.reason?.startsWith('missing_npc_currency:')) {
+    const item = routine._getCraftClaimItem(order);
+    const plan = item?.craft ? routine._resolveRecipeChain(item.craft) : null;
+    if (plan) {
+      const bankItems = bank instanceof Map ? bank : new Map();
+      for (const step of plan) {
+        if (step.type === 'gather' && step.resource) {
+          const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+          const deficit = step.quantity - have;
+          if (deficit > 0) {
+            routine._enqueueGatherOrderForDeficit(step, order, ctx, deficit);
+          }
+        }
+        if (step.type === 'fight' && step.monster) {
+          const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+          const deficit = step.quantity - have;
+          if (deficit > 0) {
+            routine._enqueueFightOrderForDeficit(step, order, ctx, deficit);
+          }
+        }
       }
     }
   }

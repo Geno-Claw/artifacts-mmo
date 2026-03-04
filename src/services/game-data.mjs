@@ -430,6 +430,19 @@ export function getNpcBuyOffer(npcCode, itemCode) {
   return { ...offer };
 }
 
+/**
+ * Find which NPC sells a given item.
+ * Returns { npcCode, offer: { code, currency, buyPrice } } or null.
+ */
+export function findNpcForItem(itemCode) {
+  if (!npcBuyOfferLookup) return null;
+  for (const [npcCode, offers] of npcBuyOfferLookup) {
+    const offer = offers.get(itemCode);
+    if (offer) return { npcCode, offer };
+  }
+  return null;
+}
+
 /** Returns the buy price for an item at a given NPC, or null if not buyable. */
 export function getNpcBuyPrice(npcCode, itemCode) {
   const offer = getNpcBuyOffer(npcCode, itemCode);
@@ -516,7 +529,36 @@ export function resolveRecipeChain(recipe) {
         continue;
       }
 
-      // 4. Must come from bank (event items, etc.)
+      // 4. NPC-tradeable item? (subtype === 'npc' or found in NPC catalogs)
+      const npcItem = item || getItem(mat.code);
+      const npcMatch = findNpcForItem(mat.code);
+      if (npcMatch || npcItem?.subtype === 'npc') {
+        if (npcMatch) {
+          const { npcCode, offer } = npcMatch;
+          // Resolve the currency recursively (it may be gatherable/fightable)
+          const currencyNeeded = needed * offer.buyPrice;
+          const ok = resolve([{ code: offer.currency, quantity: currencyNeeded }], 1);
+          if (!ok) return false;
+
+          const existing = steps.find(s => s.itemCode === mat.code && s.type === 'npc_trade');
+          if (existing) {
+            existing.quantity += needed;
+          } else {
+            steps.push({
+              type: 'npc_trade',
+              itemCode: mat.code,
+              npcCode,
+              currency: offer.currency,
+              buyPrice: offer.buyPrice,
+              quantity: needed,
+            });
+          }
+          continue;
+        }
+        // subtype is 'npc' but not found in any loaded NPC catalog — fall through to bank
+      }
+
+      // 5. Must come from bank (event items, etc.)
       const existing = steps.find(s => s.itemCode === mat.code && s.type === 'bank');
       if (existing) {
         existing.quantity += needed;
