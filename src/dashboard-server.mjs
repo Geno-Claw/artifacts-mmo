@@ -14,7 +14,12 @@ import {
   saveConfigAtomically,
   validateBotConfig,
 } from './services/config-store.mjs';
-import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './services/ui-state.mjs';
+import {
+  getUiCharacterDetail,
+  getUiSnapshot,
+  queryUiCharacterLogs,
+  subscribeUiEvents,
+} from './services/ui-state.mjs';
 import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
 import { clearGearState } from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
@@ -640,7 +645,12 @@ export async function startDashboardServer({
           sendError(res, 405, 'method_not_allowed', 'Only GET is allowed', 'method_not_allowed');
           return;
         }
-        if (!runtimeManager || typeof runtimeManager.getStatus !== 'function') {
+        const getStatus = runtimeManager && typeof runtimeManager.getStatus === 'function'
+          ? runtimeManager.getStatus.bind(runtimeManager)
+          : (runtimeManager && typeof runtimeManager.status === 'function'
+            ? runtimeManager.status.bind(runtimeManager)
+            : null);
+        if (!getStatus) {
           sendError(
             res,
             503,
@@ -651,7 +661,7 @@ export async function startDashboardServer({
           return;
         }
 
-        sendJson(res, 200, runtimeManager.getStatus());
+        sendJson(res, 200, getStatus());
         return;
       }
 
@@ -660,7 +670,20 @@ export async function startDashboardServer({
           sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
           return;
         }
-        if (!runtimeManager || typeof runtimeManager.hotReloadConfig !== 'function') {
+        const hotReload = runtimeManager && typeof runtimeManager.hotReloadConfig === 'function'
+          ? runtimeManager.hotReloadConfig.bind(runtimeManager)
+          : (runtimeManager && typeof runtimeManager.reloadConfig === 'function'
+            ? runtimeManager.reloadConfig.bind(runtimeManager)
+            : (runtimeManager && typeof runtimeManager.reload === 'function'
+              ? runtimeManager.reload.bind(runtimeManager)
+              : null));
+        const getStatus = runtimeManager && typeof runtimeManager.getStatus === 'function'
+          ? runtimeManager.getStatus.bind(runtimeManager)
+          : (runtimeManager && typeof runtimeManager.status === 'function'
+            ? runtimeManager.status.bind(runtimeManager)
+            : null);
+
+        if (!hotReload) {
           sendError(
             res,
             503,
@@ -672,11 +695,11 @@ export async function startDashboardServer({
         }
 
         try {
-          runtimeManager.hotReloadConfig();
+          const operationResult = await hotReload();
           sendJson(res, 200, {
             ok: true,
             operation: 'hot_reload_config',
-            status: runtimeManager.getStatus(),
+            status: getStatus ? getStatus() : operationResult,
           });
         } catch (err) {
           sendRuntimeControlError(res, err, 'reload_config_failed');
@@ -1036,6 +1059,37 @@ export async function startDashboardServer({
         }
 
         sendJson(res, 200, detail);
+        return;
+      }
+
+      const logMatch = pathname.match(/^\/api\/ui\/character\/([^/]+)\/logs$/);
+      if (logMatch) {
+        let decodedName = '';
+        try {
+          decodedName = decodeURIComponent(logMatch[1]).trim();
+        } catch {
+          sendError(res, 400, 'bad_request', 'Invalid character name encoding', 'bad_character_name');
+          return;
+        }
+
+        if (!decodedName) {
+          sendError(res, 400, 'bad_request', 'Character name is required', 'character_name_required');
+          return;
+        }
+
+        const payload = queryUiCharacterLogs(decodedName, {
+          level: firstText(url.searchParams.get('level')),
+          scope: firstText(url.searchParams.get('scope')),
+          event: firstText(url.searchParams.get('event')),
+          reasonCode: firstText(url.searchParams.get('reasonCode')),
+          limit: firstText(url.searchParams.get('limit')),
+          beforeAt: firstText(url.searchParams.get('beforeAt')),
+        });
+        if (!payload) {
+          sendError(res, 404, 'character_not_found', `Unknown character "${decodedName}"`);
+          return;
+        }
+        sendJson(res, 200, payload);
         return;
       }
 

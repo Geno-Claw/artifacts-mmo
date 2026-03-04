@@ -3,6 +3,7 @@ node_modules/
 *.log
 
 report/history/
+report/logs/
 report/map-cache.json
 report/order-board.json
 report/gear-state.json

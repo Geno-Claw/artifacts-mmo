@@ -12,6 +12,21 @@ When HP drops low, Rest (priority 100) takes over. When inventory fills up, Bank
 
 **Config hot-reload:** A file watcher monitors `characters.json` and pushes changes to running schedulers without restarting. Each routine has an `updateConfig()` method that patches config fields in-place while preserving runtime state (current skill, goal progress, recipe blocks, etc.). Changes take effect at the next scheduler loop iteration (~1s).
 
+## Logging and Correlation
+
+The bot uses structured logging with context propagation so decisions can be traced across runtime lifecycle, scheduler ticks, routines, and API actions.
+
+- `src/log.mjs` provides:
+  - Compatibility API (`log.info(...)`, etc.)
+  - Structured logger API (`createLogger(baseContext)`, `child(extraContext)`)
+  - Console and JSONL sinks (`./report/logs/runtime-YYYY-MM-DD.jsonl`)
+- `src/log-context.mjs` uses `AsyncLocalStorage` to carry context (`character`, `runId`, `tickId`, `routine`, `requestId`) across async boundaries.
+- Runtime UI state stores enriched log metadata (`scope`, `event`, `reasonCode`, `runId`, `tickId`, `requestId`, `data`) and interruption history (`routine.preempted`, `routine.yield`).
+- Dashboard supports filtered log queries via:
+  - `GET /api/ui/character/:name/logs?level=&scope=&event=&reasonCode=&limit=&beforeAt=`
+
+See `docs/logging.md` for severity policy, reason codes, and troubleshooting playbooks.
+
 ## File Layout
 
 ```
@@ -21,7 +36,8 @@ src/
   context.mjs            CharacterContext — per-character state wrapper
   helpers.mjs            Thin action wrappers (moveTo, fightOnce, gatherOnce, swapEquipment, etc.)
   api.mjs                HTTP client for all API calls, auto-retry on cooldown
-  log.mjs                Timestamped console logging
+  log.mjs                Structured logging (console + JSONL), compatibility wrappers
+  log-context.mjs        AsyncLocalStorage context propagation for correlated logs
   data/
     locations.mjs        Monster, resource, and bank coordinates (Season 7)
   services/

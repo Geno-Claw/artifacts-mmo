@@ -81,6 +81,17 @@ function onOrdersPanelClick(event) {
 function onModalContentClick(event) {
   if (!isModalOpen() || modalState.status !== 'ready' || !modalRefs.content) return;
 
+  if (modalState.activeKind === 'stats') {
+    const levelBtn = closestFromEventTarget(event, 'button[data-log-level-filter]');
+    if (!levelBtn || !modalRefs.content.contains(levelBtn)) return;
+
+    const nextLevel = safeText(levelBtn.dataset.logLevelFilter, '').toLowerCase();
+    if (!LOG_LEVEL_FILTER_LABELS[nextLevel] || modalState.logLevelFilter === nextLevel) return;
+    modalState.logLevelFilter = nextLevel;
+    renderModalContent();
+    return;
+  }
+
   if (modalState.activeKind === 'achiev') {
     const statusBtn = closestFromEventTarget(event, 'button[data-achievement-filter]');
     if (statusBtn && modalRefs.content.contains(statusBtn)) {
@@ -141,6 +152,23 @@ function onModalContentClick(event) {
 
 function onModalContentInput(event) {
   if (!isModalOpen() || modalState.status !== 'ready' || !modalRefs.content) return;
+
+  if (modalState.activeKind === 'stats') {
+    const scopeSelect = closestFromEventTarget(event, 'select[data-log-scope-filter]');
+    if (scopeSelect && modalRefs.content.contains(scopeSelect)) {
+      modalState.logScopeFilter = safeText(scopeSelect.value, '');
+      renderModalContent();
+      return;
+    }
+
+    const reasonSelect = closestFromEventTarget(event, 'select[data-log-reason-filter]');
+    if (reasonSelect && modalRefs.content.contains(reasonSelect)) {
+      modalState.logReasonFilter = safeText(reasonSelect.value, '');
+      renderModalContent();
+      return;
+    }
+    return;
+  }
 
   if (modalState.activeKind === 'achiev') {
     const input = closestFromEventTarget(event, 'input[data-achievement-search]');

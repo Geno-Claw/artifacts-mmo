@@ -4,6 +4,9 @@
  */
 import * as log from './log.mjs';
 import { recordRoutineState } from './services/ui-state.mjs';
+import { runWithLogContext } from './log-context.mjs';
+
+const schedulerLog = log.createLogger({ scope: 'scheduler' });
 
 export class Scheduler {
   constructor(ctx, routines = []) {
@@ -18,6 +21,13 @@ export class Scheduler {
     this.sleepTimer = null;
     this.sleepResolver = null;
     this._pendingConfig = null;
+    this.runId = null;
+    this.tickSeq = 0;
+  }
+
+  setRunContext({ runId = null } = {}) {
+    const parsed = Number(runId);
+    this.runId = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
   }
 
   /**
@@ -45,15 +55,50 @@ export class Scheduler {
       if (match) routine.updateConfig(match);
     }
 
-    log.info(`[${this.ctx.name}] Config hot-reloaded`);
+    schedulerLog.info(`[${this.ctx.name}] Config hot-reloaded`, {
+      event: 'scheduler.config.hot_reloaded',
+      context: {
+        character: this.ctx.name,
+        runId: this.runId,
+        tickId: this.tickSeq,
+      },
+    });
   }
 
-  /** Return the highest-priority routine whose canRun() passes. */
-  pickRoutine() {
+  /** Return the highest-priority routine whose canRun() passes + debug candidates. */
+  pickRoutineWithDetails() {
+    let selected = null;
+    const candidates = [];
+
     for (const routine of this.routines) {
-      if (routine.canRun(this.ctx)) return routine;
+      let runnable = false;
+      try {
+        runnable = routine.canRun(this.ctx) === true;
+      } catch (err) {
+        schedulerLog.error(`[${this.ctx.name}] canRun failed for ${routine.name}`, {
+          event: 'scheduler.routine.can_run_error',
+          reasonCode: 'routine_can_run_error',
+          context: {
+            character: this.ctx.name,
+            runId: this.runId,
+            routine: routine.name,
+          },
+          error: err,
+        });
+        throw err;
+      }
+      candidates.push({
+        name: routine.name,
+        priority: routine.priority,
+        urgent: !!routine.urgent,
+        runnable,
+      });
+      if (!selected && runnable) {
+        selected = routine;
+      }
     }
-    return null;
+
+    return { routine: selected, candidates };
   }
 
   _finishSleep(completed) {
@@ -99,27 +144,73 @@ export class Scheduler {
 
   async _runLoop() {
     this.stopRequested = false;
-    log.info(`[${this.ctx.name}] Bot loop started`);
+    schedulerLog.info(`[${this.ctx.name}] Bot loop started`, {
+      event: 'scheduler.loop.started',
+      context: {
+        character: this.ctx.name,
+        runId: this.runId,
+      },
+    });
 
     // Wait out any active cooldown from a previous session.
     {
-      await this.ctx.refresh();
+      await runWithLogContext({
+        character: this.ctx.name,
+        runId: this.runId,
+        tickId: this.tickSeq,
+      }, async () => this.ctx.refresh());
       if (this.stopRequested) return;
       const remainingMs = this.ctx.cooldownRemainingMs();
       if (remainingMs > 500) {
-        log.info(`[${this.ctx.name}] On cooldown — waiting ${(remainingMs / 1000).toFixed(1)}s`);
+        schedulerLog.info(`[${this.ctx.name}] On cooldown — waiting ${(remainingMs / 1000).toFixed(1)}s`, {
+          event: 'scheduler.cooldown_wait',
+          context: {
+            character: this.ctx.name,
+            runId: this.runId,
+            tickId: this.tickSeq,
+          },
+          data: {
+            remainingMs,
+          },
+        });
         const slept = await this._sleep(remainingMs);
         if (!slept) return;
       }
     }
 
     while (!this.stopRequested) {
+      const tickId = ++this.tickSeq;
+      schedulerLog.debug(`[${this.ctx.name}] Tick ${tickId} start`, {
+        event: 'scheduler.tick.start',
+        context: {
+          character: this.ctx.name,
+          runId: this.runId,
+          tickId,
+        },
+      });
+
       this._applyPendingConfig();
 
-      await this.ctx.refresh();
+      await runWithLogContext({
+        character: this.ctx.name,
+        runId: this.runId,
+        tickId,
+      }, async () => this.ctx.refresh());
       if (this.stopRequested) break;
 
-      const routine = this.pickRoutine();
+      const { routine, candidates } = this.pickRoutineWithDetails();
+      schedulerLog.debug(`[${this.ctx.name}] Tick ${tickId} routine scan`, {
+        event: 'scheduler.routines.scanned',
+        context: {
+          character: this.ctx.name,
+          runId: this.runId,
+          tickId,
+        },
+        data: {
+          selected: routine?.name || null,
+          candidates,
+        },
+      });
 
       if (!routine) {
         recordRoutineState(this.ctx.name, {
@@ -127,7 +218,15 @@ export class Scheduler {
           phase: 'idle',
           priority: null,
         });
-        log.warn(`[${this.ctx.name}] No runnable routines - idling 30s`);
+        schedulerLog.warn(`[${this.ctx.name}] No runnable routines - idling 30s`, {
+          event: 'scheduler.idle',
+          reasonCode: 'no_runnable_routine',
+          context: {
+            character: this.ctx.name,
+            runId: this.runId,
+            tickId,
+          },
+        });
         const slept = await this._sleep(30_000);
         if (!slept) break;
         continue;
@@ -138,17 +237,44 @@ export class Scheduler {
         phase: 'start',
         priority: routine.priority,
       });
-      log.info(`[${this.ctx.name}] -> ${routine.name}`);
+      schedulerLog.info(`[${this.ctx.name}] -> ${routine.name}`, {
+        event: 'routine.started',
+        context: {
+          character: this.ctx.name,
+          runId: this.runId,
+          tickId,
+          routine: routine.name,
+        },
+        data: {
+          priority: routine.priority,
+          loop: routine.loop === true,
+          urgent: routine.urgent === true,
+        },
+      });
 
       try {
         if (routine.loop) {
           let keepGoing = true;
           while (keepGoing && !this.stopRequested) {
-            await this.ctx.refresh();
+            await runWithLogContext({
+              character: this.ctx.name,
+              runId: this.runId,
+              tickId,
+              routine: routine.name,
+            }, async () => this.ctx.refresh());
             if (this.stopRequested) break;
 
             if (!routine.canRun(this.ctx)) {
-              log.info(`[${this.ctx.name}] ${routine.name}: conditions changed, yielding`);
+              schedulerLog.info(`[${this.ctx.name}] ${routine.name}: conditions changed, yielding`, {
+                event: 'routine.yield',
+                reasonCode: 'routine_conditions_changed',
+                context: {
+                  character: this.ctx.name,
+                  runId: this.runId,
+                  tickId,
+                  routine: routine.name,
+                },
+              });
               break;
             }
 
@@ -157,14 +283,56 @@ export class Scheduler {
               r => r.priority > routine.priority && r.canRun(this.ctx),
             );
             if (preempt && (preempt.urgent || routine.canBePreempted(this.ctx))) {
-              log.info(`[${this.ctx.name}] ${routine.name}: preempted by ${preempt.name}`);
+              schedulerLog.info(`[${this.ctx.name}] ${routine.name}: preempted by ${preempt.name}`, {
+                event: 'routine.preempted',
+                reasonCode: 'preempted_by_higher_priority',
+                context: {
+                  character: this.ctx.name,
+                  runId: this.runId,
+                  tickId,
+                  routine: routine.name,
+                },
+                data: {
+                  interruptedRoutine: routine.name,
+                  interruptingRoutine: preempt.name,
+                  interruptingPriority: preempt.priority,
+                  interruptingUrgent: preempt.urgent === true,
+                  canBePreempted: routine.canBePreempted(this.ctx) === true,
+                },
+              });
               break;
             }
 
-            keepGoing = await routine.execute(this.ctx);
+            keepGoing = await runWithLogContext({
+              character: this.ctx.name,
+              runId: this.runId,
+              tickId,
+              routine: routine.name,
+            }, async () => routine.execute(this.ctx));
+            if (!keepGoing) {
+              const yieldReason = routine.consumeYieldReason?.();
+              if (yieldReason) {
+                schedulerLog.info(`[${this.ctx.name}] ${routine.name}: yielding (${yieldReason.reasonCode})`, {
+                  event: 'routine.yield',
+                  reasonCode: yieldReason.reasonCode,
+                  context: {
+                    character: this.ctx.name,
+                    runId: this.runId,
+                    tickId,
+                    routine: routine.name,
+                  },
+                  data: yieldReason.data,
+                });
+              }
+            }
           }
         } else if (!this.stopRequested) {
-          await routine.execute(this.ctx);
+          await runWithLogContext({
+            character: this.ctx.name,
+            runId: this.runId,
+            tickId,
+            routine: routine.name,
+          }, async () => routine.execute(this.ctx));
         }
 
         if (!this.stopRequested) {
@@ -173,7 +341,15 @@ export class Scheduler {
             phase: 'done',
             priority: routine.priority,
           });
-          log.info(`[${this.ctx.name}] ${routine.name}: done`);
+          schedulerLog.info(`[${this.ctx.name}] ${routine.name}: done`, {
+            event: 'routine.done',
+            context: {
+              character: this.ctx.name,
+              runId: this.runId,
+              tickId,
+              routine: routine.name,
+            },
+          });
         }
       } catch (err) {
         if (this.stopRequested) break;
@@ -184,7 +360,18 @@ export class Scheduler {
           priority: routine.priority,
           error: err.message,
         });
-        log.error(`[${this.ctx.name}] ${routine.name} failed`, err.message);
+        schedulerLog.error(`[${this.ctx.name}] ${routine.name} failed`, {
+          event: 'routine.error',
+          reasonCode: 'routine_execution_failed',
+          context: {
+            character: this.ctx.name,
+            runId: this.runId,
+            tickId,
+            routine: routine.name,
+          },
+          error: err,
+          detail: err?.message || String(err),
+        });
 
         const slept = await this._sleep(10_000);
         if (!slept) break;
@@ -192,6 +379,15 @@ export class Scheduler {
 
       const slept = await this._sleep(1_000);
       if (!slept) break;
+
+      schedulerLog.debug(`[${this.ctx.name}] Tick ${tickId} end`, {
+        event: 'scheduler.tick.end',
+        context: {
+          character: this.ctx.name,
+          runId: this.runId,
+          tickId,
+        },
+      });
     }
 
     recordRoutineState(this.ctx.name, {
@@ -199,7 +395,15 @@ export class Scheduler {
       phase: 'idle',
       priority: null,
     });
-    log.info(`[${this.ctx.name}] Bot loop stopped`);
+    schedulerLog.info(`[${this.ctx.name}] Bot loop stopped`, {
+      event: 'scheduler.loop.stopped',
+      context: {
+        character: this.ctx.name,
+        runId: this.runId,
+        tickId: this.tickSeq,
+      },
+      reasonCode: this.stopRequested ? 'loop_stop_requested' : null,
+    });
   }
 
   /** Main loop - runs until stop() is called. */

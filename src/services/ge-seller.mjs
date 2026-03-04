@@ -13,6 +13,8 @@ import {
 } from './bank-ops.mjs';
 import { moveTo } from '../helpers.mjs';
 
+const geLog = log.createLogger({ scope: 'service.ge-seller' });
+
 let sellRules = null;
 
 // --- Concurrency control ---
@@ -36,9 +38,26 @@ async function withSellLock(fn) {
 export function loadSellRules() {
   try {
     sellRules = JSON.parse(readFileSync('./config/sell-rules.json', 'utf-8'));
-    log.info(`[GE] Sell rules loaded — duplicateEquip: ${sellRules.sellDuplicateEquipment}, alwaysSell: ${sellRules.alwaysSell?.length || 0} items, neverSell: ${sellRules.neverSell?.length || 0} items`);
+    geLog.info(`[GE] Sell rules loaded — duplicateEquip: ${sellRules.sellDuplicateEquipment}, alwaysSell: ${sellRules.alwaysSell?.length || 0} items, neverSell: ${sellRules.neverSell?.length || 0} items`, {
+      event: 'ge.rules.loaded',
+      context: {
+        operation: 'load_sell_rules',
+      },
+      data: {
+        duplicateEquip: !!sellRules.sellDuplicateEquipment,
+        alwaysSellCount: sellRules.alwaysSell?.length || 0,
+        neverSellCount: sellRules.neverSell?.length || 0,
+      },
+    });
   } catch (err) {
-    log.warn(`[GE] Could not load sell-rules.json: ${err.message} — GE selling disabled`);
+    geLog.warn(`[GE] Could not load sell-rules.json: ${err.message} — GE selling disabled`, {
+      event: 'ge.rules.load_failed',
+      reasonCode: 'request_failed',
+      context: {
+        operation: 'load_sell_rules',
+      },
+      error: err,
+    });
     sellRules = null;
   }
 }
@@ -105,7 +124,17 @@ export async function determinePrice(code) {
       return Math.max(targetPrice, minPrice);
     }
   } catch (err) {
-    log.warn(`[GE] Could not fetch listings for ${code}: ${err.message}`);
+    geLog.warn(`[GE] Could not fetch listings for ${code}: ${err.message}`, {
+      event: 'ge.pricing.listings_failed',
+      reasonCode: 'request_failed',
+      context: {
+        operation: 'determine_price',
+      },
+      data: {
+        code,
+      },
+      error: err,
+    });
   }
 
   // Fallback: price based on item level
@@ -126,12 +155,27 @@ export async function collectCompletedOrders(ctx) {
     const orders = Array.isArray(result) ? result : [];
 
     if (orders.length > 0) {
-      log.info(`[${ctx.name}] GE: ${orders.length} active order(s)`);
+      geLog.info(`[${ctx.name}] GE: ${orders.length} active order(s)`, {
+        event: 'ge.orders.active',
+        context: {
+          character: ctx.name,
+        },
+        data: {
+          count: orders.length,
+        },
+      });
     }
 
     return orders;
   } catch (err) {
-    log.warn(`[${ctx.name}] GE: could not fetch orders: ${err.message}`);
+    geLog.warn(`[${ctx.name}] GE: could not fetch orders: ${err.message}`, {
+      event: 'ge.orders.fetch_failed',
+      reasonCode: 'request_failed',
+      context: {
+        character: ctx.name,
+      },
+      error: err,
+    });
     return [];
   }
 }
@@ -152,18 +196,46 @@ export async function cancelStaleOrders(ctx, activeOrders) {
     if (createdAt >= cutoff) continue;
 
     try {
-      log.info(`[${ctx.name}] GE: cancelling stale order ${order.id} (${order.code} x${order.quantity})`);
+      geLog.info(`[${ctx.name}] GE: cancelling stale order ${order.id} (${order.code} x${order.quantity})`, {
+        event: 'ge.order.cancel.start',
+        context: {
+          character: ctx.name,
+        },
+        data: {
+          orderId: order.id,
+          code: order.code,
+          quantity: order.quantity,
+        },
+      });
       const result = await api.cancelGE(order.id, ctx.name);
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
       cancelled++;
     } catch (err) {
-      log.warn(`[${ctx.name}] GE: could not cancel order ${order.id}: ${err.message}`);
+      geLog.warn(`[${ctx.name}] GE: could not cancel order ${order.id}: ${err.message}`, {
+        event: 'ge.order.cancel.failed',
+        reasonCode: 'request_failed',
+        context: {
+          character: ctx.name,
+        },
+        data: {
+          orderId: order.id,
+        },
+        error: err,
+      });
     }
   }
 
   if (cancelled > 0) {
-    log.info(`[${ctx.name}] GE: cancelled ${cancelled} stale order(s)`);
+    geLog.info(`[${ctx.name}] GE: cancelled ${cancelled} stale order(s)`, {
+      event: 'ge.order.cancel.done',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        cancelled,
+      },
+    });
   }
   return cancelled;
 }
@@ -181,13 +253,25 @@ export async function cancelStaleOrders(ctx, activeOrders) {
  */
 export async function executeSellFlow(ctx) {
   if (_sellLock) {
-    log.info(`[${ctx.name}] GE: waiting for another character's sell flow to finish`);
+    geLog.info(`[${ctx.name}] GE: waiting for another character's sell flow to finish`, {
+      event: 'ge.sell.lock_wait',
+      reasonCode: 'yield_for_backoff',
+      context: {
+        character: ctx.name,
+      },
+    });
   }
 
   return withSellLock(async () => {
     const geLocation = gameData.getGELocation();
     if (!geLocation) {
-      log.warn(`[${ctx.name}] GE: location unknown, skipping sell flow`);
+      geLog.warn(`[${ctx.name}] GE: location unknown, skipping sell flow`, {
+        event: 'ge.sell.skipped',
+        reasonCode: 'no_path',
+        context: {
+          character: ctx.name,
+        },
+      });
       return 0;
     }
 
@@ -196,11 +280,25 @@ export async function executeSellFlow(ctx) {
 
     const candidates = analyzeSellCandidates(ctx, bankItems);
     if (candidates.length === 0) {
-      log.info(`[${ctx.name}] GE: no items to sell`);
+      geLog.debug(`[${ctx.name}] GE: no items to sell`, {
+        event: 'ge.sell.skipped',
+        reasonCode: 'yield_for_backoff',
+        context: {
+          character: ctx.name,
+        },
+      });
       return 0;
     }
 
-    log.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity} (${c.reason})`).join(', ')}`);
+    geLog.info(`[${ctx.name}] GE: ${candidates.length} item(s) to sell: ${candidates.map(c => `${c.code} x${c.quantity} (${c.reason})`).join(', ')}`, {
+      event: 'ge.sell.candidates',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        count: candidates.length,
+      },
+    });
 
     // Step 1: Withdraw sell candidates from bank (must be at bank)
     const withdrawResult = await withdrawBankItems(
@@ -214,11 +312,31 @@ export async function executeSellFlow(ctx) {
     );
     const withdrawn = withdrawResult.withdrawn;
     for (const row of withdrawResult.failed) {
-      log.warn(`[${ctx.name}] GE: could not withdraw ${row.code}: ${row.error}`);
+      geLog.warn(`[${ctx.name}] GE: could not withdraw ${row.code}: ${row.error}`, {
+        event: 'ge.sell.withdraw_failed',
+        reasonCode: 'bank_unavailable',
+        context: {
+          character: ctx.name,
+        },
+        data: {
+          code: row.code,
+          error: row.error,
+        },
+      });
     }
     for (const row of withdrawResult.skipped) {
       if (!row.reason.startsWith('partial fill')) {
-        log.warn(`[${ctx.name}] GE: skipped ${row.code} (${row.reason})`);
+        geLog.debug(`[${ctx.name}] GE: skipped ${row.code} (${row.reason})`, {
+          event: 'ge.sell.withdraw_skipped',
+          reasonCode: 'bank_unavailable',
+          context: {
+            character: ctx.name,
+          },
+          data: {
+            code: row.code,
+            reason: row.reason,
+          },
+        });
       }
     }
 
@@ -236,10 +354,27 @@ export async function executeSellFlow(ctx) {
     if (totalFees > charGold) {
       const needed = totalFees - charGold;
       try {
-        log.info(`[${ctx.name}] GE: withdrawing ${needed}g from bank for listing fees`);
+        geLog.info(`[${ctx.name}] GE: withdrawing ${needed}g from bank for listing fees`, {
+          event: 'ge.sell.fees_withdraw',
+          context: {
+            character: ctx.name,
+          },
+          data: {
+            needed,
+            totalFees,
+            charGold,
+          },
+        });
         await withdrawGoldFromBank(ctx, needed, { reason: 'GE listing fees withdrawal' });
       } catch (err) {
-        log.warn(`[${ctx.name}] GE: could not withdraw gold for fees: ${err.message}`);
+        geLog.warn(`[${ctx.name}] GE: could not withdraw gold for fees: ${err.message}`, {
+          event: 'ge.sell.fees_withdraw_failed',
+          reasonCode: 'bank_unavailable',
+          context: {
+            character: ctx.name,
+          },
+          error: err,
+        });
       }
     }
 
@@ -257,7 +392,18 @@ export async function executeSellFlow(ctx) {
       // Safety net: verify we actually have the items before listing
       const actualQty = ctx.itemCount(item.code);
       if (actualQty < item.quantity) {
-        log.warn(`[${ctx.name}] GE: ${item.code} — inventory has ${actualQty}, expected ${item.quantity}, adjusting`);
+        geLog.warn(`[${ctx.name}] GE: ${item.code} — inventory has ${actualQty}, expected ${item.quantity}, adjusting`, {
+          event: 'ge.sell.quantity_adjusted',
+          reasonCode: 'routine_conditions_changed',
+          context: {
+            character: ctx.name,
+          },
+          data: {
+            code: item.code,
+            expected: item.quantity,
+            actual: actualQty,
+          },
+        });
         item.quantity = actualQty;
       }
       if (item.quantity <= 0) continue;
@@ -267,15 +413,54 @@ export async function executeSellFlow(ctx) {
         ctx.applyActionResult(result);
         await api.waitForCooldown(result);
         ordersCreated++;
-        log.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${item.price}g each`);
+        geLog.info(`[${ctx.name}] GE: listed ${item.code} x${item.quantity} @ ${item.price}g each`, {
+          event: 'ge.sell.listed',
+          context: {
+            character: ctx.name,
+          },
+          data: {
+            code: item.code,
+            quantity: item.quantity,
+            price: item.price,
+          },
+        });
       } catch (err) {
         if (err.code === 437) {
-          log.info(`[${ctx.name}] GE: ${item.code} cannot be sold on GE, will re-deposit`);
+          geLog.info(`[${ctx.name}] GE: ${item.code} cannot be sold on GE, will re-deposit`, {
+            event: 'ge.sell.unsellable',
+            reasonCode: 'request_failed',
+            context: {
+              character: ctx.name,
+            },
+            data: {
+              code: item.code,
+            },
+          });
         } else if (err.code === 433) {
-          log.warn(`[${ctx.name}] GE: order limit reached (100), stopping`);
+          geLog.warn(`[${ctx.name}] GE: order limit reached (100), stopping`, {
+            event: 'ge.sell.stopped',
+            reasonCode: 'request_failed',
+            context: {
+              character: ctx.name,
+            },
+            data: {
+              code: item.code,
+            },
+            error: err,
+          });
           break;
         } else {
-          log.warn(`[${ctx.name}] GE: failed to sell ${item.code}: ${err.message}`);
+          geLog.warn(`[${ctx.name}] GE: failed to sell ${item.code}: ${err.message}`, {
+            event: 'ge.sell.failed',
+            reasonCode: 'request_failed',
+            context: {
+              character: ctx.name,
+            },
+            data: {
+              code: item.code,
+            },
+            error: err,
+          });
         }
       }
     }

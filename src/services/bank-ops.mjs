@@ -23,6 +23,8 @@ import {
   _resetForTests as _resetBankTravelForTests,
 } from './bank-travel.mjs';
 
+const bankLog = log.createLogger({ scope: 'service.bank-ops' });
+
 let _api = api;
 let _forcedBatchReserveFailures = 0;
 
@@ -176,9 +178,29 @@ async function executeReservedWithdraw(ctx, req, reservationId, reason, result) 
   }
 
   if (qty < requested) {
-    log.info(`[${ctx.name}] Withdrawing ${req.code}: requested ${requested}, only ${qty} available`);
+    bankLog.info(`[${ctx.name}] Withdrawing ${req.code}: requested ${requested}, only ${qty} available`, {
+      event: 'bank.withdraw.partial',
+      reasonCode: 'bank_unavailable',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        code: req.code,
+        requested,
+        quantity: qty,
+      },
+    });
   } else {
-    log.info(`[${ctx.name}] Withdrawing ${req.code} x${qty}`);
+    bankLog.info(`[${ctx.name}] Withdrawing ${req.code} x${qty}`, {
+      event: 'bank.withdraw.start',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        code: req.code,
+        quantity: qty,
+      },
+    });
   }
 
   try {
@@ -271,7 +293,16 @@ export async function withdrawBankItems(ctx, requests, opts = {}) {
     }
   } else {
     const reserveReason = batch.reason || 'reservation failed';
-    log.warn(`[${ctx.name}] Could not reserve full withdrawal batch (${reserveReason}), falling back to per-item reservations`);
+    bankLog.warn(`[${ctx.name}] Could not reserve full withdrawal batch (${reserveReason}), falling back to per-item reservations`, {
+      event: 'bank.withdraw.reserve_fallback',
+      reasonCode: 'bank_unavailable',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        reserveReason,
+      },
+    });
     for (const req of plan) {
       await executeReservedWithdraw(ctx, req, null, reason, result);
     }
@@ -327,11 +358,29 @@ export async function depositBankItems(ctx, items, opts = {}) {
       const contributions = recordDeposits({ charName: ctx.name, items: normalized });
       for (const entry of contributions) {
         if (entry.opportunistic) {
-          log.info(`[${ctx.name}] Opportunistic order contribution: ${entry.itemCode} x${entry.quantity} → order ${entry.orderId} (${entry.status})`);
+          bankLog.info(`[${ctx.name}] Opportunistic order contribution: ${entry.itemCode} x${entry.quantity} -> order ${entry.orderId} (${entry.status})`, {
+            event: 'bank.deposit.order_contribution',
+            context: {
+              character: ctx.name,
+            },
+            data: {
+              itemCode: entry.itemCode,
+              quantity: entry.quantity,
+              orderId: entry.orderId,
+              status: entry.status,
+            },
+          });
         }
       }
     } catch (err) {
-      log.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`);
+      bankLog.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`, {
+        event: 'bank.deposit.order_contribution_failed',
+        reasonCode: 'request_failed',
+        context: {
+          character: ctx.name,
+        },
+        error: err,
+      });
     }
     return normalized;
   } catch (err) {
@@ -364,7 +413,16 @@ export async function depositAllInventory(ctx, opts = {}) {
 
   if (items.length === 0) return [];
 
-  log.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`);
+  bankLog.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`, {
+    event: 'bank.deposit.start',
+    context: {
+      character: ctx.name,
+    },
+    data: {
+      count: items.length,
+      items,
+    },
+  });
   return depositBankItems(ctx, items, {
     reason: opts.reason || 'bank-ops depositAllInventory',
   });

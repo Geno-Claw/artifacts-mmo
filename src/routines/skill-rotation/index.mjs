@@ -95,7 +95,9 @@ export class SkillRotationRoutine extends BaseRoutine {
       const skill = await this.rotation.pickNext(ctx);
       if (!skill) {
         log.warn(`[${ctx.name}] Rotation: no viable skills, idling`);
-        return false;
+        return this._yield('yield_for_backoff', {
+          reason: 'no_viable_skills',
+        });
       }
       this._foodWithdrawn = false;
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
@@ -114,12 +116,15 @@ export class SkillRotationRoutine extends BaseRoutine {
       const exchangeClaim = await this._ensureOrderClaim(ctx, 'task_exchange');
       if (exchangeClaim) {
         const result = await this._fulfillTaskExchangeOrderClaim(ctx);
-        if (result.attempted) {
+        if (result.attempted || result.fulfilled) {
           if (!result.fulfilled) {
             this._nextExchangeClaimAttemptAt = this._nowMs() + PROACTIVE_EXCHANGE_BACKOFF_MS;
           }
           return true;
         }
+        // Exchange not attempted — clear claim and back off to avoid tight loop
+        await this._clearActiveOrderClaim(ctx, { reason: 'exchange_not_attempted' });
+        this._nextExchangeClaimAttemptAt = this._nowMs() + PROACTIVE_EXCHANGE_BACKOFF_MS;
       }
     }
 

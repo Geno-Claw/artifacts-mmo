@@ -10,6 +10,7 @@ const {
   recordCooldown,
   recordLog,
   recordRoutineState,
+  queryUiCharacterLogs,
 } = uiState;
 
 function wait(ms) {
@@ -74,6 +75,7 @@ function assertDetailShape(detail, expectedName) {
     'equipment',
     'stats',
     'logHistory',
+    'interruptionHistory',
     'updatedAtMs',
   ], 'detail payload');
 
@@ -87,6 +89,7 @@ function assertDetailShape(detail, expectedName) {
   assert.ok(Array.isArray(detail.inventory), 'detail.inventory must be an array');
   assert.ok(Array.isArray(detail.equipment), 'detail.equipment must be an array');
   assert.ok(Array.isArray(detail.logHistory), 'detail.logHistory must be an array');
+  assert.ok(Array.isArray(detail.interruptionHistory), 'detail.interruptionHistory must be an array');
 
   for (const [idx, skill] of detail.skills.entries()) {
     assertHasKeys(skill, ['code', 'level', 'xp', 'maxXp', 'pct'], `detail.skills[${idx}]`);
@@ -227,6 +230,28 @@ async function run() {
   assert.equal(afterLogs.logHistory.length, 20);
   assert.equal(afterLogs.logHistory[0].line, 'line-5');
   assert.equal(afterLogs.logLatest, 'line-24');
+
+  recordLog('Alpha', {
+    level: 'info',
+    line: 'preempted-sample',
+    at: 999,
+    scope: 'scheduler',
+    event: 'routine.preempted',
+    reasonCode: 'preempted_by_higher_priority',
+    routine: 'Skill Rotation',
+    runId: 12,
+    tickId: 34,
+  });
+  const queryRes = queryUiCharacterLogs('Alpha', {
+    level: 'info',
+    scope: 'scheduler',
+    event: 'routine.preempted',
+    reasonCode: 'preempted_by_higher_priority',
+    limit: 5,
+  });
+  assert.ok(queryRes, 'queryUiCharacterLogs should return payload');
+  assert.equal(queryRes.logs.length, 1, 'query should return preempted entry');
+  assert.equal(queryRes.logs[0].line, 'preempted-sample');
 
   recordCharacterSnapshot('Beta', {
     level: 1,

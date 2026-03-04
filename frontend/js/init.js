@@ -115,6 +115,7 @@ function setupModalFramework() {
   if (modalRefs.content) {
     modalRefs.content.addEventListener('click', onModalContentClick);
     modalRefs.content.addEventListener('input', onModalContentInput);
+    modalRefs.content.addEventListener('change', onModalContentInput);
   }
   document.addEventListener('keydown', onDocumentKeydown);
   renderControlPanel();

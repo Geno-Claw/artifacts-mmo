@@ -567,6 +567,9 @@ function openCharacterModal(name, kind) {
   modalState.achievementTypeFilter = 'all';
   modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
+  modalState.logLevelFilter = 'all';
+  modalState.logScopeFilter = '';
+  modalState.logReasonFilter = '';
   modalState.configEditorText = '';
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
@@ -601,6 +604,9 @@ function openConfigModal() {
   modalState.achievementTypeFilter = 'all';
   modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
+  modalState.logLevelFilter = 'all';
+  modalState.logScopeFilter = '';
+  modalState.logReasonFilter = '';
   modalState.configEditorText = '';
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
@@ -631,6 +637,9 @@ function openBankModal() {
   modalState.detail = null;
   modalState.errorText = '';
   modalState.activeSnapshotUpdatedAtMs = 0;
+  modalState.logLevelFilter = 'all';
+  modalState.logScopeFilter = '';
+  modalState.logReasonFilter = '';
 
   modalRefs.host.hidden = false;
   document.body.classList.add('modal-open');
@@ -660,6 +669,9 @@ function openAchievementsModal() {
   modalState.achievementTypeFilter = 'all';
   modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
+  modalState.logLevelFilter = 'all';
+  modalState.logScopeFilter = '';
+  modalState.logReasonFilter = '';
 
   modalRefs.host.hidden = false;
   document.body.classList.add('modal-open');
@@ -728,6 +740,9 @@ function closeCharacterModal({ restoreFocus = true } = {}) {
   modalState.achievementTypeFilter = 'all';
   modalState.achievementExpandedSet.clear();
   modalState.achievementSearch = '';
+  modalState.logLevelFilter = 'all';
+  modalState.logScopeFilter = '';
+  modalState.logReasonFilter = '';
   modalState.configEditorText = '';
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];

@@ -11,6 +11,8 @@ import { hpNeededForFight, simulateCombat } from './combat-simulator.mjs';
 import { withdrawBankItems } from './bank-ops.mjs';
 import { logWithdrawalWarnings } from '../utils.mjs';
 
+const foodLog = log.createLogger({ scope: 'service.food' });
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 function isConditionNotMet(err) {
@@ -91,18 +93,47 @@ export async function restUntil(ctx, hpPct = 80) {
     const countToEat = Math.min(countNeeded, food.quantity);
     if (countToEat <= 0) continue;
 
-    log.info(`[${ctx.name}] Eating ${food.code} x${countToEat} (+${food.hpRestore}hp each)`);
+    foodLog.info(`[${ctx.name}] Eating ${food.code} x${countToEat} (+${food.hpRestore}hp each)`, {
+      event: 'food.consume.start',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        code: food.code,
+        quantity: countToEat,
+        hpRestore: food.hpRestore,
+      },
+    });
     try {
       const result = await api.useItem(food.code, countToEat, ctx.name);
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
     } catch (err) {
       if (err.code === 476) {
-        log.warn(`[${ctx.name}] ${food.code} is not consumable, skipping`);
+        foodLog.debug(`[${ctx.name}] ${food.code} is not consumable, skipping`, {
+          event: 'food.consume.skipped',
+          reasonCode: 'insufficient_skill',
+          context: {
+            character: ctx.name,
+          },
+          data: {
+            code: food.code,
+          },
+        });
         continue;
       }
       if (isConditionNotMet(err)) {
-        log.warn(`[${ctx.name}] Cannot use ${food.code} right now (${err.message}), skipping`);
+        foodLog.debug(`[${ctx.name}] Cannot use ${food.code} right now (${err.message}), skipping`, {
+          event: 'food.consume.skipped',
+          reasonCode: 'routine_conditions_changed',
+          context: {
+            character: ctx.name,
+          },
+          error: err,
+          data: {
+            code: food.code,
+          },
+        });
         continue;
       }
       throw err;
@@ -116,7 +147,17 @@ export async function restUntil(ctx, hpPct = 80) {
   const MAX_REST_RETRIES = 3;
   while (ctx.hpPercent() < hpPct && !api.isShuttingDown()) {
     const c = ctx.get();
-    log.info(`[${ctx.name}] Resting (${c.hp}/${c.max_hp} HP, want ${hpPct}%)`);
+    foodLog.info(`[${ctx.name}] Resting (${c.hp}/${c.max_hp} HP, want ${hpPct}%)`, {
+      event: 'food.rest.start',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        hp: c.hp,
+        maxHp: c.max_hp,
+        targetPct: hpPct,
+      },
+    });
     try {
       const result = await api.rest(ctx.name);
       ctx.applyActionResult(result);
@@ -126,10 +167,28 @@ export async function restUntil(ctx, hpPct = 80) {
       if (isConditionNotMet(err)) {
         restRetries++;
         if (restRetries >= MAX_REST_RETRIES) {
-          log.warn(`[${ctx.name}] Rest failed ${MAX_REST_RETRIES} times (${err.message}); giving up`);
+          foodLog.warn(`[${ctx.name}] Rest failed ${MAX_REST_RETRIES} times (${err.message}); giving up`, {
+            event: 'food.rest.failed',
+            reasonCode: 'request_failed',
+            context: {
+              character: ctx.name,
+            },
+            error: err,
+          });
           return false;
         }
-        log.warn(`[${ctx.name}] Rest unavailable (${err.message}), retry ${restRetries}/${MAX_REST_RETRIES}`);
+        foodLog.debug(`[${ctx.name}] Rest unavailable (${err.message}), retry ${restRetries}/${MAX_REST_RETRIES}`, {
+          event: 'food.rest.retry',
+          reasonCode: 'routine_conditions_changed',
+          context: {
+            character: ctx.name,
+          },
+          error: err,
+          data: {
+            retry: restRetries,
+            maxRetries: MAX_REST_RETRIES,
+          },
+        });
         await new Promise(r => setTimeout(r, 3000));
         continue;
       }
@@ -152,15 +211,48 @@ export async function restBeforeFight(ctx, monsterCode) {
 
   const targetPct = Math.ceil((minHp / c.max_hp) * 100);
   if (targetPct > 100) {
-    log.warn(`[${ctx.name}] Cannot fight ${monsterCode} — need ${minHp}hp but max is ${c.max_hp}hp (${targetPct}%)`);
+    foodLog.warn(`[${ctx.name}] Cannot fight ${monsterCode} — need ${minHp}hp but max is ${c.max_hp}hp (${targetPct}%)`, {
+      event: 'food.rest_before_fight.unwinnable',
+      reasonCode: 'unwinnable_combat',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        monsterCode,
+        requiredHp: minHp,
+        maxHp: c.max_hp,
+      },
+    });
     return false;
   }
-  log.info(`[${ctx.name}] Need ${minHp}hp (${targetPct}%) to fight ${monsterCode}, have ${c.hp}hp`);
+  foodLog.info(`[${ctx.name}] Need ${minHp}hp (${targetPct}%) to fight ${monsterCode}, have ${c.hp}hp`, {
+    event: 'food.rest_before_fight.required',
+    context: {
+      character: ctx.name,
+    },
+    data: {
+      monsterCode,
+      currentHp: c.hp,
+      requiredHp: minHp,
+      targetPct,
+    },
+  });
   const recovered = await restUntil(ctx, targetPct);
   if (!recovered) {
     const fresh = ctx.get();
     if (fresh.hp < minHp) {
-      log.warn(`[${ctx.name}] Cannot reach ${minHp}hp for ${monsterCode} (have ${fresh.hp}hp)`);
+      foodLog.warn(`[${ctx.name}] Cannot reach ${minHp}hp for ${monsterCode} (have ${fresh.hp}hp)`, {
+        event: 'food.rest_before_fight.failed',
+        reasonCode: 'yield_for_rest',
+        context: {
+          character: ctx.name,
+        },
+        data: {
+          monsterCode,
+          currentHp: fresh.hp,
+          requiredHp: minHp,
+        },
+      });
       return false;
     }
   }
@@ -194,7 +286,17 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
   const totalHealingNeeded = Math.max(0, damageTaken * numFights - (charStats.max_hp - 1));
 
   if (totalHealingNeeded <= 0) {
-    log.info(`[${ctx.name}] Food: no healing needed for ${numFights} fights vs ${monsterCode}`);
+    foodLog.debug(`[${ctx.name}] Food: no healing needed for ${numFights} fights vs ${monsterCode}`, {
+      event: 'food.withdraw.skipped',
+      reasonCode: 'yield_for_backoff',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        monsterCode,
+        numFights,
+      },
+    });
     return true;
   }
 
@@ -207,7 +309,17 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
 
   const healingDeficit = totalHealingNeeded - inventoryHealing;
   if (healingDeficit <= 0) {
-    log.info(`[${ctx.name}] Food: inventory already covers ${numFights} fights vs ${monsterCode}`);
+    foodLog.debug(`[${ctx.name}] Food: inventory already covers ${numFights} fights vs ${monsterCode}`, {
+      event: 'food.withdraw.skipped',
+      reasonCode: 'yield_for_backoff',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        monsterCode,
+        numFights,
+      },
+    });
     return true;
   }
 
@@ -215,7 +327,16 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
   const bank = await gameData.getBankItems(true);
   const bankFoods = findBankFood(bank, ctx.get());
   if (bankFoods.length === 0) {
-    log.info(`[${ctx.name}] Food: no usable food in bank, will rely on rest API`);
+    foodLog.info(`[${ctx.name}] Food: no usable food in bank, will rely on rest API`, {
+      event: 'food.withdraw.skipped',
+      reasonCode: 'bank_unavailable',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        monsterCode,
+      },
+    });
     return true;
   }
 
@@ -243,14 +364,34 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
       w.quantity = Math.max(1, Math.floor(w.quantity * scale));
     }
   } else if (space <= 0) {
-    log.info(`[${ctx.name}] Food: no inventory space for food`);
+    foodLog.info(`[${ctx.name}] Food: no inventory space for food`, {
+      event: 'food.withdraw.skipped',
+      reasonCode: 'inventory_full',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        monsterCode,
+      },
+    });
     return true;
   }
 
   // Withdraw from bank (bank-ops handles travel to the nearest accessible bank)
   for (const w of toWithdraw) {
     if (w.quantity <= 0) continue;
-    log.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`);
+    foodLog.info(`[${ctx.name}] Food: withdrawing ${w.code} x${w.quantity} for ${numFights} fights vs ${monsterCode}`, {
+      event: 'food.withdraw.start',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        code: w.code,
+        quantity: w.quantity,
+        monsterCode,
+        numFights,
+      },
+    });
   }
   const withdrawalResult = await withdrawBankItems(ctx, toWithdraw, {
     reason: `food withdrawal for ${monsterCode}`,

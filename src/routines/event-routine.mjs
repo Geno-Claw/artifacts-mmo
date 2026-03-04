@@ -117,7 +117,7 @@ export class EventRoutine extends BaseRoutine {
     const target = this._targetEvent;
     if (!target) {
       this._canRunBackoffUntil = Date.now() + 30_000;
-      return false;
+      return this._yield('yield_for_backoff', { reason: 'no_target' });
     }
 
     // Check event still active
@@ -125,13 +125,14 @@ export class EventRoutine extends BaseRoutine {
       log.info(`[${ctx.name}] ${TAG}: ${target.code} despawned, aborting`);
       this._clearTarget();
       this._canRunBackoffUntil = Date.now() + 30_000;
-      return false;
+      return this._yield('event_expired', { eventCode: target.code });
     }
 
     const result = await this._executeByType(ctx, target);
     if (!result) {
       // Event couldn't act (sim fail, cooldown, etc.) — back off 30s
       this._canRunBackoffUntil = Date.now() + 30_000;
+      this._setYieldReason('yield_for_backoff', { eventCode: target.code });
     } else {
       // Successfully acted — clear any backoff
       this._canRunBackoffUntil = 0;
@@ -246,7 +247,10 @@ export class EventRoutine extends BaseRoutine {
         return false;
       }
       log.info(`[${ctx.name}] ${TAG}: insufficient HP for ${monsterCode}, yielding for rest`);
-      return false;
+      return this._yield('yield_for_rest', {
+        eventCode: target.code,
+        monsterCode,
+      });
     }
 
     // Fight
@@ -259,14 +263,17 @@ export class EventRoutine extends BaseRoutine {
 
       if (ctx.inventoryFull()) {
         log.info(`[${ctx.name}] ${TAG}: inventory full, yielding for deposit`);
-        return false; // Preserve target + prepared state for resumption
+        return this._yield('yield_for_deposit', {
+          eventCode: target.code,
+          monsterCode,
+        }); // Preserve target + prepared state for resumption
       }
 
       // Check time remaining
       if (eventManager.getTimeRemaining(target.code) < 30_000) {
         log.info(`[${ctx.name}] ${TAG}: ${target.code} expiring soon, yielding`);
         this._clearTarget();
-        return false;
+        return this._yield('event_expired', { eventCode: target.code });
       }
 
       return true; // Continue loop
@@ -358,13 +365,16 @@ export class EventRoutine extends BaseRoutine {
 
     if (ctx.inventoryFull()) {
       log.info(`[${ctx.name}] ${TAG}: inventory full, yielding for deposit`);
-      return false; // Preserve target + prepared state for resumption
+      return this._yield('yield_for_deposit', {
+        eventCode: target.code,
+        resourceCode,
+      }); // Preserve target + prepared state for resumption
     }
 
     if (eventManager.getTimeRemaining(target.code) < 30_000) {
       log.info(`[${ctx.name}] ${TAG}: ${target.code} expiring soon, yielding`);
       this._clearTarget();
-      return false;
+      return this._yield('event_expired', { eventCode: target.code });
     }
 
     return true; // Continue gathering
@@ -589,13 +599,16 @@ export class EventRoutine extends BaseRoutine {
     if (ctx.inventoryFull()) {
       log.info(`[${ctx.name}] ${TAG}: inventory full after purchase, yielding`);
       this._clearTarget();
-      return false;
+      return this._yield('yield_for_deposit', {
+        eventCode: target.code,
+        npcCode,
+      });
     }
 
     if (eventManager.getTimeRemaining(target.code) < 30_000) {
       log.info(`[${ctx.name}] ${TAG}: ${target.code} expiring soon, yielding`);
       this._clearTarget();
-      return false;
+      return this._yield('event_expired', { eventCode: target.code });
     }
 
     return true; // Continue buying loop

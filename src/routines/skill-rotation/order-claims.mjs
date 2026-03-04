@@ -10,7 +10,7 @@ import {
   releaseClaim,
   renewClaim,
 } from '../../services/order-board.mjs';
-import { depositBankItems } from '../../services/bank-ops.mjs';
+import { depositBankItems, withdrawBankItems } from '../../services/bank-ops.mjs';
 import { sortOrdersForClaim } from '../../services/order-priority.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST } from './constants.mjs';
 
@@ -541,12 +541,40 @@ export async function acquireTaskExchangeOrderClaim(ctx, routine) {
 }
 
 export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
-  const claim = routine._syncActiveClaimFromBoard();
+  let claim = routine._syncActiveClaimFromBoard();
   if (!claim || claim.sourceType !== 'task_exchange') {
     return { attempted: false, fulfilled: false };
   }
 
   const itemCode = claim.itemCode;
+
+  // Credit any existing bank items to this order before exchanging.
+  // Items deposited before the order existed won't be credited via recordDeposits,
+  // so we withdraw them and re-deposit to trigger the credit.
+  const bankItems = await routine._getBankItems(true);
+  const bankQty = bankItems.get(itemCode) || 0;
+  const invQty = ctx.itemCount(itemCode);
+  if (bankQty > 0 && claim.remainingQty > invQty) {
+    const withdrawQty = Math.min(claim.remainingQty - invQty, bankQty);
+    await withdrawBankItems(ctx, [{ code: itemCode, quantity: withdrawQty }], {
+      reason: `exchange order credit: ${itemCode}`,
+      mode: 'partial',
+      retryStaleOnce: true,
+    });
+    const toDeposit = ctx.itemCount(itemCode);
+    if (toDeposit > 0) {
+      await depositBankItems(ctx, [{ code: itemCode, quantity: toDeposit }], {
+        reason: `order claim ${claim.orderId}`,
+      });
+    }
+    claim = routine._syncActiveClaimFromBoard();
+    if (!claim) {
+      log.info(`[${ctx.name}] Exchange order fulfilled (bank credit): ${itemCode}`);
+      return { attempted: true, fulfilled: true };
+    }
+  }
+
+  // Exchange task coins for any remaining quantity.
   const targetMap = new Map([[itemCode, claim.remainingQty]]);
 
   const result = await routine._runTaskExchange(ctx, {

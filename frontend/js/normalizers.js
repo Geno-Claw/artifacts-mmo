@@ -298,12 +298,39 @@ function normalizeLogHistory(rawHistory) {
   return rawHistory
     .map((item) => {
       if (typeof item === 'string') {
-        return { atMs: 0, level: 'info', line: item };
+        return {
+          atMs: 0,
+          level: 'info',
+          line: item,
+          scope: '',
+          event: '',
+          reasonCode: '',
+          routine: '',
+          runId: null,
+          tickId: null,
+          traceId: '',
+          requestId: '',
+          data: null,
+        };
       }
+      const context = item?.context && typeof item.context === 'object' ? item.context : {};
       return {
         atMs: Math.max(0, toNumber(item?.atMs ?? item?.at ?? item?.ts, 0)),
-        level: safeText(item?.level, 'info'),
+        level: safeText(item?.level, 'info').toLowerCase(),
         line: safeText(item?.line ?? item?.message, ''),
+        scope: safeText(item?.scope, ''),
+        event: safeText(item?.event, ''),
+        reasonCode: safeText(item?.reasonCode, ''),
+        routine: safeText(item?.routine ?? context.routine, ''),
+        runId: Number.isFinite(Number(item?.runId ?? context.runId))
+          ? Number(item?.runId ?? context.runId)
+          : null,
+        tickId: Number.isFinite(Number(item?.tickId ?? context.tickId))
+          ? Number(item?.tickId ?? context.tickId)
+          : null,
+        traceId: safeText(item?.traceId ?? context.traceId, ''),
+        requestId: safeText(item?.requestId ?? context.requestId, ''),
+        data: item?.data ?? null,
       };
     })
     .filter((entry) => !!entry.line)
@@ -632,6 +659,37 @@ function getAchievementTypeFilterValue() {
 
 function getAchievementFilterValue() {
   return ACHIEVEMENT_FILTER_LABELS[modalState.achievementFilter] ? modalState.achievementFilter : 'all';
+}
+
+const LOG_LEVEL_FILTER_LABELS = Object.freeze({
+  all: 'All',
+  info: 'Info',
+  debug: 'Debug',
+  warn_error: 'Warn/Error',
+});
+
+function getLogLevelFilterValue() {
+  return LOG_LEVEL_FILTER_LABELS[modalState.logLevelFilter] ? modalState.logLevelFilter : 'all';
+}
+
+function filterLogEntries(rows = []) {
+  const levelFilter = getLogLevelFilterValue();
+  const scopeFilter = safeText(modalState.logScopeFilter, '').toLowerCase();
+  const reasonFilter = safeText(modalState.logReasonFilter, '').toLowerCase();
+
+  return rows.filter((row) => {
+    const level = safeText(row?.level, '').toLowerCase();
+    const scope = safeText(row?.scope, '').toLowerCase();
+    const reason = safeText(row?.reasonCode, '').toLowerCase();
+
+    if (levelFilter === 'info' && level !== 'info' && level !== 'stat') return false;
+    if (levelFilter === 'debug' && level !== 'debug') return false;
+    if (levelFilter === 'warn_error' && level !== 'warn' && level !== 'error') return false;
+
+    if (scopeFilter && scope !== scopeFilter) return false;
+    if (reasonFilter && reason !== reasonFilter) return false;
+    return true;
+  });
 }
 
 function getAchievementState(row) {

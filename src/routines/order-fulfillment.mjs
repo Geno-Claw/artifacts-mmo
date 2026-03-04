@@ -104,7 +104,10 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
       // instead of spinning on unfulfillable orders.
       this._noClaimBackoffUntil = Date.now() + NO_CLAIM_BACKOFF_MS;
       log.info(`[${ctx.name}] ${TAG}: no claimable orders — backing off ${NO_CLAIM_BACKOFF_MS / 1000}s`);
-      return false;
+      return this._yield('yield_for_backoff', {
+        reason: 'no_claimable_orders',
+        backoffMs: NO_CLAIM_BACKOFF_MS,
+      });
     }
 
     // Successfully claimed — clear any backoff.

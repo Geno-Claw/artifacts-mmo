@@ -1091,6 +1091,71 @@ body::before {
   padding-right: 4px;
 }
 
+.modal-log-scroll--short {
+  max-height: 34vh;
+}
+
+.log-filter-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.log-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.log-filter-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(42, 36, 32, 0.05);
+  border: none;
+  padding: 5px 7px;
+  cursor: pointer;
+  line-height: 1;
+  box-shadow: 1px 1px 0 rgba(42, 36, 32, 0.15);
+}
+
+.log-filter-btn:hover {
+  background: rgba(42, 36, 32, 0.1);
+}
+
+.log-filter-btn.is-active {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.log-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 5px;
+  letter-spacing: 1px;
+  color: var(--ink-faint);
+}
+
+.log-filter-field select {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.5);
+  border: none;
+  padding: 6px 7px;
+  box-shadow:
+    inset 0 0 0 1px rgba(42, 36, 32, 0.18),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
+.log-filter-field select:focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--ink),
+    1px 1px 0 rgba(42, 36, 32, 0.08);
+}
+
 /* Log entry level tinting */
 .log-entry--error {
   background: rgba(200, 48, 40, 0.08);
@@ -1100,6 +1165,16 @@ body::before {
 .log-entry--warn {
   background: rgba(200, 168, 80, 0.10);
   border-left-color: rgba(200, 168, 80, 0.50);
+}
+
+.log-entry--debug {
+  background: rgba(56, 72, 120, 0.08);
+  border-left-color: rgba(56, 72, 120, 0.45);
+}
+
+.log-entry--info {
+  background: rgba(42, 36, 32, 0.035);
+  border-left-color: rgba(42, 36, 32, 0.16);
 }
 
 .achievement-toolbar {

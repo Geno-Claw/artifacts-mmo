@@ -153,32 +153,160 @@ function renderBankModal(detail) {
   `;
 }
 
+function truncateText(value, maxLen = 220) {
+  const text = `${value ?? ''}`;
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function summarizeLogData(data) {
+  if (data == null) return '';
+  try {
+    return truncateText(JSON.stringify(data));
+  } catch {
+    return '[unserializable data]';
+  }
+}
+
+function uniqueLogValues(rows, key) {
+  const set = new Set();
+  for (const row of rows) {
+    const value = safeText(row?.[key], '');
+    if (value) set.add(value);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function interruptionSummary(entry) {
+  const parts = [];
+  const interruptedRoutine = safeText(entry?.data?.interruptedRoutine, '');
+  const interruptingRoutine = safeText(entry?.data?.interruptingRoutine, '');
+  if (interruptedRoutine && interruptingRoutine) {
+    parts.push(`${interruptedRoutine} -> ${interruptingRoutine}`);
+  }
+  if (entry?.reasonCode) {
+    parts.push(entry.reasonCode);
+  }
+  if (entry?.routine) {
+    parts.push(`routine=${entry.routine}`);
+  }
+  return parts.join(' | ');
+}
+
 function renderStatsModal(detail) {
   const logs = normalizeLogHistory(detail?.logHistory);
-
   if (logs.length === 0) {
     return '<div class="modal-empty">No log entries available for this character.</div>';
   }
 
-  const logItems = logs.map((entry) => {
+  const scopes = uniqueLogValues(logs, 'scope');
+  const reasons = uniqueLogValues(logs, 'reasonCode');
+  const levelFilter = getLogLevelFilterValue();
+  if (modalState.logScopeFilter && !scopes.includes(modalState.logScopeFilter)) {
+    modalState.logScopeFilter = '';
+  }
+  if (modalState.logReasonFilter && !reasons.includes(modalState.logReasonFilter)) {
+    modalState.logReasonFilter = '';
+  }
+
+  const filteredLogs = filterLogEntries(logs);
+  const interruptions = normalizeLogHistory(detail?.interruptionHistory).slice(0, 50);
+
+  const levelButtons = Object.entries(LOG_LEVEL_FILTER_LABELS).map(([value, label]) => `
+    <button
+      type="button"
+      class="log-filter-btn${value === levelFilter ? ' is-active' : ''}"
+      data-log-level-filter="${value}"
+    >${escapeHtml(label.toUpperCase())}</button>
+  `).join('');
+
+  const scopeOptions = ['<option value="">All scopes</option>']
+    .concat(scopes.map((scope) => `<option value="${escapeHtml(scope)}"${scope === modalState.logScopeFilter ? ' selected' : ''}>${escapeHtml(scope)}</option>`))
+    .join('');
+  const reasonOptions = ['<option value="">All reasons</option>']
+    .concat(reasons.map((reason) => `<option value="${escapeHtml(reason)}"${reason === modalState.logReasonFilter ? ' selected' : ''}>${escapeHtml(reason)}</option>`))
+    .join('');
+
+  const logItems = filteredLogs.map((entry) => {
     const levelClass = entry.level === 'error'
       ? ' log-entry--error'
       : entry.level === 'warn'
         ? ' log-entry--warn'
-        : '';
+        : entry.level === 'debug'
+          ? ' log-entry--debug'
+          : ' log-entry--info';
+    const details = [];
+    if (entry.scope) details.push(entry.scope);
+    if (entry.event) details.push(entry.event);
+    if (entry.reasonCode) details.push(entry.reasonCode);
+    if (entry.runId != null) details.push(`run:${entry.runId}`);
+    if (entry.tickId != null) details.push(`tick:${entry.tickId}`);
+    if (entry.requestId) details.push(`request:${entry.requestId}`);
+    const dataText = summarizeLogData(entry.data);
     return `
       <div class="modal-list-item modal-list-item--two${levelClass}">
-        <span class="modal-list-main">${escapeHtml(entry.line)}</span>
+        <span class="modal-list-main">
+          ${escapeHtml(entry.line)}
+          ${details.length > 0 ? `<span class="modal-log-line">${escapeHtml(details.join(' | '))}</span>` : ''}
+          ${dataText ? `<span class="modal-log-line">${escapeHtml(dataText)}</span>` : ''}
+        </span>
         <span class="modal-list-tag">${escapeHtml(entry.level.toUpperCase())} ${escapeHtml(formatTime(entry.atMs))}</span>
       </div>
     `;
   }).join('');
 
+  const interruptionHtml = interruptions.length === 0
+    ? '<div class="modal-empty">No interruptions captured yet.</div>'
+    : `
+      <div class="modal-list">
+        ${interruptions.map((entry) => {
+          const title = entry.event === 'routine.preempted'
+            ? 'PREEMPTED'
+            : (entry.event === 'routine.yield' ? 'YIELD' : 'INTERRUPT');
+          const summary = interruptionSummary(entry);
+          return `
+            <div class="modal-list-item modal-list-item--two log-entry--warn">
+              <span class="modal-list-main">
+                ${escapeHtml(title)}: ${escapeHtml(entry.line)}
+                ${summary ? `<span class="modal-log-line">${escapeHtml(summary)}</span>` : ''}
+              </span>
+              <span class="modal-list-tag">${escapeHtml(formatTime(entry.atMs))}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
   return `
     <section class="modal-section">
-      <h3 class="modal-section-title">Log History (${logs.length})</h3>
+      <h3 class="modal-section-title">Log Filters</h3>
+      <div class="log-filter-toolbar">
+        <div class="log-filter-group" role="tablist" aria-label="Log level filters">
+          ${levelButtons}
+        </div>
+        <label class="log-filter-field">
+          <span>SCOPE</span>
+          <select data-log-scope-filter>${scopeOptions}</select>
+        </label>
+        <label class="log-filter-field">
+          <span>REASON</span>
+          <select data-log-reason-filter>${reasonOptions}</select>
+        </label>
+      </div>
+      <div class="achievement-result-count">
+        Showing ${formatNumberish(filteredLogs.length, '0')} of ${formatNumberish(logs.length, '0')} logs.
+      </div>
+    </section>
+    <section class="modal-section">
+      <h3 class="modal-section-title">Log History (${filteredLogs.length})</h3>
       <div class="modal-log-scroll">
-        <div class="modal-list">${logItems}</div>
+        <div class="modal-list">${logItems || '<div class="modal-empty">No logs match selected filters.</div>'}</div>
+      </div>
+    </section>
+    <section class="modal-section">
+      <h3 class="modal-section-title">Interruption Timeline (${interruptions.length})</h3>
+      <div class="modal-log-scroll modal-log-scroll--short">
+        ${interruptionHtml}
       </div>
     </section>
   `;

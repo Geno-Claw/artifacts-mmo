@@ -12,6 +12,7 @@ export class BaseRoutine {
     this.priority = priority;
     this.loop = loop;
     this.urgent = urgent;
+    this._lastYieldReason = null;
   }
 
   /** Hot-reload: patch config fields in-place, preserving runtime state. */
@@ -37,5 +38,24 @@ export class BaseRoutine {
 
   async execute(_char) {
     throw new Error(`${this.name}: execute() not implemented`);
+  }
+
+  _setYieldReason(reasonCode, data = null) {
+    this._lastYieldReason = {
+      reasonCode: `${reasonCode || 'unspecified'}`,
+      data,
+      atMs: Date.now(),
+    };
+  }
+
+  _yield(reasonCode, data = null, keepGoing = false) {
+    this._setYieldReason(reasonCode, data);
+    return keepGoing;
+  }
+
+  consumeYieldReason() {
+    const out = this._lastYieldReason;
+    this._lastYieldReason = null;
+    return out;
   }
 }

@@ -5,6 +5,7 @@
 
 const DEFAULT_STALE_AFTER_MS = 120_000;
 const MAX_LOG_HISTORY = 500;
+const MAX_INTERRUPTION_HISTORY = 200;
 const DEFAULT_LOG_LIMIT = 20;
 const KNOWN_SKILL_CODES = Object.freeze([
   'mining',
@@ -173,6 +174,7 @@ function defaultCharacterState(name) {
       action: null,
       totalSeconds: 0,
       endsAtMs: 0,
+      requestId: null,
     },
     task: {
       name: null,
@@ -184,6 +186,7 @@ function defaultCharacterState(name) {
     logLatest: 'No activity yet',
     logHistory: [],
     detailLogHistory: [],
+    interruptionHistory: [],
     gameLogLatest: 'Waiting for activity...',
     gameLogLatestType: null,
     gameLogLatestAtMs: 0,
@@ -227,6 +230,7 @@ function cloneCharacterState(char, serverTimeMs) {
     task: { ...char.task },
     logLatest: char.logLatest,
     logHistory: char.logHistory.map(entry => ({ ...entry })),
+    interruptionHistory: char.interruptionHistory.map(entry => ({ ...entry })),
     gameLogLatest: char.gameLogLatest,
     gameLogLatestType: char.gameLogLatestType,
     gameLogLatestAtMs: char.gameLogLatestAtMs,
@@ -322,6 +326,7 @@ export function recordCharacterSnapshot(name, charData = {}) {
         action: char.cooldown.action,
         totalSeconds: totalFromApi || Math.ceil((expirationMs - nowMs()) / 1000),
         endsAtMs: expirationMs,
+        requestId: char.cooldown.requestId || null,
       };
     }
   }
@@ -357,7 +362,16 @@ export function recordRoutineState(name, { routineName = null, phase = 'idle', p
   emitChange();
 }
 
-export function recordCooldown(name, { action = null, totalSeconds = 0, remainingSeconds = null, observedAt = nowMs() } = {}) {
+export function recordCooldown(
+  name,
+  {
+    action = null,
+    totalSeconds = 0,
+    remainingSeconds = null,
+    observedAt = nowMs(),
+    requestId = null,
+  } = {},
+) {
   const char = ensureCharacter(name);
   if (!char) return;
 
@@ -370,12 +384,29 @@ export function recordCooldown(name, { action = null, totalSeconds = 0, remainin
     action: action || null,
     totalSeconds: total,
     endsAtMs,
+    requestId: toTrimmedStringOrNull(requestId),
   };
 
   emitChange();
 }
 
-export function recordLog(name, { level = 'info', line = '', at = nowMs() } = {}) {
+export function recordLog(
+  name,
+  {
+    level = 'info',
+    line = '',
+    at = nowMs(),
+    scope = null,
+    event = null,
+    reasonCode = null,
+    routine = null,
+    runId = null,
+    tickId = null,
+    traceId = null,
+    requestId = null,
+    data = null,
+  } = {},
+) {
   const char = ensureCharacter(name);
   if (!char) return;
 
@@ -383,6 +414,15 @@ export function recordLog(name, { level = 'info', line = '', at = nowMs() } = {}
     atMs: toNumber(at, nowMs()),
     level,
     line: `${line || ''}`,
+    scope: toTrimmedStringOrNull(scope),
+    event: toTrimmedStringOrNull(event),
+    reasonCode: toTrimmedStringOrNull(reasonCode),
+    routine: toTrimmedStringOrNull(routine),
+    runId: runId == null ? null : toNumber(runId, null),
+    tickId: tickId == null ? null : toNumber(tickId, null),
+    traceId: toTrimmedStringOrNull(traceId),
+    requestId: toTrimmedStringOrNull(requestId),
+    data,
   };
 
   char.logLatest = entry.line || char.logLatest;
@@ -394,6 +434,13 @@ export function recordLog(name, { level = 'info', line = '', at = nowMs() } = {}
   }
   if (char.detailLogHistory.length > MAX_LOG_HISTORY) {
     char.detailLogHistory = char.detailLogHistory.slice(char.detailLogHistory.length - MAX_LOG_HISTORY);
+  }
+
+  if (entry.event === 'routine.preempted' || entry.event === 'routine.yield') {
+    char.interruptionHistory.push(entry);
+    if (char.interruptionHistory.length > MAX_INTERRUPTION_HISTORY) {
+      char.interruptionHistory = char.interruptionHistory.slice(char.interruptionHistory.length - MAX_INTERRUPTION_HISTORY);
+    }
   }
 
   emitChange();
@@ -461,7 +508,63 @@ export function getUiCharacterDetail(name) {
       task: { ...char.task },
     },
     logHistory: char.detailLogHistory.map(entry => ({ ...entry })),
+    interruptionHistory: char.interruptionHistory.map(entry => ({ ...entry })),
     updatedAtMs: char.lastUpdatedAtMs,
+  };
+}
+
+export function queryUiCharacterLogs(
+  name,
+  {
+    level = '',
+    scope = '',
+    event = '',
+    reasonCode = '',
+    limit = 100,
+    beforeAt = null,
+  } = {},
+) {
+  const charName = `${name || ''}`.trim();
+  if (!charName) return null;
+  const char = characters.get(charName);
+  if (!char) return null;
+
+  const normalizedLevel = `${level || ''}`.trim().toLowerCase();
+  const normalizedScope = `${scope || ''}`.trim().toLowerCase();
+  const normalizedEvent = `${event || ''}`.trim().toLowerCase();
+  const normalizedReason = `${reasonCode || ''}`.trim().toLowerCase();
+  const rawLimit = `${limit ?? ''}`.trim();
+  const rawBeforeAt = `${beforeAt ?? ''}`.trim();
+  const maxRows = Math.max(1, Math.min(500, rawLimit ? toNumber(rawLimit, 100) : 100));
+  const beforeAtMs = rawBeforeAt ? toNumber(rawBeforeAt, null) : null;
+
+  const rows = [];
+  for (let i = char.detailLogHistory.length - 1; i >= 0; i--) {
+    const entry = char.detailLogHistory[i];
+    if (!entry) continue;
+
+    if (beforeAtMs != null && entry.atMs >= beforeAtMs) continue;
+    if (normalizedLevel && `${entry.level || ''}`.toLowerCase() !== normalizedLevel) continue;
+    if (normalizedScope && `${entry.scope || ''}`.toLowerCase() !== normalizedScope) continue;
+    if (normalizedEvent && `${entry.event || ''}`.toLowerCase() !== normalizedEvent) continue;
+    if (normalizedReason && `${entry.reasonCode || ''}`.toLowerCase() !== normalizedReason) continue;
+
+    rows.push({ ...entry });
+    if (rows.length >= maxRows) break;
+  }
+
+  return {
+    name: charName,
+    count: rows.length,
+    filters: {
+      level: normalizedLevel || null,
+      scope: normalizedScope || null,
+      event: normalizedEvent || null,
+      reasonCode: normalizedReason || null,
+      beforeAtMs: beforeAtMs == null ? null : beforeAtMs,
+      limit: maxRows,
+    },
+    logs: rows,
   };
 }
 

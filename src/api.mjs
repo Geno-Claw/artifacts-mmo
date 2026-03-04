@@ -2,11 +2,14 @@
  * Artifacts MMO API client
  */
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
+import * as log from './log.mjs';
 
 const API = process.env.ARTIFACTS_API || 'https://api.artifactsmmo.com';
 const TOKEN = process.env.ARTIFACTS_TOKEN;
 const CHARACTER = process.env.CHARACTER_NAME || 'GenoClaw';
 const actionObservers = new Set();
+const apiLog = log.createLogger({ scope: 'api' });
 
 if (!TOKEN) throw new Error('ARTIFACTS_TOKEN not set in .env');
 
@@ -18,6 +21,16 @@ function emitActionEvent(evt) {
       // Action observers must not affect API request flow.
     }
   }
+}
+
+function extractActionInfo(method, path) {
+  if (method !== 'POST') return null;
+  const match = path.match(/^\/my\/([^/]+)\/action\/(.+)$/);
+  if (!match) return null;
+  return {
+    name: match[1],
+    action: match[2],
+  };
 }
 
 function sleep(ms) {
@@ -55,22 +68,98 @@ async function request(method, path, body = null) {
   };
   if (body) opts.body = JSON.stringify(body);
 
+  const requestId = randomUUID();
+  const actionInfo = extractActionInfo(method, path);
+
+  function actionEvent(status, extra = {}) {
+    if (!actionInfo) return;
+    emitActionEvent({
+      name: actionInfo.name,
+      action: actionInfo.action,
+      method,
+      path,
+      requestId,
+      status,
+      observedAt: Date.now(),
+      ...extra,
+    });
+  }
+
   for (let attempt = 0; attempt < 5; attempt++) {
+    const attemptNo = attempt + 1;
+    const attemptStartedAt = Date.now();
+    apiLog.debug(`${method} ${path} attempt ${attemptNo}`, {
+      event: 'api.request.start',
+      context: {
+        requestId,
+        action: actionInfo?.action || null,
+      },
+      data: {
+        method,
+        path,
+        attempt: attemptNo,
+      },
+    });
+
     let res;
     try {
       res = await fetch(`${API}${path}`, opts);
     } catch (err) {
+      const durationMs = Date.now() - attemptStartedAt;
       if (attempt < 4) {
+        actionEvent('retry', {
+          attempt: attemptNo,
+          durationMs,
+          reasonCode: 'network_retry',
+          message: err?.message || String(err),
+        });
+        apiLog.warn(`Network error for ${method} ${path}, retrying`, {
+          event: 'api.request.retry',
+          reasonCode: 'network_retry',
+          context: {
+            requestId,
+            action: actionInfo?.action || null,
+          },
+          data: {
+            method,
+            path,
+            attempt: attemptNo,
+            durationMs,
+          },
+          error: err,
+        });
         await sleep((attempt + 1) * 1000);
         continue;
       }
       const networkErr = new Error(`Network error for ${method} ${path}: ${err?.message || String(err)}`);
       networkErr.code = 'network_error';
+      actionEvent('failed', {
+        attempt: attemptNo,
+        durationMs,
+        reasonCode: 'request_failed',
+        message: networkErr.message,
+      });
+      apiLog.error(`Network error for ${method} ${path}`, {
+        event: 'api.request.fail',
+        reasonCode: 'request_failed',
+        context: {
+          requestId,
+          action: actionInfo?.action || null,
+        },
+        data: {
+          method,
+          path,
+          attempt: attemptNo,
+          durationMs,
+        },
+        error: networkErr,
+      });
       throw networkErr;
     }
 
     const raw = await res.text();
     const json = parseJsonSafely(raw);
+    const durationMs = Date.now() - attemptStartedAt;
 
     if (res.ok) {
       if (!json || typeof json !== 'object' || !('data' in json)) {
@@ -81,24 +170,72 @@ async function request(method, path, body = null) {
             : `Unexpected API response format (HTTP ${res.status})`,
         );
         err.code = res.status;
+        actionEvent('failed', {
+          attempt: attemptNo,
+          durationMs,
+          reasonCode: 'request_failed',
+          message: err.message,
+          code: err.code,
+        });
+        apiLog.error(`Unexpected API response for ${method} ${path}`, {
+          event: 'api.request.fail',
+          reasonCode: 'request_failed',
+          context: {
+            requestId,
+            action: actionInfo?.action || null,
+          },
+          data: {
+            method,
+            path,
+            attempt: attemptNo,
+            durationMs,
+            status: res.status,
+          },
+          error: err,
+        });
         throw err;
       }
 
-      if (method === 'POST') {
-        const actionMatch = path.match(/^\/my\/([^/]+)\/action\/(.+)$/);
-        if (actionMatch) {
-          const [, name, action] = actionMatch;
-          const cooldown = json.data?.cooldown || null;
-          emitActionEvent({
-            name,
-            action,
-            method,
-            path,
-            cooldown,
-            observedAt: Date.now(),
+      if (json.data && typeof json.data === 'object') {
+        try {
+          Object.defineProperty(json.data, '__requestMeta', {
+            value: {
+              requestId,
+              method,
+              path,
+              attempt: attemptNo,
+              durationMs,
+              action: actionInfo?.action || null,
+              name: actionInfo?.name || null,
+            },
+            enumerable: false,
+            configurable: true,
           });
+        } catch {
+          // Non-fatal metadata assignment failure.
         }
       }
+
+      const cooldown = json.data?.cooldown || null;
+      actionEvent('success', {
+        attempt: attemptNo,
+        durationMs,
+        cooldown,
+      });
+      apiLog.debug(`${method} ${path} success`, {
+        event: 'api.request.success',
+        context: {
+          requestId,
+          action: actionInfo?.action || null,
+        },
+        data: {
+          method,
+          path,
+          attempt: attemptNo,
+          durationMs,
+          status: res.status,
+        },
+      });
       return json.data;
     }
 
@@ -112,16 +249,88 @@ async function request(method, path, body = null) {
       if (isShuttingDown()) {
         const err = new Error(message);
         err.code = code;
+        actionEvent('failed', {
+          attempt: attemptNo,
+          durationMs,
+          reasonCode: 'request_failed',
+          code,
+          message,
+        });
+        apiLog.warn(`${method} ${path} failed during shutdown`, {
+          event: 'api.request.fail',
+          reasonCode: 'request_failed',
+          context: {
+            requestId,
+            action: actionInfo?.action || null,
+          },
+          data: {
+            method,
+            path,
+            attempt: attemptNo,
+            durationMs,
+            code,
+            status: res.status,
+          },
+          error: err,
+        });
         throw err;
       }
       const match = message.match(/([\d.]+)\s*seconds?\s*remaining/);
       const wait = match ? parseFloat(match[1]) * 1000 + 500 : 3000;
+      actionEvent('retry', {
+        attempt: attemptNo,
+        durationMs,
+        reasonCode: 'cooldown_499_retry',
+        code,
+        message,
+        waitMs: wait,
+      });
+      apiLog.debug(`${method} ${path} cooldown retry`, {
+        event: 'api.request.retry',
+        reasonCode: 'cooldown_499_retry',
+        context: {
+          requestId,
+          action: actionInfo?.action || null,
+        },
+        data: {
+          method,
+          path,
+          attempt: attemptNo,
+          durationMs,
+          waitMs: wait,
+          code,
+          status: res.status,
+        },
+      });
       await sleep(wait);
       continue;
     }
 
     // Transient upstream/gateway errors often return non-JSON bodies.
     if (isRetryableGatewayStatus(res.status) && attempt < 4) {
+      actionEvent('retry', {
+        attempt: attemptNo,
+        durationMs,
+        reasonCode: 'gateway_retry',
+        code,
+        message,
+      });
+      apiLog.warn(`${method} ${path} gateway retry`, {
+        event: 'api.request.retry',
+        reasonCode: 'gateway_retry',
+        context: {
+          requestId,
+          action: actionInfo?.action || null,
+        },
+        data: {
+          method,
+          path,
+          attempt: attemptNo,
+          durationMs,
+          code,
+          status: res.status,
+        },
+      });
       await sleep((attempt + 1) * 1000);
       continue;
     }
@@ -130,10 +339,50 @@ async function request(method, path, body = null) {
     err.code = code;
     err.data = json?.error?.data;
     err.status = res.status;
+    actionEvent('failed', {
+      attempt: attemptNo,
+      durationMs,
+      reasonCode: 'request_failed',
+      code,
+      message,
+    });
+    apiLog.error(`${method} ${path} failed`, {
+      event: 'api.request.fail',
+      reasonCode: 'request_failed',
+      context: {
+        requestId,
+        action: actionInfo?.action || null,
+      },
+      data: {
+        method,
+        path,
+        attempt: attemptNo,
+        durationMs,
+        code,
+        status: res.status,
+      },
+      error: err,
+    });
     throw err;
   }
 
-  throw new Error(`Request failed after 5 attempts: ${method} ${path}`);
+  const finalErr = new Error(`Request failed after 5 attempts: ${method} ${path}`);
+  actionEvent('failed', {
+    attempt: 5,
+    durationMs: 0,
+    reasonCode: 'request_failed',
+    message: finalErr.message,
+  });
+  apiLog.error(`Request failed after 5 attempts: ${method} ${path}`, {
+    event: 'api.request.fail',
+    reasonCode: 'request_failed',
+    context: {
+      requestId,
+      action: actionInfo?.action || null,
+    },
+    error: finalErr,
+  });
+  throw finalErr;
 }
 
 // --- Character endpoints ---
@@ -411,19 +660,89 @@ let _cooldownAbort = new AbortController();
 
 export function waitForCooldown(actionResult) {
   const cd = actionResult?.cooldown?.remaining_seconds || actionResult?.cooldown?.total_seconds || 0;
-  if (cd <= 0) return Promise.resolve();
+  const reqMeta = actionResult?.__requestMeta || null;
+  const requestId = reqMeta?.requestId || null;
+  const action = reqMeta?.action || null;
+
+  if (cd <= 0) {
+    apiLog.debug('Cooldown wait skipped', {
+      scope: 'cooldown',
+      event: 'cooldown.wait.skipped',
+      context: {
+        requestId,
+        action,
+      },
+    });
+    return Promise.resolve();
+  }
 
   const signal = _cooldownAbort.signal;
-  if (signal.aborted) return Promise.resolve();
+  if (signal.aborted) {
+    apiLog.debug('Cooldown wait skipped due to shutdown abort signal', {
+      scope: 'cooldown',
+      event: 'cooldown.wait.aborted',
+      context: {
+        requestId,
+        action,
+      },
+      reasonCode: 'loop_stop_requested',
+      data: {
+        seconds: cd,
+      },
+    });
+    return Promise.resolve();
+  }
+
+  const startedAt = Date.now();
+  const waitMs = cd * 1000 + 500;
+  apiLog.debug(`Cooldown wait start (${cd}s)`, {
+    scope: 'cooldown',
+    event: 'cooldown.wait.start',
+    context: {
+      requestId,
+      action,
+    },
+    data: {
+      seconds: cd,
+      waitMs,
+    },
+  });
 
   return new Promise(resolve => {
     const timer = setTimeout(() => {
       signal.removeEventListener('abort', onAbort);
+      apiLog.debug('Cooldown wait complete', {
+        scope: 'cooldown',
+        event: 'cooldown.wait.end',
+        context: {
+          requestId,
+          action,
+        },
+        data: {
+          seconds: cd,
+          waitMs,
+          actualMs: Date.now() - startedAt,
+        },
+      });
       resolve();
-    }, cd * 1000 + 500);
+    }, waitMs);
 
     function onAbort() {
       clearTimeout(timer);
+      apiLog.debug('Cooldown wait aborted', {
+        scope: 'cooldown',
+        event: 'cooldown.wait.aborted',
+        context: {
+          requestId,
+          action,
+        },
+        reasonCode: 'loop_stop_requested',
+        data: {
+          seconds: cd,
+          waitMs,
+          actualMs: Date.now() - startedAt,
+        },
+      });
       resolve();
     }
 

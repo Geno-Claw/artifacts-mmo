@@ -15,6 +15,8 @@ import {
   refreshGearState,
 } from '../services/gear-state.mjs';
 
+const depositLog = log.createLogger({ scope: 'routine.deposit-bank' });
+
 export class DepositBankRoutine extends BaseRoutine {
   constructor({
     threshold = 0.8,
@@ -58,7 +60,15 @@ export class DepositBankRoutine extends BaseRoutine {
       await refreshGearState();
       publishDesiredOrdersForCharacter(ctx.name);
     } catch (err) {
-      log.warn(`[${ctx.name}] Gear-state sync failed: ${err.message}`);
+      depositLog.warn(`[${ctx.name}] Gear-state sync failed: ${err.message}`, {
+        event: 'routine.deposit.gear_sync_failed',
+        reasonCode: 'gear_state_unavailable',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        error: err,
+      });
     }
     // Always build keepByCode — uses last known gear state even if refresh failed
     const keepByCode = this._buildKeepByCode(ctx);
@@ -91,21 +101,47 @@ export class DepositBankRoutine extends BaseRoutine {
     try {
       await recycler.executeRecycleFlow(ctx);
     } catch (err) {
-      log.error(`[${ctx.name}] Recycle flow error: ${err.message}`);
+      depositLog.error(`[${ctx.name}] Recycle flow error: ${err.message}`, {
+        event: 'routine.deposit.recycle_error',
+        reasonCode: 'recycle_failed',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        error: err,
+      });
     }
 
     // Re-deposit any leftover inventory (failed recycles, etc.)
     const keepByCode = this._buildKeepByCode(ctx);
     const depositableCount = this._countDepositableInventory(ctx, keepByCode);
     if (depositableCount > 0) {
-      log.info(`[${ctx.name}] Re-depositing unrecycled inventory`);
+      depositLog.info(`[${ctx.name}] Re-depositing unrecycled inventory`, {
+        event: 'routine.deposit.recycle_cleanup',
+        reasonCode: 'yield_for_deposit',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        data: {
+          depositableCount,
+        },
+      });
       try {
         await depositAll(ctx, {
           reason: 'deposit routine recycle cleanup',
           keepByCode,
         });
       } catch (err) {
-        log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
+        depositLog.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`, {
+          event: 'routine.deposit.recycle_cleanup_failed',
+          reasonCode: 'bank_unavailable',
+          context: {
+            character: ctx.name,
+            routine: this.name,
+          },
+          error: err,
+        });
       }
     }
   }
@@ -114,11 +150,28 @@ export class DepositBankRoutine extends BaseRoutine {
     const gold = ctx.get().gold;
     if (gold <= 0) return;
 
-    log.info(`[${ctx.name}] Depositing ${gold}g to bank`);
+    depositLog.info(`[${ctx.name}] Depositing ${gold}g to bank`, {
+      event: 'routine.deposit.gold.start',
+      context: {
+        character: ctx.name,
+        routine: this.name,
+      },
+      data: {
+        gold,
+      },
+    });
     try {
       await depositGoldToBank(ctx, gold, { reason: 'deposit routine _depositGold' });
     } catch (err) {
-      log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
+      depositLog.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`, {
+        event: 'routine.deposit.gold.failed',
+        reasonCode: 'bank_unavailable',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        error: err,
+      });
     }
   }
 
@@ -126,31 +179,74 @@ export class DepositBankRoutine extends BaseRoutine {
     try {
       await geSeller.executeSellFlow(ctx);
     } catch (err) {
-      log.error(`[${ctx.name}] GE sell flow error: ${err.message}`);
+      depositLog.error(`[${ctx.name}] GE sell flow error: ${err.message}`, {
+        event: 'routine.deposit.ge_sell.error',
+        reasonCode: 'request_failed',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        error: err,
+      });
     }
 
     // Always re-deposit any leftover inventory items + gold
     const keepByCode = this._buildKeepByCode(ctx);
     const depositableCount = this._countDepositableInventory(ctx, keepByCode);
     if (depositableCount > 0) {
-      log.info(`[${ctx.name}] Re-depositing unsold inventory`);
+      depositLog.info(`[${ctx.name}] Re-depositing unsold inventory`, {
+        event: 'routine.deposit.ge_cleanup',
+        reasonCode: 'yield_for_deposit',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        data: {
+          depositableCount,
+        },
+      });
       try {
         await depositAll(ctx, {
           reason: 'deposit routine GE cleanup',
           keepByCode,
         });
       } catch (err) {
-        log.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`);
+        depositLog.warn(`[${ctx.name}] Could not re-deposit items: ${err.message}`, {
+          event: 'routine.deposit.ge_cleanup_failed',
+          reasonCode: 'bank_unavailable',
+          context: {
+            character: ctx.name,
+            routine: this.name,
+          },
+          error: err,
+        });
       }
     }
 
     const gold = ctx.get().gold;
     if (gold > 0) {
-      log.info(`[${ctx.name}] Depositing ${gold}g from GE collections`);
+      depositLog.info(`[${ctx.name}] Depositing ${gold}g from GE collections`, {
+        event: 'routine.deposit.ge_cleanup_gold',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        data: {
+          gold,
+        },
+      });
       try {
         await depositGoldToBank(ctx, gold, { reason: 'deposit routine GE cleanup gold' });
       } catch (err) {
-        log.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`);
+        depositLog.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`, {
+          event: 'routine.deposit.ge_cleanup_gold_failed',
+          reasonCode: 'bank_unavailable',
+          context: {
+            character: ctx.name,
+            routine: this.name,
+          },
+          error: err,
+        });
       }
     }
   }

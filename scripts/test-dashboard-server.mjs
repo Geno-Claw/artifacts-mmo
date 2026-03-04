@@ -118,6 +118,7 @@ function assertCharacterDetailShape(detail, expectedName) {
     'equipment',
     'stats',
     'logHistory',
+    'interruptionHistory',
     'updatedAtMs',
   ], 'character detail payload');
 
@@ -168,6 +169,7 @@ function assertCharacterDetailShape(detail, expectedName) {
   assert.equal(hasTaskFields, true, 'detail.stats should expose task fields');
 
   assert.ok(Array.isArray(detail.logHistory), 'detail.logHistory must be an array');
+  assert.ok(Array.isArray(detail.interruptionHistory), 'detail.interruptionHistory must be an array');
   for (const [idx, entry] of detail.logHistory.entries()) {
     assertHasKeys(entry, ['atMs', 'level', 'line'], `detail.logHistory[${idx}]`);
     assert.equal(typeof entry.atMs, 'number');
@@ -902,6 +904,18 @@ async function run() {
         at: i,
       });
     }
+    recordLog('Alpha', {
+      level: 'info',
+      line: 'detail-preempted',
+      at: 1000,
+      scope: 'scheduler',
+      event: 'routine.preempted',
+      reasonCode: 'preempted_by_higher_priority',
+      routine: 'Skill Rotation',
+      runId: 42,
+      tickId: 77,
+      requestId: 'req-1',
+    });
 
     _resetOrderBoardForTests();
     await initializeOrderBoard({ path: orderBoardPath });
@@ -994,9 +1008,20 @@ async function run() {
     assert.equal(detail.skills.length > 0, true, 'Expected non-empty normalized skills');
     assert.equal(detail.inventory.length > 0, true, 'Expected non-empty normalized inventory');
     assert.equal(detail.equipment.length > 0, true, 'Expected non-empty normalized equipment');
-    assert.equal(detail.logHistory.length, 65, 'Expected all 65 detail log entries retained (cap is 500)');
+    assert.equal(detail.logHistory.length, 66, 'Expected all 66 detail log entries retained (cap is 500)');
     assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-64'), true);
     assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-0'), true);
+    assert.equal(detail.interruptionHistory.some(entry => entry.line === 'detail-preempted'), true);
+
+    const detailLogRes = await fetch(
+      `${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/logs?event=routine.preempted&scope=scheduler&reasonCode=preempted_by_higher_priority&limit=5`,
+    );
+    assert.equal(detailLogRes.status, 200, 'character filtered logs endpoint should return 200');
+    const detailLogPayload = await detailLogRes.json();
+    assertHasKeys(detailLogPayload, ['name', 'count', 'filters', 'logs'], 'filtered logs payload');
+    assert.equal(detailLogPayload.name, 'Alpha');
+    assert.equal(detailLogPayload.count, 1);
+    assert.equal(detailLogPayload.logs[0].line, 'detail-preempted');
 
     const missingRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Missing')}`);
     assert.equal(missingRes.status, 404);
