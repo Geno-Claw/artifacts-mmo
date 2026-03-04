@@ -583,7 +583,12 @@ export class RuntimeManager {
       await initEventManager();
       setGatherResources(config.events?.gatherResources || []);
 
-      const npcCodes = ['tasks_trader', ...getNpcEventCodes()];
+      const npcCodes = [
+        'tasks_trader', 'tailor', 'fish_merchant', 'gemstone_merchant',
+        'herbal_merchant', 'timber_merchant', 'rune_vendor', 'sandwhisper_trader',
+        'archaeologist', 'nomadic_merchant', 'cultist_wizard',
+        ...getNpcEventCodes(),
+      ];
       await loadNpcCatalogs(npcCodes);
 
       loadNpcBuyList(config);
