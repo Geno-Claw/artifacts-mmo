@@ -15,6 +15,12 @@ import { TASK_COIN_CODE, TASK_EXCHANGE_COST, PROACTIVE_EXCHANGE_BACKOFF_MS } fro
 
 const TASKS_TRADER_NPC = 'tasks_trader';
 
+/** Gate for tasks_trader access — flipped to false on 496 "condition not met" errors. */
+let tasksTraderAvailable = true;
+
+/** Returns false if we've seen a 496 indicating the tasks_farmer achievement isn't unlocked. */
+export function isTasksTraderAvailable() { return tasksTraderAvailable; }
+
 /**
  * Returns true if there is any open/claimed task_exchange order on the board
  * for an item that the tasks_trader NPC sells directly.
@@ -22,6 +28,7 @@ const TASKS_TRADER_NPC = 'tasks_trader';
  * targeted NPC purchases.
  */
 function hasOpenTasksTraderOrders() {
+  if (!tasksTraderAvailable) return false;
   const { orders } = getOrderBoardSnapshot();
   return orders.some(o =>
     o.sourceType === 'task_exchange' &&
@@ -175,6 +182,13 @@ export async function runTasksTraderPurchase(ctx, routine, { itemCode, remaining
     log.info(`[${ctx.name}] Tasks Trader: bought ${itemCode} x${buyQty} for ${coinsNeeded} ${TASK_COIN_CODE}`);
   } catch (err) {
     log.warn(`[${ctx.name}] Tasks Trader: buy failed for ${itemCode}: ${err.message}`);
+    // 496 = "Condition not met" — typically a missing achievement (e.g. tasks_farmer).
+    // Mark the trader as unavailable so we stop retrying until restart.
+    if (err.status === 496 || `${err.code}` === '496') {
+      log.warn(`[${ctx.name}] Tasks Trader: condition not met — disabling trader purchases until restart`);
+      tasksTraderAvailable = false;
+      return { attempted: true, purchased: 0, reason: 'condition_not_met' };
+    }
     return { attempted: true, purchased: 0, reason: `buy_failed:${err.code || 'unknown'}` };
   }
 

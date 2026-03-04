@@ -597,6 +597,11 @@ export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
       return { attempted: result.attempted, fulfilled: false, reason: 'inventory_full' };
     }
 
+    if (result.reason === 'condition_not_met') {
+      await routine._blockAndReleaseClaim(ctx, 'trader_condition_not_met');
+      return { attempted: result.attempted, fulfilled: false, reason: 'condition_not_met' };
+    }
+
     return { attempted: result.attempted, fulfilled: false, reason: result.reason };
   }
 

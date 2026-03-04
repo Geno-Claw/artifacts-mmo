@@ -28,7 +28,7 @@ import { executeCombat } from './combat.mjs';
 import { executeCrafting, equipForCraftFight, handleUnwinnableCraftFight, inventoryReserve, usableInventorySpace, batchSize, withdrawFromBank } from './crafting.mjs';
 import { executeNpcTask, executeItemTask, executeTaskByType, inferTaskType, runNpcTaskFlow } from './npc-tasks.mjs';
 import { runItemTaskFlow, craftForItemTask, craftAndTradeItemTaskFromInventory, placeOrderAndCancel, cancelItemTask, withdrawForItemTask, shouldTradeItemTaskNow, gatherForItemTask, tradeItemTask } from './item-tasks.mjs';
-import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, performTasksTraderPurchase, runTasksTraderPurchase, inventorySnapshotForTargets } from './task-exchange.mjs';
+import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, performTasksTraderPurchase, runTasksTraderPurchase, inventorySnapshotForTargets, isTasksTraderAvailable } from './task-exchange.mjs';
 import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit, enqueueFightOrderForDeficit, acquireTaskExchangeOrderClaim, fulfillTaskExchangeOrderClaim, enqueueTaskExchangeOrder } from './order-claims.mjs';
 import { executeAchievement } from './achievements.mjs';
 
@@ -294,7 +294,7 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _exchangeTaskCoins(ctx) { return exchangeTaskCoins(ctx, this); }
   async _performTasksTraderPurchase(ctx, itemCode, quantity) { return performTasksTraderPurchase(ctx, itemCode, quantity); }
   async _runTasksTraderPurchase(ctx, opts) { return runTasksTraderPurchase(ctx, this, opts); }
-  _canTasksTraderFulfill(itemCode) { return gameData.canNpcSell('tasks_trader', itemCode); }
+  _canTasksTraderFulfill(itemCode) { return isTasksTraderAvailable() && gameData.canNpcSell('tasks_trader', itemCode); }
 
   // --- Order Claims ---
   async _clearActiveOrderClaim(ctx, opts) { return clearActiveOrderClaim(ctx, this, opts); }
