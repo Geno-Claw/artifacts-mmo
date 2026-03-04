@@ -144,12 +144,11 @@ export async function executeCrafting(ctx, routine) {
 
       await moveTo(ctx, loc.x, loc.y);
       while (ctx.itemCount(step.itemCode) < needed && !ctx.inventoryFull()) {
-        // Yield for urgent routines (e.g. events)
+        // Yield for urgent routines (e.g. events) — return false to let scheduler
+        // pick the urgent routine via its own preemption logic on the next tick.
         if (routine._hasUrgentPreemption(ctx)) {
           log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: yielding gather loop for urgent routine`);
-          // Small delay to prevent tight-loop thrashing if event routine can't act
-          await new Promise(r => setTimeout(r, 1000));
-          return true;
+          return false;
         }
         const result = await gatherOnce(ctx);
         const items = result.details?.items || [];
