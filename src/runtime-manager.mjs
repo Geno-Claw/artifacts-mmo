@@ -583,8 +583,8 @@ export class RuntimeManager {
       await initEventManager();
       setGatherResources(config.events?.gatherResources || []);
 
-      const npcCodes = getNpcEventCodes();
-      if (npcCodes.length > 0) await loadNpcCatalogs(npcCodes);
+      const npcCodes = ['tasks_trader', ...getNpcEventCodes()];
+      await loadNpcCatalogs(npcCodes);
 
       loadNpcBuyList(config);
 

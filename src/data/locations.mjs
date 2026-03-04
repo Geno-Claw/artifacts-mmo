@@ -26,3 +26,5 @@ export const TASKS_MASTER = {
   monsters: { x: 1, y: 2 },
   items:    { x: 4, y: 13 },
 };
+
+export const TASKS_TRADER = { x: 5, y: 11 };

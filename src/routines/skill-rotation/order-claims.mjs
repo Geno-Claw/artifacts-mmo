@@ -574,7 +574,33 @@ export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
     }
   }
 
-  // Exchange task coins for any remaining quantity.
+  // Prefer a direct tasks_trader NPC purchase over random exchange when available.
+  if (routine._canTasksTraderFulfill(itemCode)) {
+    const result = await routine._runTasksTraderPurchase(ctx, {
+      itemCode,
+      remainingQty: claim.remainingQty,
+    });
+
+    const fresh = routine._syncActiveClaimFromBoard();
+    if (!fresh) {
+      log.info(`[${ctx.name}] Exchange order fulfilled via tasks_trader: ${itemCode}`);
+      return { attempted: true, fulfilled: true };
+    }
+
+    if (result.reason === 'insufficient_coins') {
+      await routine._blockAndReleaseClaim(ctx, 'insufficient_trader_coins');
+      return { attempted: result.attempted, fulfilled: false, reason: 'insufficient_coins' };
+    }
+
+    if (result.reason === 'inventory_full') {
+      await routine._clearActiveOrderClaim(ctx, { reason: 'trader_inventory_full' });
+      return { attempted: result.attempted, fulfilled: false, reason: 'inventory_full' };
+    }
+
+    return { attempted: result.attempted, fulfilled: false, reason: result.reason };
+  }
+
+  // Fallback: random task/exchange for items not sold by tasks_trader.
   const targetMap = new Map([[itemCode, claim.remainingQty]]);
 
   const result = await routine._runTaskExchange(ctx, {

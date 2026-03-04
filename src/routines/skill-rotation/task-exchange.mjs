@@ -5,11 +5,30 @@
  */
 import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
+import * as gameData from '../../services/game-data.mjs';
 import { moveTo } from '../../helpers.mjs';
 import { depositBankItems, withdrawBankItems } from '../../services/bank-ops.mjs';
 import { globalCount } from '../../services/inventory-manager.mjs';
-import { TASKS_MASTER } from '../../data/locations.mjs';
+import { getOrderBoardSnapshot } from '../../services/order-board.mjs';
+import { TASKS_MASTER, TASKS_TRADER } from '../../data/locations.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
+
+const TASKS_TRADER_NPC = 'tasks_trader';
+
+/**
+ * Returns true if there is any open/claimed task_exchange order on the board
+ * for an item that the tasks_trader NPC sells directly.
+ * When this is true, random task/exchange should not run — preserve coins for
+ * targeted NPC purchases.
+ */
+function hasOpenTasksTraderOrders() {
+  const { orders } = getOrderBoardSnapshot();
+  return orders.some(o =>
+    o.sourceType === 'task_exchange' &&
+    o.status !== 'fulfilled' &&
+    gameData.canNpcSell(TASKS_TRADER_NPC, o.itemCode),
+  );
+}
 
 let taskExchangeLockHolder = null;
 
@@ -106,6 +125,74 @@ export async function performTaskExchange(ctx) {
   await api.waitForCooldown(result);
 }
 
+/**
+ * Buy a specific item directly from the tasks_trader NPC.
+ * Assumes coins are already in inventory and character is or will be moved.
+ */
+export async function performTasksTraderPurchase(ctx, itemCode, quantity) {
+  await moveTo(ctx, TASKS_TRADER.x, TASKS_TRADER.y);
+  const result = await api.npcBuy(itemCode, quantity, ctx.name);
+  ctx.applyActionResult(result);
+  await api.waitForCooldown(result);
+}
+
+/**
+ * Orchestrate a targeted purchase from the tasks_trader NPC.
+ * Ensures coins are in inventory, buys, then deposits to bank (triggering order credit).
+ *
+ * @returns {{ attempted, purchased, reason }}
+ */
+export async function runTasksTraderPurchase(ctx, routine, { itemCode, remainingQty = 1 } = {}) {
+  const offer = gameData.getNpcBuyOffer(TASKS_TRADER_NPC, itemCode);
+  if (!offer) {
+    return { attempted: false, purchased: 0, reason: 'not_available' };
+  }
+
+  const unitPrice = offer.buyPrice;
+  const totalNeeded = Math.max(1, Math.floor(Number(remainingQty) || 1));
+
+  const totalCoins = globalCount(TASK_COIN_CODE);
+  const maxAffordable = Math.floor(totalCoins / unitPrice);
+  if (maxAffordable <= 0) {
+    return { attempted: false, purchased: 0, reason: 'insufficient_coins' };
+  }
+
+  const availableSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
+  if (availableSpace <= 0) {
+    return { attempted: false, purchased: 0, reason: 'inventory_full' };
+  }
+
+  const buyQty = Math.min(totalNeeded, maxAffordable, availableSpace);
+  const coinsNeeded = buyQty * unitPrice;
+
+  const coinStatus = await ensureExchangeCoinsInInventory(ctx, coinsNeeded);
+  if (!coinStatus.ok) {
+    return { attempted: false, purchased: 0, reason: 'insufficient_coins' };
+  }
+
+  try {
+    await routine._performTasksTraderPurchase(ctx, itemCode, buyQty);
+    log.info(`[${ctx.name}] Tasks Trader: bought ${itemCode} x${buyQty} for ${coinsNeeded} ${TASK_COIN_CODE}`);
+  } catch (err) {
+    log.warn(`[${ctx.name}] Tasks Trader: buy failed for ${itemCode}: ${err.message}`);
+    return { attempted: true, purchased: 0, reason: `buy_failed:${err.code || 'unknown'}` };
+  }
+
+  // Deposit to bank so the order board credits the deposit
+  const qty = ctx.itemCount(itemCode);
+  if (qty > 0) {
+    try {
+      await depositBankItems(ctx, [{ code: itemCode, quantity: qty }], {
+        reason: `tasks_trader purchase: ${itemCode}`,
+      });
+    } catch (err) {
+      log.warn(`[${ctx.name}] Tasks Trader: deposit failed after buying ${itemCode}: ${err.message}`);
+    }
+  }
+
+  return { attempted: true, purchased: buyQty, reason: 'purchased' };
+}
+
 export async function runTaskExchange(
   ctx,
   routine,
@@ -196,6 +283,12 @@ export async function maybeRunProactiveExchange(ctx, routine, { extraNeedItemCod
     return { attempted: false, exchanged: 0, resolved: false, reason: 'backoff' };
   }
 
+  // Don't gamble coins when there's a pending order for a tasks_trader item —
+  // those will be fulfilled via targeted NPC purchase instead.
+  if (hasOpenTasksTraderOrders()) {
+    return { attempted: false, exchanged: 0, resolved: false, reason: 'deferred_for_trader_order' };
+  }
+
   const targets = routine._collectExchangeTargets({ extraNeedItemCode });
   if (targets.size === 0) {
     return { attempted: false, exchanged: 0, resolved: true, reason: 'no_targets' };
@@ -216,6 +309,9 @@ export async function maybeRunProactiveExchange(ctx, routine, { extraNeedItemCod
 }
 
 export async function exchangeTaskCoins(ctx, routine) {
+  // Don't gamble coins post-task when a pending tasks_trader order exists.
+  if (hasOpenTasksTraderOrders()) return;
+
   const targets = routine._collectExchangeTargets();
   if (targets.size === 0) return;
   await routine._runTaskExchange(ctx, {
