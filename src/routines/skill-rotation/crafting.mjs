@@ -262,12 +262,12 @@ export async function executeCrafting(ctx, routine) {
       const npcTile = npcTiles.find(t => {
         const conds = t.access?.conditions;
         return !Array.isArray(conds) || conds.length === 0;
-      }) || npcTiles[0];
+      });
 
       if (!npcTile) {
-        log.warn(`[${ctx.name}] Cannot find NPC location for ${step.npcCode}`);
+        log.warn(`[${ctx.name}] Cannot find accessible NPC location for ${step.npcCode} (${npcTiles.length} tile(s) all require conditions)`);
         if (claimMode) {
-          await routine._blockAndReleaseClaim(ctx, `missing_npc_location:${step.npcCode}`);
+          await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
         } else {
           await routine.rotation.forceRotate(ctx);
         }

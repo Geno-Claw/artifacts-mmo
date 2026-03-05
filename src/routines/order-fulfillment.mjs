@@ -137,8 +137,20 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
       return this._executeCrafting(ctx);
     }
     if (claim.sourceType === 'task_exchange') {
-      const result = await this._fulfillTaskExchangeOrderClaim(ctx);
-      return result.attempted || result.fulfilled;
+      try {
+        const result = await this._fulfillTaskExchangeOrderClaim(ctx);
+        return result.attempted || result.fulfilled;
+      } catch (err) {
+        // 496 = "Condition not met" — e.g. missing tasks_farmer achievement.
+        // Block the claim so we stop retrying and move on.
+        if (err.status === 496 || err.code === 496 || `${err.code}` === '496') {
+          log.warn(`[${ctx.name}] ${TAG}: task_exchange claim blocked (condition not met): ${err.message}`);
+          await this._blockAndReleaseClaim(ctx, 'condition_not_met');
+          this._noClaimBackoffUntil = Date.now() + NO_CLAIM_BACKOFF_MS;
+          return true;
+        }
+        throw err;
+      }
     }
 
     log.warn(`[${ctx.name}] ${TAG}: unsupported claim source ${claim.sourceType}; blocking`);

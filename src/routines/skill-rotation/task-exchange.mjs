@@ -137,7 +137,16 @@ export async function performTaskExchange(ctx) {
  * Assumes coins are already in inventory and character is or will be moved.
  */
 export async function performTasksTraderPurchase(ctx, itemCode, quantity) {
-  await moveTo(ctx, TASKS_TRADER.x, TASKS_TRADER.y);
+  try {
+    await moveTo(ctx, TASKS_TRADER.x, TASKS_TRADER.y);
+  } catch (err) {
+    // 496 = "Condition not met" — typically missing tasks_farmer achievement to access the trader tile.
+    if (err.status === 496 || err.code === 496 || `${err.code}` === '496') {
+      log.warn(`[${ctx.name}] Tasks Trader: cannot reach trader tile — disabling trader purchases until restart`);
+      tasksTraderAvailable = false;
+    }
+    throw err;
+  }
   const result = await api.npcBuy(itemCode, quantity, ctx.name);
   ctx.applyActionResult(result);
   await api.waitForCooldown(result);
