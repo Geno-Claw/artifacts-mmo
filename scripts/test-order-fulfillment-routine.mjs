@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
+const { subscribeLogEvents } = await import('../src/log.mjs');
 const {
   _resetOrderBoardForTests: resetOrderBoardForTests,
   claimOrder,
@@ -394,9 +395,21 @@ async function testNoWorkReturnsFalse() {
   await withTempOrderBoard(async () => {
     const ctx = makeCtx();
     const routine = makeRoutine();
+    const events = [];
+    const unsubscribe = subscribeLogEvents((entry) => {
+      events.push(entry);
+    });
     assert.equal(routine.canRun(ctx), false, 'canRun should be false with no orders');
-    const result = await routine.execute(ctx);
-    assert.equal(result, false, 'execute should return false when no work exists');
+    try {
+      const result = await routine.execute(ctx);
+      assert.equal(result, false, 'execute should return false when no work exists');
+      assert.ok(
+        events.some(entry => entry.scope === 'routine.order-fulfillment' && entry.event === 'order_fulfillment.backoff'),
+        'no-work execution should emit structured order_fulfillment.backoff log',
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 }
 

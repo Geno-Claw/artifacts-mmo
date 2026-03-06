@@ -14,6 +14,8 @@ import { buyItemFromNpc, carriedCurrencyCount, topUpNpcCurrency } from '../../se
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { RESERVE_PCT, RESERVE_MIN, RESERVE_MAX } from './constants.mjs';
 
+const craftingLog = log.createLogger({ scope: 'routine.skill-rotation.crafting' });
+
 export async function executeCrafting(ctx, routine) {
   const craftSkill = routine.rotation.currentSkill;
   const claim = await routine._ensureOrderClaim(ctx, 'craft', { craftSkill });
@@ -104,7 +106,18 @@ export async function executeCrafting(ctx, routine) {
       if (claimMode) {
         await routine._blockAndReleaseClaim(ctx, 'missing_bank_dependency');
       } else {
-        log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`);
+        craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`, {
+          event: 'craft.bank_dependency.missing',
+          reasonCode: 'bank_unavailable',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            itemCode: step.itemCode,
+            requiredQuantity: step.quantity,
+            availableQuantity: have,
+            recipeCode: recipe.code,
+          },
+        });
         await routine.rotation.forceRotate(ctx);
       }
       return true;
@@ -120,9 +133,20 @@ export async function executeCrafting(ctx, routine) {
       // block here — avoids deadlock when inventory is above deposit threshold
       // but below capacity.
       if (ctx.inventoryFull()) {
-        log.info(
+        craftingLog.info(
           `[${ctx.name}] ${routine.rotation.currentSkill}: gather paused for ${step.itemCode}; ` +
           `inventory full (${ctx.inventoryCount()}/${ctx.inventoryCapacity()})`,
+          {
+            event: 'craft.gather.paused',
+            reasonCode: 'inventory_full',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              itemCode: step.itemCode,
+              inventoryCount: ctx.inventoryCount(),
+              inventoryCapacity: ctx.inventoryCapacity(),
+            },
+          },
         );
         reserveGatherBlocked = true;
         continue;
@@ -134,7 +158,17 @@ export async function executeCrafting(ctx, routine) {
         if (claimMode) {
           await routine._blockAndReleaseClaim(ctx, 'missing_gather_location');
         } else {
-          log.warn(`[${ctx.name}] Cannot find location for ${step.resource.code}, skipping recipe`);
+          craftingLog.warn(`[${ctx.name}] Cannot find location for ${step.resource.code}, skipping recipe`, {
+            event: 'craft.gather.location_missing',
+            reasonCode: 'no_path',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              itemCode: step.itemCode,
+              resourceCode: step.resource.code,
+              recipeCode: recipe.code,
+            },
+          });
           await routine.rotation.forceRotate(ctx);
         }
         return true;
@@ -148,15 +182,36 @@ export async function executeCrafting(ctx, routine) {
         // Yield for urgent routines (e.g. events) — return false to let scheduler
         // pick the urgent routine via its own preemption logic on the next tick.
         if (routine._hasUrgentPreemption(ctx)) {
-          log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: yielding gather loop for urgent routine`);
+          craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: yielding gather loop for urgent routine`, {
+            event: 'craft.gather.preempted',
+            reasonCode: 'preempted_by_higher_priority',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              itemCode: step.itemCode,
+              recipeCode: recipe.code,
+            },
+          });
           return false;
         }
         const result = await gatherOnce(ctx);
         const items = result.details?.items || [];
-        log.info(
+        craftingLog.debug(
           `[${ctx.name}] ${routine.rotation.currentSkill}: gathering ${step.itemCode} for ${recipe.code} — ` +
           `got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} ` +
           `(${ctx.itemCount(step.itemCode)}/${needed})`,
+          {
+            event: 'craft.gather.progress',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              itemCode: step.itemCode,
+              recipeCode: recipe.code,
+              needed,
+              currentQuantity: ctx.itemCount(step.itemCode),
+              items: items.map(i => ({ code: i.code, quantity: i.quantity })),
+            },
+          },
         );
       }
       if (ctx.inventoryFull()) return false;
@@ -175,7 +230,17 @@ export async function executeCrafting(ctx, routine) {
         if (claimMode) {
           await routine._blockAndReleaseClaim(ctx, 'missing_fight_location');
         } else {
-          log.warn(`[${ctx.name}] Cannot find location for monster ${monsterCode}, skipping recipe`);
+          craftingLog.warn(`[${ctx.name}] Cannot find location for monster ${monsterCode}, skipping recipe`, {
+            event: 'craft.fight.location_missing',
+            reasonCode: 'no_path',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              recipeCode: recipe.code,
+              itemCode: step.itemCode,
+              monsterCode,
+            },
+          });
           await routine.rotation.forceRotate(ctx);
         }
         return true;
@@ -185,11 +250,33 @@ export async function executeCrafting(ctx, routine) {
       const { simResult, ready = true } = await routine._equipForCraftFight(ctx, monsterCode);
       if (!ready) {
         if (claimMode) {
-          log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: combat gear not ready for ${monsterCode}, blocking claim`);
+          craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: combat gear not ready for ${monsterCode}, blocking claim`, {
+            event: 'craft.fight.gear_not_ready',
+            reasonCode: 'routine_conditions_changed',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              recipeCode: recipe.code,
+              itemCode: step.itemCode,
+              monsterCode,
+              claimMode: true,
+            },
+          });
           await routine._blockAndReleaseClaim(ctx, `combat_gear_not_ready:${monsterCode}`);
           return true;
         }
-        log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: combat gear not ready for ${monsterCode}, blocking recipe and rotating`);
+        craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: combat gear not ready for ${monsterCode}, blocking recipe and rotating`, {
+          event: 'craft.fight.gear_not_ready',
+          reasonCode: 'routine_conditions_changed',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            monsterCode,
+            claimMode: false,
+          },
+        });
         routine.rotation.blockCurrentRecipe({
           reason: `combat gear not ready vs ${monsterCode}`,
           ctx,
@@ -213,11 +300,33 @@ export async function executeCrafting(ctx, routine) {
       if (!(await restBeforeFight(ctx, monsterCode))) {
         const minHp = hpNeededForFight(ctx, monsterCode);
         if (minHp === null) {
-          log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: ${monsterCode} unbeatable for ${step.itemCode}, rotating`);
+          craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: ${monsterCode} unbeatable for ${step.itemCode}, rotating`, {
+            event: 'craft.fight.unwinnable',
+            reasonCode: 'unwinnable_combat',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              recipeCode: recipe.code,
+              itemCode: step.itemCode,
+              monsterCode,
+            },
+          });
           await routine.rotation.forceRotate(ctx);
           return true;
         }
-        log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: insufficient HP for ${monsterCode}, yielding for rest`);
+        craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: insufficient HP for ${monsterCode}, yielding for rest`, {
+          event: 'craft.fight.rest_required',
+          reasonCode: 'yield_for_rest',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            monsterCode,
+            requiredHp: minHp,
+            currentHp: ctx.get().hp,
+          },
+        });
         return true;
       }
 
@@ -227,16 +336,52 @@ export async function executeCrafting(ctx, routine) {
 
       if (r.win) {
         ctx.clearLosses(monsterCode);
-        log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: farming ${step.itemCode} from ${monsterCode} for ${recipe.code} — WIN ${r.turns}t${r.drops ? ' | ' + r.drops : ''} (have ${ctx.itemCount(step.itemCode)}/${needed})`);
+        craftingLog.debug(`[${ctx.name}] ${routine.rotation.currentSkill}: farming ${step.itemCode} from ${monsterCode} for ${recipe.code} — WIN ${r.turns}t${r.drops ? ' | ' + r.drops : ''} (have ${ctx.itemCount(step.itemCode)}/${needed})`, {
+          event: 'craft.fight.progress',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            monsterCode,
+            turns: r.turns,
+            drops: r.drops || '',
+            currentQuantity: ctx.itemCount(step.itemCode),
+            needed,
+          },
+        });
       } else {
         ctx.recordLoss(monsterCode);
         const losses = ctx.consecutiveLosses(monsterCode);
-        log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: farming ${monsterCode} for ${step.itemCode} — LOSS (${losses} losses)`);
+        craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: farming ${monsterCode} for ${step.itemCode} — LOSS (${losses} losses)`, {
+          event: 'craft.fight.lost',
+          reasonCode: 'unwinnable_combat',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            monsterCode,
+            losses,
+          },
+        });
         if (losses >= routine.maxLosses) {
           if (claimMode) {
             await routine._blockAndReleaseClaim(ctx, 'combat_losses');
           } else {
-            log.info(`[${ctx.name}] Too many losses farming ${monsterCode}, rotating`);
+            craftingLog.info(`[${ctx.name}] Too many losses farming ${monsterCode}, rotating`, {
+              event: 'craft.rotation.loss_limit',
+              reasonCode: 'unwinnable_combat',
+              context: { character: ctx.name },
+              data: {
+                skill: routine.rotation.currentSkill,
+                recipeCode: recipe.code,
+                itemCode: step.itemCode,
+                monsterCode,
+                losses,
+                maxLosses: routine.maxLosses,
+              },
+            });
             await routine.rotation.forceRotate(ctx);
           }
         }
@@ -255,12 +400,35 @@ export async function executeCrafting(ctx, routine) {
         reason: `craft npc_trade ${step.itemCode}`,
       });
       if (currencyTopUp.error) {
-        log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: failed to top up ${step.currency} for ${step.itemCode}: ${currencyTopUp.error.message}`);
+        craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: failed to top up ${step.currency} for ${step.itemCode}: ${currencyTopUp.error.message}`, {
+          event: 'craft.npc_trade.currency_top_up_failed',
+          reasonCode: 'bank_unavailable',
+          context: { character: ctx.name },
+          error: currencyTopUp.error,
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            currency: step.currency,
+            currencyNeeded,
+          },
+        });
       }
 
       if (carriedCurrencyCount(ctx, step.currency) < currencyNeeded) {
         // Not enough currency yet — gather steps should handle it on next pass
-        log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${currencyNeeded}x ${step.currency} for NPC trade ${step.itemCode}, have ${ctx.itemCount(step.currency)}`);
+        craftingLog.debug(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${currencyNeeded}x ${step.currency} for NPC trade ${step.itemCode}, have ${ctx.itemCount(step.currency)}`, {
+          event: 'craft.npc_trade.currency_needed',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            currency: step.currency,
+            currencyNeeded,
+            currentCurrency: ctx.itemCount(step.currency),
+          },
+        });
         continue;
       }
 
@@ -270,7 +438,17 @@ export async function executeCrafting(ctx, routine) {
         quantity: buyQty,
       });
       if (!purchase.ok && purchase.reason === 'npc_not_found') {
-        log.warn(`[${ctx.name}] Cannot find NPC location for ${step.npcCode}`);
+        craftingLog.warn(`[${ctx.name}] Cannot find NPC location for ${step.npcCode}`, {
+          event: 'craft.npc_trade.location_missing',
+          reasonCode: 'no_path',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            npcCode: step.npcCode,
+          },
+        });
         if (claimMode) {
           await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
         } else {
@@ -279,7 +457,17 @@ export async function executeCrafting(ctx, routine) {
         return true;
       }
       if (!purchase.ok && purchase.reason === 'condition_not_met') {
-        log.warn(`[${ctx.name}] Cannot access NPC ${step.npcCode}: ${purchase.error?.message || 'condition not met'}`);
+        craftingLog.warn(`[${ctx.name}] Cannot access NPC ${step.npcCode}: ${purchase.error?.message || 'condition not met'}`, {
+          event: 'craft.npc_trade.inaccessible',
+          reasonCode: 'routine_conditions_changed',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            npcCode: step.npcCode,
+          },
+        });
         if (claimMode) {
           await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
         } else {
@@ -290,7 +478,17 @@ export async function executeCrafting(ctx, routine) {
       if (!purchase.ok) {
         return true;
       }
-      log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: NPC trade — bought ${step.itemCode} x${buyQty} from ${step.npcCode}`);
+      craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: NPC trade — bought ${step.itemCode} x${buyQty} from ${step.npcCode}`, {
+        event: 'craft.npc_trade.completed',
+        context: { character: ctx.name },
+        data: {
+          skill: routine.rotation.currentSkill,
+          recipeCode: recipe.code,
+          itemCode: step.itemCode,
+          npcCode: step.npcCode,
+          quantity: buyQty,
+        },
+      });
       continue;
     }
 
@@ -330,7 +528,17 @@ export async function executeCrafting(ctx, routine) {
       const workshops = await gameData.getWorkshops();
       const ws = workshops[craftItem.craft.skill];
       if (!ws) {
-        log.warn(`[${ctx.name}] No workshop found for ${craftItem.craft.skill}`);
+        craftingLog.warn(`[${ctx.name}] No workshop found for ${craftItem.craft.skill}`, {
+          event: 'craft.workshop.missing',
+          reasonCode: 'no_path',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            itemCode: step.itemCode,
+            craftSkill: craftItem.craft.skill,
+          },
+        });
         await routine.rotation.forceRotate(ctx);
         return true;
       }
@@ -340,20 +548,54 @@ export async function executeCrafting(ctx, routine) {
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
 
-      log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: crafted ${step.itemCode} x${craftQty}`);
+      craftingLog.debug(`[${ctx.name}] ${routine.rotation.currentSkill}: crafted ${step.itemCode} x${craftQty}`, {
+        event: 'craft.step.completed',
+        context: { character: ctx.name },
+        data: {
+          skill: routine.rotation.currentSkill,
+          recipeCode: recipe.code,
+          itemCode: step.itemCode,
+          quantity: craftQty,
+        },
+      });
 
       // If this is the final step, record progress
       if (i === plan.length - 1) {
         const progressed = routine._recordProgress(craftQty);
         if (progressed) {
-          log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: ${recipe.code} x${craftQty} complete (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+          craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: ${recipe.code} x${craftQty} complete (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+            event: 'craft.recipe.completed',
+            context: { character: ctx.name },
+            data: {
+              skill: routine.rotation.currentSkill,
+              recipeCode: recipe.code,
+              quantity: craftQty,
+              goalProgress: routine.rotation.goalProgress,
+              goalTarget: routine.rotation.goalTarget,
+            },
+          });
         } else {
           await routine._depositClaimItemsIfNeeded(ctx, { force: true });
           const active = routine._syncActiveClaimFromBoard();
           if (active) {
-            log.info(`[${ctx.name}] Craft order progress: ${active.itemCode} remaining ${active.remainingQty}`);
+            craftingLog.info(`[${ctx.name}] Craft order progress: ${active.itemCode} remaining ${active.remainingQty}`, {
+              event: 'craft.claim.progress',
+              context: { character: ctx.name },
+              data: {
+                orderId: active.orderId,
+                itemCode: active.itemCode,
+                remainingQty: active.remainingQty,
+                recipeCode: recipe.code,
+              },
+            });
           } else {
-            log.info(`[${ctx.name}] Craft order fulfilled: ${recipe.code}`);
+            craftingLog.info(`[${ctx.name}] Craft order fulfilled: ${recipe.code}`, {
+              event: 'craft.claim.fulfilled',
+              context: { character: ctx.name },
+              data: {
+                recipeCode: recipe.code,
+              },
+            });
           }
         }
 
@@ -373,13 +615,30 @@ export async function executeCrafting(ctx, routine) {
       await depositBankItems(ctx, [{ code: recipe.code, quantity: productQty }], {
         reason: 'reserve pressure product deposit',
       });
-      log.info(
+      craftingLog.debug(
         `[${ctx.name}] ${routine.rotation.currentSkill}: deposited ${recipe.code} x${productQty} to bank (reserve pressure relief)`,
+        {
+          event: 'craft.reserve_pressure.deposit',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            quantity: productQty,
+          },
+        },
       );
       return true;
     }
 
-    log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: reserve pressure blocked gathering; yielding to allow bank/deposit routines`);
+    craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: reserve pressure blocked gathering; yielding to allow bank/deposit routines`, {
+      event: 'craft.reserve_pressure.yield',
+      reasonCode: 'yield_for_deposit',
+      context: { character: ctx.name },
+      data: {
+        skill: routine.rotation.currentSkill,
+        recipeCode: recipe.code,
+      },
+    });
     return false;
   }
 
@@ -398,7 +657,20 @@ export async function handleUnwinnableCraftFight(ctx, routine, { monsterCode, it
     : 'n/a';
   const simOutcome = simResult?.win ? 'win' : 'loss';
 
-  log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: skipping ${recipeCode || 'recipe'} fight step ${monsterCode} -> ${itemCode || 'drop'} (sim ${simOutcome}, hpLost ${hpLost})`);
+  craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: skipping ${recipeCode || 'recipe'} fight step ${monsterCode} -> ${itemCode || 'drop'} (sim ${simOutcome}, hpLost ${hpLost})`, {
+    event: 'craft.fight.skipped',
+    reasonCode: 'unwinnable_combat',
+    context: { character: ctx.name },
+    data: {
+      skill: routine.rotation.currentSkill,
+      recipeCode: recipeCode || null,
+      monsterCode,
+      itemCode: itemCode || null,
+      simOutcome,
+      hpLost,
+      claimMode,
+    },
+  });
 
   // Queue fight order so another character can farm the drop
   if (monsterCode && itemCode && routine.rotation) {
@@ -475,13 +747,31 @@ export async function withdrawFromBank(ctx, routine, plan, finalRecipeCode, batc
 
   const maxUnits = usableInventorySpace(ctx);
   if (maxUnits <= 0) {
-    log.info(`[${ctx.name}] Rotation crafting: skipping bank withdrawal (inventory reserve reached)`);
+    craftingLog.info(`[${ctx.name}] Rotation crafting: skipping bank withdrawal (inventory reserve reached)`, {
+      event: 'craft.bank_withdraw.skipped',
+      reasonCode: 'inventory_full',
+      context: { character: ctx.name },
+      data: {
+        finalRecipeCode: finalRecipeCode || null,
+        batchSize: batchSizeVal,
+        inventoryCount: ctx.inventoryCount(),
+        inventoryCapacity: ctx.inventoryCapacity(),
+      },
+    });
     return;
   }
 
   const excludeCodes = finalRecipeCode ? [finalRecipeCode] : [];
   const withdrawn = await withdrawPlanFromBank(ctx, plan, batchSizeVal, { excludeCodes, maxUnits });
   if (withdrawn.length > 0) {
-    log.info(`[${ctx.name}] Rotation crafting: withdrew from bank: ${withdrawn.join(', ')}`);
+    craftingLog.debug(`[${ctx.name}] Rotation crafting: withdrew from bank: ${withdrawn.join(', ')}`, {
+      event: 'craft.bank_withdraw.completed',
+      context: { character: ctx.name },
+      data: {
+        finalRecipeCode: finalRecipeCode || null,
+        batchSize: batchSizeVal,
+        withdrawn,
+      },
+    });
   }
 }

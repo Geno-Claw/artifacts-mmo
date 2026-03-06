@@ -14,6 +14,7 @@ import { TASKS_MASTER, TASKS_TRADER } from '../../data/locations.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
 
 const TASKS_TRADER_NPC = 'tasks_trader';
+const exchangeLog = log.createLogger({ scope: 'routine.skill-rotation.task-exchange' });
 
 /** Gate for tasks_trader access — flipped to false on 496 "condition not met" errors. */
 let tasksTraderAvailable = true;
@@ -72,6 +73,7 @@ export function inventorySnapshotForTargets(ctx, targets) {
 }
 
 export async function ensureExchangeCoinsInInventory(ctx, minCoins = TASK_EXCHANGE_COST) {
+  const logger = log.forCharacter(exchangeLog, ctx);
   const invCoins = ctx.itemCount(TASK_COIN_CODE);
   if (invCoins >= minCoins) {
     return { ok: true, available: invCoins };
@@ -95,7 +97,15 @@ export async function ensureExchangeCoinsInInventory(ctx, minCoins = TASK_EXCHAN
     retryStaleOnce: true,
   });
   for (const row of result.failed) {
-    log.warn(`[${ctx.name}] Task Exchange: coin withdrawal failed for ${row.code}: ${row.error}`);
+    logger.warn(`[${ctx.name}] Task Exchange: coin withdrawal failed for ${row.code}: ${row.error}`, {
+      event: 'task_exchange.coin_withdraw.failed',
+      reasonCode: 'bank_unavailable',
+      data: {
+        code: row.code,
+        requested: row.requested,
+        error: row.error,
+      },
+    });
   }
 
   const refreshedInv = ctx.itemCount(TASK_COIN_CODE);
@@ -104,6 +114,7 @@ export async function ensureExchangeCoinsInInventory(ctx, minCoins = TASK_EXCHAN
 }
 
 export async function depositTargetRewardsToBank(ctx, targets, beforeInvSnapshot = new Map()) {
+  const logger = log.forCharacter(exchangeLog, ctx);
   const deposits = [];
   for (const code of targets.keys()) {
     const before = beforeInvSnapshot.get(code) || 0;
@@ -120,7 +131,14 @@ export async function depositTargetRewardsToBank(ctx, targets, beforeInvSnapshot
       reason: 'task exchange reward deposit',
     });
   } catch (err) {
-    log.warn(`[${ctx.name}] Task Exchange: reward deposit failed: ${err.message}`);
+    logger.warn(`[${ctx.name}] Task Exchange: reward deposit failed: ${err.message}`, {
+      event: 'task_exchange.reward_deposit.failed',
+      reasonCode: 'bank_unavailable',
+      error: err,
+      data: {
+        items: deposits,
+      },
+    });
     return [];
   }
 }
@@ -137,12 +155,17 @@ export async function performTaskExchange(ctx) {
  * Assumes coins are already in inventory and character is or will be moved.
  */
 export async function performTasksTraderPurchase(ctx, itemCode, quantity) {
+  const logger = log.forCharacter(exchangeLog, ctx);
   try {
     await moveTo(ctx, TASKS_TRADER.x, TASKS_TRADER.y);
   } catch (err) {
     // 496 = "Condition not met" — typically missing tasks_farmer achievement to access the trader tile.
     if (err.status === 496 || err.code === 496 || `${err.code}` === '496') {
-      log.warn(`[${ctx.name}] Tasks Trader: cannot reach trader tile — disabling trader purchases until restart`);
+      logger.warn(`[${ctx.name}] Tasks Trader: cannot reach trader tile — disabling trader purchases until restart`, {
+        event: 'tasks_trader.path.blocked',
+        reasonCode: 'routine_conditions_changed',
+        error: err,
+      });
       tasksTraderAvailable = false;
     }
     throw err;
@@ -159,6 +182,7 @@ export async function performTasksTraderPurchase(ctx, itemCode, quantity) {
  * @returns {{ attempted, purchased, reason }}
  */
 export async function runTasksTraderPurchase(ctx, routine, { itemCode, remainingQty = 1 } = {}) {
+  const logger = log.forCharacter(exchangeLog, ctx);
   const offer = gameData.getNpcBuyOffer(TASKS_TRADER_NPC, itemCode);
   if (!offer) {
     return { attempted: false, purchased: 0, reason: 'not_available' };
@@ -188,13 +212,35 @@ export async function runTasksTraderPurchase(ctx, routine, { itemCode, remaining
 
   try {
     await routine._performTasksTraderPurchase(ctx, itemCode, buyQty);
-    log.info(`[${ctx.name}] Tasks Trader: bought ${itemCode} x${buyQty} for ${coinsNeeded} ${TASK_COIN_CODE}`);
+    logger.info(`[${ctx.name}] Tasks Trader: bought ${itemCode} x${buyQty} for ${coinsNeeded} ${TASK_COIN_CODE}`, {
+      event: 'tasks_trader.purchase.completed',
+      data: {
+        itemCode,
+        quantity: buyQty,
+        coinsNeeded,
+      },
+    });
   } catch (err) {
-    log.warn(`[${ctx.name}] Tasks Trader: buy failed for ${itemCode}: ${err.message}`);
+    logger.warn(`[${ctx.name}] Tasks Trader: buy failed for ${itemCode}: ${err.message}`, {
+      event: 'tasks_trader.purchase.failed',
+      reasonCode: 'request_failed',
+      error: err,
+      data: {
+        itemCode,
+        quantity: buyQty,
+      },
+    });
     // 496 = "Condition not met" — typically a missing achievement (e.g. tasks_farmer).
     // Mark the trader as unavailable so we stop retrying until restart.
     if (err.status === 496 || `${err.code}` === '496') {
-      log.warn(`[${ctx.name}] Tasks Trader: condition not met — disabling trader purchases until restart`);
+      logger.warn(`[${ctx.name}] Tasks Trader: condition not met — disabling trader purchases until restart`, {
+        event: 'tasks_trader.unavailable',
+        reasonCode: 'routine_conditions_changed',
+        error: err,
+        data: {
+          itemCode,
+        },
+      });
       tasksTraderAvailable = false;
       return { attempted: true, purchased: 0, reason: 'condition_not_met' };
     }
@@ -209,7 +255,15 @@ export async function runTasksTraderPurchase(ctx, routine, { itemCode, remaining
         reason: `tasks_trader purchase: ${itemCode}`,
       });
     } catch (err) {
-      log.warn(`[${ctx.name}] Tasks Trader: deposit failed after buying ${itemCode}: ${err.message}`);
+      logger.warn(`[${ctx.name}] Tasks Trader: deposit failed after buying ${itemCode}: ${err.message}`, {
+        event: 'tasks_trader.deposit.failed',
+        reasonCode: 'bank_unavailable',
+        error: err,
+        data: {
+          itemCode,
+          quantity: qty,
+        },
+      });
     }
   }
 
@@ -221,6 +275,7 @@ export async function runTaskExchange(
   routine,
   { targets = null, trigger = 'unknown', proactive = false, extraNeedItemCode = '' } = {},
 ) {
+  const logger = log.forCharacter(exchangeLog, ctx);
   let targetMap = targets instanceof Map
     ? new Map(targets)
     : routine._collectExchangeTargets({ extraNeedItemCode });
@@ -266,10 +321,25 @@ export async function runTaskExchange(
       try {
         await routine._performTaskExchange(ctx);
         exchanged += 1;
-        log.info(`[${ctx.name}] Task Exchange (${trigger}): exchanged ${TASK_EXCHANGE_COST} coins (${ctx.taskCoins()} available)`);
+        logger.debug(`[${ctx.name}] Task Exchange (${trigger}): exchanged ${TASK_EXCHANGE_COST} coins (${ctx.taskCoins()} available)`, {
+          event: 'task_exchange.exchange.completed',
+          data: {
+            trigger,
+            exchanged,
+            cost: TASK_EXCHANGE_COST,
+            availableCoins: ctx.taskCoins(),
+          },
+        });
       } catch (err) {
         reason = `exchange_failed:${err.code || 'unknown'}`;
-        log.warn(`[${ctx.name}] Task Exchange (${trigger}) failed: ${err.message}`);
+        logger.warn(`[${ctx.name}] Task Exchange (${trigger}) failed: ${err.message}`, {
+          event: 'task_exchange.exchange.failed',
+          reasonCode: 'request_failed',
+          error: err,
+          data: {
+            trigger,
+          },
+        });
         break;
       }
 
@@ -281,7 +351,13 @@ export async function runTaskExchange(
     const resolved = unmet.size === 0;
     if (resolved) {
       if (attempted) {
-        log.info(`[${ctx.name}] Task Exchange (${trigger}): targets met`);
+        logger.info(`[${ctx.name}] Task Exchange (${trigger}): targets met`, {
+          event: 'task_exchange.targets.met',
+          data: {
+            trigger,
+            exchanged,
+          },
+        });
       }
       return { attempted, exchanged, resolved: true, reason: 'targets_met' };
     }

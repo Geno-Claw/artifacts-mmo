@@ -11,6 +11,8 @@ import { equipForGathering } from '../../services/gear-loadout.mjs';
 import { withdrawBankItems } from '../../services/bank-ops.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
 
+const itemTaskLog = log.createLogger({ scope: 'routine.skill-rotation.item-tasks' });
+
 export async function runItemTaskFlow(ctx, routine) {
   const ITEMS_MASTER = TASKS_MASTER.items;
 
@@ -21,7 +23,14 @@ export async function runItemTaskFlow(ctx, routine) {
     ctx.applyActionResult(result);
     await api.waitForCooldown(result);
     const c = ctx.get();
-    log.info(`[${ctx.name}] Item Task: accepted ${c.task} x${c.task_total}`);
+    itemTaskLog.info(`[${ctx.name}] Item Task: accepted ${c.task} x${c.task_total}`, {
+      event: 'item_task.accepted',
+      context: { character: ctx.name },
+      data: {
+        itemCode: c.task,
+        quantity: c.task_total,
+      },
+    });
   }
 
   // 2. Complete task if done
@@ -30,7 +39,14 @@ export async function runItemTaskFlow(ctx, routine) {
     const result = await api.completeTask(ctx.name);
     ctx.applyActionResult(result);
     await api.waitForCooldown(result);
-    log.info(`[${ctx.name}] Item Task: completed! (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+    itemTaskLog.info(`[${ctx.name}] Item Task: completed! (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+      event: 'item_task.completed',
+      context: { character: ctx.name },
+      data: {
+        goalProgress: routine.rotation.goalProgress,
+        goalTarget: routine.rotation.goalTarget,
+      },
+    });
     await routine._exchangeTaskCoins(ctx);
     return true;
   }
@@ -42,7 +58,14 @@ export async function runItemTaskFlow(ctx, routine) {
   // 3. Check prerequisites — can we obtain this item?
   const item = routine._getItemTaskItem(itemCode);
   if (!item) {
-    log.warn(`[${ctx.name}] Item Task: unknown item ${itemCode}, cancelling`);
+    itemTaskLog.warn(`[${ctx.name}] Item Task: unknown item ${itemCode}, cancelling`, {
+      event: 'item_task.item.unknown',
+      reasonCode: 'routine_conditions_changed',
+      context: { character: ctx.name },
+      data: {
+        itemCode,
+      },
+    });
     await routine._cancelItemTask(ctx, ITEMS_MASTER);
     return true;
   }
@@ -55,7 +78,14 @@ export async function runItemTaskFlow(ctx, routine) {
   const canGatherNow = !!resource && charGatherLevel >= resource.level;
 
   if (!resource && !craftable) {
-    log.warn(`[${ctx.name}] Item Task: ${itemCode} can't be gathered or crafted, cancelling`);
+    itemTaskLog.warn(`[${ctx.name}] Item Task: ${itemCode} can't be gathered or crafted, cancelling`, {
+      event: 'item_task.item.unobtainable',
+      reasonCode: 'routine_conditions_changed',
+      context: { character: ctx.name },
+      data: {
+        itemCode,
+      },
+    });
     await routine._cancelItemTask(ctx, ITEMS_MASTER);
     return true;
   }
@@ -100,7 +130,17 @@ export async function runItemTaskFlow(ctx, routine) {
     if (!canGatherNow) {
       // Can we craft it instead?
       if (!craftable) {
-        log.warn(`[${ctx.name}] Item Task: need ${resource.skill} lv${resource.level} for ${itemCode} (have lv${charGatherLevel}), cancelling`);
+        itemTaskLog.warn(`[${ctx.name}] Item Task: need ${resource.skill} lv${resource.level} for ${itemCode} (have lv${charGatherLevel}), cancelling`, {
+          event: 'item_task.gather.skill_insufficient',
+          reasonCode: 'insufficient_skill',
+          context: { character: ctx.name },
+          data: {
+            itemCode,
+            skill: resource.skill,
+            requiredLevel: resource.level,
+            currentLevel: charGatherLevel,
+          },
+        });
         await routine._cancelItemTask(ctx, ITEMS_MASTER);
         return true;
       }
@@ -115,7 +155,14 @@ export async function runItemTaskFlow(ctx, routine) {
   if (craftable) {
     const plan = routine._resolveRecipeChain(item.craft);
     if (!plan) {
-      log.warn(`[${ctx.name}] Item Task: can't resolve recipe for ${itemCode}, cancelling`);
+      itemTaskLog.warn(`[${ctx.name}] Item Task: can't resolve recipe for ${itemCode}, cancelling`, {
+        event: 'item_task.recipe.unresolvable',
+        reasonCode: 'routine_conditions_changed',
+        context: { character: ctx.name },
+        data: {
+          itemCode,
+        },
+      });
       await routine._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
       return true;
     }
@@ -160,7 +207,14 @@ export async function runItemTaskFlow(ctx, routine) {
   }
 
   // Can't obtain this item — place order and cancel
-  log.warn(`[${ctx.name}] Item Task: no path to obtain ${itemCode}`);
+  itemTaskLog.warn(`[${ctx.name}] Item Task: no path to obtain ${itemCode}`, {
+    event: 'item_task.item.no_path',
+    reasonCode: 'no_path',
+    context: { character: ctx.name },
+    data: {
+      itemCode,
+    },
+  });
   await routine._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
   return true;
 }
@@ -188,9 +242,20 @@ export async function craftForItemTask(ctx, routine, itemCode, item, plan, neede
   const spaceLimit = Math.floor(usable / materialsPerRound);
   const batchRounds = Math.max(1, Math.min(roundsRemaining, spaceLimit));
   if (batchRounds < roundsRemaining) {
-    log.info(
+    itemTaskLog.debug(
       `[${ctx.name}] Item Task craft: batching ${itemCode} to ${batchRounds}/${roundsRemaining} ` +
       `round(s) (usable space ${usable}, mats/round ${materialsPerRound})`,
+      {
+        event: 'item_task.craft.batch_adjusted',
+        context: { character: ctx.name },
+        data: {
+          itemCode,
+          batchRounds,
+          roundsRemaining,
+          usableSpace: usable,
+          materialsPerRound,
+        },
+      },
     );
   }
 
@@ -236,7 +301,18 @@ export async function craftForItemTask(ctx, routine, itemCode, item, plan, neede
       await moveTo(ctx, loc.x, loc.y);
       const result = await gatherOnce(ctx);
       const items = result.details?.items || [];
-      log.info(`[${ctx.name}] Item Task craft: gathering ${step.itemCode} for ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${ctx.itemCount(step.itemCode)}/${stepNeeded})`);
+      itemTaskLog.debug(`[${ctx.name}] Item Task craft: gathering ${step.itemCode} for ${itemCode} — got ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${ctx.itemCount(step.itemCode)}/${stepNeeded})`, {
+        event: 'item_task.craft.gather.progress',
+        context: { character: ctx.name },
+        data: {
+          itemCode,
+          stepItemCode: step.itemCode,
+          resourceCode: step.resource.code,
+          stepNeeded,
+          currentQuantity: ctx.itemCount(step.itemCode),
+          items: items.map(i => ({ code: i.code, quantity: i.quantity })),
+        },
+      });
       // Return to let the loop call us again — we'll accumulate materials over multiple ticks
       return true;
     }

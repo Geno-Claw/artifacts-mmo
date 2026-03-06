@@ -14,6 +14,7 @@ import {
 } from './skill-rotation/order-claims.mjs';
 
 const TAG = 'Order Fulfillment';
+const fulfillmentLog = log.createLogger({ scope: 'routine.order-fulfillment' });
 const DEFAULT_PRIORITY = 8;
 const DEFAULT_CRAFT_SCAN_LIMIT = 1;
 const DEFAULT_MAX_LOSSES = 2;
@@ -90,6 +91,7 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
   }
 
   async execute(ctx) {
+    const logger = log.forCharacter(fulfillmentLog, ctx);
     let claim = this._syncActiveClaimFromBoard();
     if (!claim) {
       claim = this._adoptClaimForCharacter(ctx);
@@ -103,7 +105,13 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
       // Set backoff so we fall through to lower-priority routines
       // instead of spinning on unfulfillable orders.
       this._noClaimBackoffUntil = Date.now() + NO_CLAIM_BACKOFF_MS;
-      log.info(`[${ctx.name}] ${TAG}: no claimable orders — backing off ${NO_CLAIM_BACKOFF_MS / 1000}s`);
+      logger.info(`[${ctx.name}] ${TAG}: no claimable orders — backing off ${NO_CLAIM_BACKOFF_MS / 1000}s`, {
+        event: 'order_fulfillment.backoff',
+        reasonCode: 'yield_for_backoff',
+        data: {
+          backoffMs: NO_CLAIM_BACKOFF_MS,
+        },
+      });
       return this._yield('yield_for_backoff', {
         reason: 'no_claimable_orders',
         backoffMs: NO_CLAIM_BACKOFF_MS,
@@ -148,7 +156,17 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
         // 496 = "Condition not met" — e.g. missing tasks_farmer achievement.
         // Block the claim so we stop retrying and move on.
         if (err.status === 496 || err.code === 496 || `${err.code}` === '496') {
-          log.warn(`[${ctx.name}] ${TAG}: task_exchange claim blocked (condition not met): ${err.message}`);
+          logger.warn(`[${ctx.name}] ${TAG}: task_exchange claim blocked (condition not met): ${err.message}`, {
+            event: 'order_fulfillment.claim.blocked',
+            reasonCode: 'routine_conditions_changed',
+            error: err,
+            data: {
+              sourceType: claim.sourceType,
+              sourceCode: claim.sourceCode,
+              itemCode: claim.itemCode,
+              orderId: claim.orderId,
+            },
+          });
           await this._blockAndReleaseClaim(ctx, 'condition_not_met');
           this._noClaimBackoffUntil = Date.now() + NO_CLAIM_BACKOFF_MS;
           return true;
@@ -157,7 +175,16 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
       }
     }
 
-    log.warn(`[${ctx.name}] ${TAG}: unsupported claim source ${claim.sourceType}; blocking`);
+    logger.warn(`[${ctx.name}] ${TAG}: unsupported claim source ${claim.sourceType}; blocking`, {
+      event: 'order_fulfillment.claim.unsupported_source',
+      reasonCode: 'routine_conditions_changed',
+      data: {
+        orderId: claim.orderId,
+        itemCode: claim.itemCode,
+        sourceType: claim.sourceType,
+        sourceCode: claim.sourceCode,
+      },
+    });
     await this._blockAndReleaseClaim(ctx, 'unsupported_claim_source');
     return true;
   }

@@ -9,7 +9,10 @@ import { hpNeededForFight } from '../../services/combat-simulator.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
+const combatLog = log.createLogger({ scope: 'routine.skill-rotation.combat' });
+
 export async function executeCombat(ctx, routine) {
+  const logger = log.forCharacter(combatLog, ctx);
   // Re-withdraw food if bank routine deposited it mid-goal
   if (routine._foodWithdrawn && ctx.inventoryCount() === 0) {
     routine._foodWithdrawn = false;
@@ -24,7 +27,15 @@ export async function executeCombat(ctx, routine) {
     monsterCode = claim.sourceCode;
     loc = await gameData.getMonsterLocation(monsterCode);
     if (!loc) {
-      log.warn(`[${ctx.name}] Order claim invalid for monster ${monsterCode}; blocking claim`);
+      logger.warn(`[${ctx.name}] Order claim invalid for monster ${monsterCode}; blocking claim`, {
+        event: 'combat.claim.invalid',
+        reasonCode: 'routine_conditions_changed',
+        data: {
+          orderId: claim.orderId,
+          monsterCode,
+          sourceType: claim.sourceType,
+        },
+      });
       await routine._blockAndReleaseClaim(ctx, 'missing_monster_location');
       claim = null;
       monsterCode = routine.rotation.monster?.code || null;
@@ -41,7 +52,14 @@ export async function executeCombat(ctx, routine) {
   const { ready = true } = await equipForCombat(ctx, monsterCode);
   if (!ready) {
     const context = claim ? 'order fight' : 'combat';
-    log.warn(`[${ctx.name}] ${context}: combat gear not ready for ${monsterCode}, deferring`);
+    logger.warn(`[${ctx.name}] ${context}: combat gear not ready for ${monsterCode}, deferring`, {
+      event: 'combat.gear.not_ready',
+      reasonCode: 'routine_conditions_changed',
+      data: {
+        monsterCode,
+        sourceType: claim?.sourceType || null,
+      },
+    });
     return false;
   }
   await prepareCombatPotions(ctx, monsterCode);
@@ -57,7 +75,15 @@ export async function executeCombat(ctx, routine) {
     await moveTo(ctx, loc.x, loc.y);
   } catch (err) {
     if (err instanceof NoPathError) {
-      log.warn(`[${ctx.name}] Cannot reach ${monsterCode} at (${loc.x},${loc.y}), marking unreachable`);
+      logger.warn(`[${ctx.name}] Cannot reach ${monsterCode} at (${loc.x},${loc.y}), marking unreachable`, {
+        event: 'combat.path.unreachable',
+        reasonCode: 'no_path',
+        data: {
+          monsterCode,
+          x: loc.x,
+          y: loc.y,
+        },
+      });
       gameData.markLocationUnreachable('monster', monsterCode);
       await routine.rotation.forceRotate(ctx);
       return true;
@@ -68,7 +94,14 @@ export async function executeCombat(ctx, routine) {
     const context = claim ? 'order fight' : 'combat';
     const minHp = hpNeededForFight(ctx, monsterCode);
     if (minHp === null) {
-      log.warn(`[${ctx.name}] ${context}: ${monsterCode} unbeatable, rotating`);
+      logger.warn(`[${ctx.name}] ${context}: ${monsterCode} unbeatable, rotating`, {
+        event: 'combat.unwinnable',
+        reasonCode: 'unwinnable_combat',
+        data: {
+          monsterCode,
+          sourceType: claim?.sourceType || null,
+        },
+      });
       ctx.recordLoss(monsterCode);
       const losses = ctx.consecutiveLosses(monsterCode);
       if (claim && losses >= routine.maxLosses) {
@@ -78,7 +111,15 @@ export async function executeCombat(ctx, routine) {
       }
       return true;
     }
-    log.info(`[${ctx.name}] ${context}: insufficient HP for ${monsterCode}, yielding for rest`);
+    logger.info(`[${ctx.name}] ${context}: insufficient HP for ${monsterCode}, yielding for rest`, {
+      event: 'combat.rest.required',
+      reasonCode: 'yield_for_rest',
+      data: {
+        monsterCode,
+        requiredHp: minHp,
+        currentHp: ctx.get().hp,
+      },
+    });
     return true;
   }
 
@@ -89,12 +130,36 @@ export async function executeCombat(ctx, routine) {
     ctx.clearLosses(monsterCode);
 
     if (routine._recordProgress(1)) {
-      log.info(`[${ctx.name}] ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+      logger.debug(`[${ctx.name}] ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+        event: 'combat.fight.won',
+        data: {
+          monsterCode,
+          turns: r.turns,
+          xp: r.xp,
+          gold: r.gold,
+          drops: r.drops || '',
+          goalProgress: routine.rotation.goalProgress,
+          goalTarget: routine.rotation.goalTarget,
+          inventoryFull: ctx.inventoryFull(),
+        },
+      });
     } else {
       await routine._depositClaimItemsIfNeeded(ctx);
       const active = routine._syncActiveClaimFromBoard();
       const remaining = active ? active.remainingQty : 0;
-      log.info(`[${ctx.name}] Order fight ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (remaining ${remaining})`);
+      logger.info(`[${ctx.name}] Order fight ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (remaining ${remaining})`, {
+        event: 'combat.claim.progress',
+        data: {
+          orderId: active?.orderId || routine._activeOrderClaim?.orderId || null,
+          itemCode: active?.itemCode || routine._activeOrderClaim?.itemCode || null,
+          monsterCode,
+          remainingQty: remaining,
+          turns: r.turns,
+          xp: r.xp,
+          gold: r.gold,
+          drops: r.drops || '',
+        },
+      });
     }
 
     return !ctx.inventoryFull();
@@ -102,7 +167,16 @@ export async function executeCombat(ctx, routine) {
 
   ctx.recordLoss(monsterCode);
   const losses = ctx.consecutiveLosses(monsterCode);
-  log.warn(`[${ctx.name}] ${monsterCode}: LOSS ${r.turns}t (${losses} losses)`);
+  logger.warn(`[${ctx.name}] ${monsterCode}: LOSS ${r.turns}t (${losses} losses)`, {
+    event: 'combat.fight.lost',
+    reasonCode: 'unwinnable_combat',
+    data: {
+      monsterCode,
+      turns: r.turns,
+      losses,
+      sourceType: claim?.sourceType || null,
+    },
+  });
 
   if (routine._isClaimForSource('fight') && losses >= routine.maxLosses) {
     await routine._blockAndReleaseClaim(ctx, 'combat_losses');
@@ -110,7 +184,15 @@ export async function executeCombat(ctx, routine) {
   }
 
   if (losses >= routine.maxLosses) {
-    log.info(`[${ctx.name}] Too many losses, rotating to different skill`);
+    logger.info(`[${ctx.name}] Too many losses, rotating to different skill`, {
+      event: 'combat.rotation.loss_limit',
+      reasonCode: 'unwinnable_combat',
+      data: {
+        monsterCode,
+        losses,
+        maxLosses: routine.maxLosses,
+      },
+    });
     await routine.rotation.forceRotate(ctx);
   }
   return true;

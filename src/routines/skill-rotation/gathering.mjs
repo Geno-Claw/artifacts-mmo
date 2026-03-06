@@ -7,7 +7,10 @@ import * as gameData from '../../services/game-data.mjs';
 import { moveTo, gatherOnce, NoPathError } from '../../helpers.mjs';
 import { equipForGathering } from '../../services/gear-loadout.mjs';
 
+const gatheringLog = log.createLogger({ scope: 'routine.skill-rotation.gathering' });
+
 export async function executeGathering(ctx, routine) {
+  const logger = log.forCharacter(gatheringLog, ctx);
   let claim = await routine._ensureOrderClaim(ctx, 'gather');
 
   let resource = routine.rotation.resource;
@@ -16,7 +19,15 @@ export async function executeGathering(ctx, routine) {
     resource = gameData.getResource(claim.sourceCode);
     loc = resource ? await gameData.getResourceLocation(resource.code) : null;
     if (!resource || !loc) {
-      log.warn(`[${ctx.name}] Order claim invalid for gather ${claim.sourceCode}; releasing claim`);
+      logger.warn(`[${ctx.name}] Order claim invalid for gather ${claim.sourceCode}; releasing claim`, {
+        event: 'gather.claim.invalid',
+        reasonCode: 'routine_conditions_changed',
+        data: {
+          orderId: claim.orderId,
+          resourceCode: claim.sourceCode,
+          sourceType: claim.sourceType,
+        },
+      });
       await routine._clearActiveOrderClaim(ctx, { reason: 'missing_gather_source' });
       claim = null;
       resource = routine.rotation.resource;
@@ -35,7 +46,16 @@ export async function executeGathering(ctx, routine) {
       await routine._blockAndReleaseClaim(ctx, 'insufficient_skill');
       return true;
     }
-    log.warn(`[${ctx.name}] ${resource.code}: skill too low (need ${resource.skill} lv${resource.level}, have lv${ctx.skillLevel(resource.skill)}), rotating`);
+    logger.warn(`[${ctx.name}] ${resource.code}: skill too low (need ${resource.skill} lv${resource.level}, have lv${ctx.skillLevel(resource.skill)}), rotating`, {
+      event: 'gather.skill.insufficient',
+      reasonCode: 'insufficient_skill',
+      data: {
+        resourceCode: resource.code,
+        skill: resource.skill,
+        requiredLevel: resource.level,
+        currentLevel: ctx.skillLevel(resource.skill),
+      },
+    });
     await routine.rotation.forceRotate(ctx);
     return true;
   }
@@ -54,7 +74,15 @@ export async function executeGathering(ctx, routine) {
   } catch (err) {
     if (err instanceof NoPathError) {
       const resourceCode = resource?.code || 'unknown';
-      log.warn(`[${ctx.name}] Cannot reach ${resourceCode} at (${loc.x},${loc.y}), marking unreachable`);
+      logger.warn(`[${ctx.name}] Cannot reach ${resourceCode} at (${loc.x},${loc.y}), marking unreachable`, {
+        event: 'gather.path.unreachable',
+        reasonCode: 'no_path',
+        data: {
+          resourceCode,
+          x: loc.x,
+          y: loc.y,
+        },
+      });
       gameData.markLocationUnreachable('resource', resourceCode);
       await routine.rotation.forceRotate(ctx);
       return true;
@@ -69,18 +97,37 @@ export async function executeGathering(ctx, routine) {
 
   if (progressed) {
     const res = routine.rotation.resource;
-    log.info(`[${ctx.name}] ${res.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+    logger.debug(`[${ctx.name}] ${res.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+      event: 'gather.progress',
+      data: {
+        resourceCode: res.code,
+        items: items.map(i => ({ code: i.code, quantity: i.quantity })),
+        totalQuantity: totalQty,
+        goalProgress: routine.rotation.goalProgress,
+        goalTarget: routine.rotation.goalTarget,
+      },
+    });
   } else {
     await routine._depositClaimItemsIfNeeded(ctx);
     const active = routine._syncActiveClaimFromBoard();
     const remaining = active ? active.remainingQty : 0;
-    log.info(`[${ctx.name}] Order gather ${resource.code}: ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (remaining ${remaining})`);
+    logger.info(`[${ctx.name}] Order gather ${resource.code}: ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (remaining ${remaining})`, {
+      event: 'gather.claim.progress',
+      data: {
+        orderId: active?.orderId || routine._activeOrderClaim?.orderId || null,
+        itemCode: active?.itemCode || routine._activeOrderClaim?.itemCode || null,
+        resourceCode: resource.code,
+        items: items.map(i => ({ code: i.code, quantity: i.quantity })),
+        remainingQty: remaining,
+      },
+    });
   }
 
   return !ctx.inventoryFull();
 }
 
 export async function trySmelting(ctx, routine) {
+  const logger = log.forCharacter(gatheringLog, ctx);
   const skill = routine.rotation.currentSkill;
   const level = ctx.skillLevel(skill);
 
@@ -107,7 +154,16 @@ export async function trySmelting(ctx, routine) {
     await api.waitForCooldown(result);
 
     routine.rotation.recordProgress(maxQty);
-    log.info(`[${ctx.name}] ${skill}: smelted ${item.code} x${maxQty} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+    logger.debug(`[${ctx.name}] ${skill}: smelted ${item.code} x${maxQty} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+      event: 'gather.smelt.progress',
+      data: {
+        skill,
+        itemCode: item.code,
+        quantity: maxQty,
+        goalProgress: routine.rotation.goalProgress,
+        goalTarget: routine.rotation.goalTarget,
+      },
+    });
     return true;
   }
 

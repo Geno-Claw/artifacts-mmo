@@ -7,6 +7,12 @@ import * as log from '../log.mjs';
 
 const BANK_CACHE_TTL = 60_000; // 1 minute
 const DEFAULT_RESERVATION_TTL = 30_000;
+const inventoryLog = log.createLogger({ scope: 'service.inventory-manager' });
+
+function loggerFor(charName = '') {
+  const name = `${charName || ''}`.trim();
+  return name ? log.forCharacter(inventoryLog, name) : inventoryLog;
+}
 
 let _api = api;
 
@@ -89,7 +95,14 @@ export async function initialize() {
 
   await getBankItems(true);
   await _refreshBankDetails();
-  log.info(`[InventoryManager] Initialized: ${list.length} character(s), ${bank.size} bank item(s), ${bankGold}g`);
+  inventoryLog.info(`[InventoryManager] Initialized: ${list.length} character(s), ${bank.size} bank item(s), ${bankGold}g`, {
+    event: 'inventory.initialized',
+    data: {
+      characters: list.length,
+      bankItems: bank.size,
+      bankGold,
+    },
+  });
 }
 
 export function updateCharacter(name, charData) {
@@ -106,7 +119,12 @@ export function updateCharacter(name, charData) {
 
 export function invalidateBank(reason = '') {
   bankInvalidated = true;
-  if (reason) log.info(`[InventoryManager] Bank invalidated: ${reason}`);
+  if (reason) {
+    inventoryLog.debug(`[InventoryManager] Bank invalidated: ${reason}`, {
+      event: 'inventory.bank.invalidated',
+      data: { reason },
+    });
+  }
 }
 
 export function cleanupExpiredReservations() {
@@ -161,7 +179,13 @@ async function _fetchBankItems() {
   lastBankFetch = Date.now();
   bankInvalidated = false;
   bankRevision += 1;
-  log.info(`[InventoryManager] Bank refreshed: ${bank.size} unique items`);
+  inventoryLog.debug(`[InventoryManager] Bank refreshed: ${bank.size} unique items`, {
+    event: 'inventory.bank.refreshed',
+    data: {
+      bankItems: bank.size,
+      bankRevision,
+    },
+  });
   return bank;
 }
 
@@ -177,7 +201,11 @@ async function _refreshBankDetails() {
       if (Number.isFinite(cost)) bankNextExpansionCost = cost;
     }
   } catch (err) {
-    log.warn(`[InventoryManager] Failed to refresh bank details: ${err?.message || err}`);
+    inventoryLog.warn(`[InventoryManager] Failed to refresh bank details: ${err?.message || err}`, {
+      event: 'inventory.bank.details_failed',
+      reasonCode: 'request_failed',
+      error: err instanceof Error ? err : new Error(`${err}`),
+    });
   }
 }
 
@@ -204,7 +232,16 @@ export function applyBankDelta(items, op, meta = {}) {
       bank.set(code, next);
     } else {
       if (current > 0 && qty > current) {
-        log.warn(`[InventoryManager] Bank delta clamped for ${code}: tried -${qty}, had ${current}`);
+        inventoryLog.warn(`[InventoryManager] Bank delta clamped for ${code}: tried -${qty}, had ${current}`, {
+          event: 'inventory.bank.delta_clamped',
+          reasonCode: 'routine_conditions_changed',
+          data: {
+            code,
+            quantity: qty,
+            current,
+            op,
+          },
+        });
       }
       bank.delete(code);
     }
@@ -216,7 +253,19 @@ export function applyBankDelta(items, op, meta = {}) {
 
   if (meta?.reason) {
     const by = meta?.charName ? ` by ${meta.charName}` : '';
-    log.info(`[InventoryManager] Applied bank ${op} delta${by}: ${meta.reason}`);
+    loggerFor(meta?.charName).debug(`[InventoryManager] Applied bank ${op} delta${by}: ${meta.reason}`, {
+      event: op === 'deposit' ? 'inventory.bank.deposit_delta' : 'inventory.bank.withdraw_delta',
+      data: {
+        op,
+        charName: meta?.charName || null,
+        reason: meta.reason,
+        bankRevision,
+        items: list.map(entry => ({
+          code: entry?.code || null,
+          quantity: Number(entry?.quantity) || 0,
+        })),
+      },
+    });
   }
 }
 

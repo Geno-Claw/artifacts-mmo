@@ -47,6 +47,7 @@ Sink failures are non-fatal and must never crash the runtime.
 - `scope`
 - `event`
 - `reasonCode`
+- `detail`
 - `context` (merged with async log context)
 - `data` (sanitized and size-capped)
 - `error`
@@ -77,6 +78,7 @@ Each emitted entry includes:
 - `iso`
 - `level`
 - `message`
+- `detail`
 - `scope`
 - `event`
 - `reasonCode`
@@ -84,11 +86,10 @@ Each emitted entry includes:
 - `data`
 - `error`
 
-Compatibility fields are also retained:
+JSONL files only store the canonical entry shape above.
 
-- `line`
-- `msg`
-- `at`
+Console and dashboard rendering remain compatibility-friendly, but the rendered
+strings are computed by the sink/consumer rather than persisted in JSONL.
 
 ## Severity Policy
 

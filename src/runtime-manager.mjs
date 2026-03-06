@@ -44,6 +44,11 @@ import { runWithLogContext } from './log-context.mjs';
 
 const runtimeLog = log.createLogger({ scope: 'runtime' });
 
+function extractCharacterNameFromMessage(message) {
+  const match = `${message || ''}`.match(/^\[([^\]]+)\]/);
+  return match ? match[1] : '';
+}
+
 /**
  * Extract a lightweight detail object from account_log content per action type.
  * Strips the full character snapshot — only keeps fields useful for display.
@@ -292,14 +297,14 @@ export class RuntimeManager {
     // Internal bot logs — kept for detail modal only (not card display).
     const unsubscribeLogEvents = log.subscribeLogEvents((entry) => {
       const fromContext = `${entry?.context?.character || ''}`.trim();
-      const match = entry.msg.match(/^\[([^\]]+)\]/);
-      const name = fromContext || (match ? match[1] : '');
+      const rendered = log.formatEntryMessage(entry);
+      const name = fromContext || extractCharacterNameFromMessage(entry.message) || extractCharacterNameFromMessage(rendered);
       if (!configuredNameSet.has(name)) return;
 
       recordLog(name, {
         level: entry.level,
-        line: entry.msg,
-        at: entry.at,
+        line: rendered,
+        at: entry.atMs,
         scope: entry.scope || null,
         event: entry.event || null,
         reasonCode: entry.reasonCode || null,

@@ -313,13 +313,15 @@ function publish(entry) {
 }
 
 function emitEntry(entry) {
+  const renderedMessage = formatEntryMessage(entry);
+  const line = formatConsoleLine(entry.level, renderedMessage, entry.atMs);
   if (outputSet.has('console')) {
     if (entry.level === 'warn') {
-      console.warn(entry.line);
+      console.warn(line);
     } else if (entry.level === 'error') {
-      console.error(entry.line);
+      console.error(line);
     } else {
-      console.log(entry.line);
+      console.log(line);
     }
   }
 
@@ -336,31 +338,35 @@ function coerceMessage(message) {
 function createEntry(level, message, meta, baseContext = {}) {
   const rawMessage = coerceMessage(message);
   const parsed = normalizeMeta(meta);
-
-  const mergedContext = sanitizeValue({
+  const inheritedContext = {
     ...getLogContext(),
-    ...baseContext,
-    ...(parsed.context || {}),
-  });
+    ...(isObject(baseContext) ? baseContext : {}),
+  };
 
-  const scope = parsed.scope || mergedContext?.scope || null;
+  const rawContext = {
+    ...inheritedContext,
+    ...(parsed.context || {}),
+  };
+
+  const scope = parsed.scope || inheritedContext.scope || null;
+  const contextSource = { ...rawContext };
+  delete contextSource.scope;
+
+  const mergedContext = sanitizeValue(contextSource);
+
   if (!shouldEmit(level, scope)) return null;
 
   const atMs = Date.now();
   const iso = new Date(atMs).toISOString();
   const detail = trimString(parsed.detail || '');
-  const compatMsg = buildCompatibilityMsg(rawMessage, detail);
-  const line = formatConsoleLine(level, compatMsg, atMs);
   const error = parsed.error ? sanitizeError(parsed.error) : null;
 
   const entry = {
     atMs,
-    at: atMs, // compatibility
     iso,
     level,
     message: rawMessage,
-    msg: compatMsg, // compatibility
-    line, // compatibility
+    detail: detail || null,
     scope,
     event: parsed.event || null,
     reasonCode: parsed.reasonCode || null,
@@ -438,6 +444,35 @@ export function error(msg, detail = '') {
 
 export function stat(label, value, meta = null) {
   rootLogger.stat(label, value, meta);
+}
+
+export function formatEntryMessage(entry = {}) {
+  return buildCompatibilityMsg(
+    coerceMessage(entry.message),
+    trimString(entry.detail || ''),
+  );
+}
+
+export function formatEntryConsoleLine(entry = {}) {
+  return formatConsoleLine(entry.level || 'info', formatEntryMessage(entry), entry.atMs || Date.now());
+}
+
+export function forCharacter(logger, ctxOrName, extraContext = {}) {
+  if (!logger || typeof logger.child !== 'function') {
+    throw new Error('forCharacter(logger, ctxOrName, extraContext) requires a logger.child() instance');
+  }
+  const character = typeof ctxOrName === 'string'
+    ? ctxOrName
+    : `${ctxOrName?.name || ''}`.trim();
+  const merged = {
+    ...(isObject(extraContext) ? extraContext : {}),
+  };
+  if (character) merged.character = character;
+  return logger.child(merged);
+}
+
+export function _flushJsonlForTests() {
+  return jsonlWriteChain;
 }
 
 export { createLogger };

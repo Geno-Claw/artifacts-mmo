@@ -18,6 +18,8 @@ import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
 
 // Objective types we know how to score (and optionally execute)
+const achievementLog = log.createLogger({ scope: 'routine.skill-rotation.achievements' });
+
 const SCORABLE_TYPES = new Set([
   'combat_kill', 'gathering', 'crafting', 'combat_drop', 'task',
   'use', 'recycling', 'npc_buy', 'npc_sell',
@@ -44,7 +46,14 @@ export async function executeAchievement(ctx, routine) {
     case 'task':
       return executeTaskObjective(ctx, routine);
     default:
-      log.warn(`[${ctx.name}] Achievement: unsupported action type ${action.type}`);
+      achievementLog.warn(`[${ctx.name}] Achievement: unsupported action type ${action.type}`, {
+        event: 'achievement.action.unsupported',
+        reasonCode: 'routine_conditions_changed',
+        context: { character: ctx.name },
+        data: {
+          actionType: action.type,
+        },
+      });
       await routine.rotation.forceRotate(ctx);
       return true;
   }
@@ -58,11 +67,27 @@ async function executeFightObjective(ctx, routine, action) {
   // Equip optimal gear (cached per monster/level)
   const { simResult, ready = true } = await equipForCombat(ctx, monsterCode);
   if (!ready) {
-    log.warn(`[${ctx.name}] Achievement: combat gear not ready for ${monsterCode}, deferring`);
+    achievementLog.warn(`[${ctx.name}] Achievement: combat gear not ready for ${monsterCode}, deferring`, {
+      event: 'achievement.fight.gear_not_ready',
+      reasonCode: 'routine_conditions_changed',
+      context: { character: ctx.name },
+      data: {
+        achievementCode: routine.rotation.achievement?.code || null,
+        monsterCode,
+      },
+    });
     return false;
   }
   if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
-    log.warn(`[${ctx.name}] Achievement: simulation predicts loss vs ${monsterCode}, rotating`);
+    achievementLog.warn(`[${ctx.name}] Achievement: simulation predicts loss vs ${monsterCode}, rotating`, {
+      event: 'achievement.fight.unwinnable',
+      reasonCode: 'unwinnable_combat',
+      context: { character: ctx.name },
+      data: {
+        achievementCode: routine.rotation.achievement?.code || null,
+        monsterCode,
+      },
+    });
     await routine.rotation.forceRotate(ctx);
     return true;
   }
@@ -85,7 +110,17 @@ async function executeFightObjective(ctx, routine, action) {
     await moveTo(ctx, loc.x, loc.y);
   } catch (err) {
     if (err instanceof NoPathError) {
-      log.warn(`[${ctx.name}] Achievement: cannot reach ${monsterCode} at (${loc.x},${loc.y}), marking unreachable`);
+      achievementLog.warn(`[${ctx.name}] Achievement: cannot reach ${monsterCode} at (${loc.x},${loc.y}), marking unreachable`, {
+        event: 'achievement.fight.path_unreachable',
+        reasonCode: 'no_path',
+        context: { character: ctx.name },
+        data: {
+          achievementCode: routine.rotation.achievement?.code || null,
+          monsterCode,
+          x: loc.x,
+          y: loc.y,
+        },
+      });
       gameData.markLocationUnreachable('monster', monsterCode);
       await routine.rotation.forceRotate(ctx);
       return true;
@@ -97,14 +132,32 @@ async function executeFightObjective(ctx, routine, action) {
   if (!(await restBeforeFight(ctx, monsterCode))) {
     const minHp = hpNeededForFight(ctx, monsterCode);
     if (minHp === null) {
-      log.warn(`[${ctx.name}] Achievement: ${monsterCode} unbeatable, rotating`);
+      achievementLog.warn(`[${ctx.name}] Achievement: ${monsterCode} unbeatable, rotating`, {
+        event: 'achievement.fight.unwinnable',
+        reasonCode: 'unwinnable_combat',
+        context: { character: ctx.name },
+        data: {
+          achievementCode: routine.rotation.achievement?.code || null,
+          monsterCode,
+        },
+      });
       ctx.recordLoss(monsterCode);
       if (ctx.consecutiveLosses(monsterCode) >= routine.maxLosses) {
         await routine.rotation.forceRotate(ctx);
       }
       return true;
     }
-    log.info(`[${ctx.name}] Achievement: insufficient HP for ${monsterCode}, yielding for rest`);
+    achievementLog.info(`[${ctx.name}] Achievement: insufficient HP for ${monsterCode}, yielding for rest`, {
+      event: 'achievement.fight.rest_required',
+      reasonCode: 'yield_for_rest',
+      context: { character: ctx.name },
+      data: {
+        achievementCode: routine.rotation.achievement?.code || null,
+        monsterCode,
+        requiredHp: minHp,
+        currentHp: ctx.get().hp,
+      },
+    });
     return true;
   }
 
@@ -116,15 +169,48 @@ async function executeFightObjective(ctx, routine, action) {
   if (r.win) {
     ctx.clearLosses(monsterCode);
     routine._recordProgress(1);
-    log.info(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+    achievementLog.debug(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+      event: 'achievement.fight.progress',
+      context: { character: ctx.name },
+      data: {
+        achievementCode: ach.code,
+        monsterCode,
+        turns: r.turns,
+        xp: r.xp,
+        gold: r.gold,
+        drops: r.drops || '',
+        goalProgress: routine.rotation.goalProgress,
+        goalTarget: routine.rotation.goalTarget,
+      },
+    });
     return !ctx.inventoryFull();
   }
 
   ctx.recordLoss(monsterCode);
   const losses = ctx.consecutiveLosses(monsterCode);
-  log.warn(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} LOSS ${r.turns}t (${losses} losses)`);
+  achievementLog.warn(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} LOSS ${r.turns}t (${losses} losses)`, {
+    event: 'achievement.fight.lost',
+    reasonCode: 'unwinnable_combat',
+    context: { character: ctx.name },
+    data: {
+      achievementCode: ach.code,
+      monsterCode,
+      turns: r.turns,
+      losses,
+    },
+  });
   if (losses >= routine.maxLosses) {
-    log.info(`[${ctx.name}] Achievement: too many losses vs ${monsterCode}, rotating`);
+    achievementLog.info(`[${ctx.name}] Achievement: too many losses vs ${monsterCode}, rotating`, {
+      event: 'achievement.rotation.loss_limit',
+      reasonCode: 'unwinnable_combat',
+      context: { character: ctx.name },
+      data: {
+        achievementCode: ach.code,
+        monsterCode,
+        losses,
+        maxLosses: routine.maxLosses,
+      },
+    });
     await routine.rotation.forceRotate(ctx);
   }
   return true;
@@ -137,7 +223,18 @@ async function executeGatherObjective(ctx, routine, action) {
 
   // Safety: verify skill level (may have changed since setup)
   if (resource.level > ctx.skillLevel(resource.skill)) {
-    log.warn(`[${ctx.name}] Achievement: ${resource.code} skill too low (need ${resource.skill} lv${resource.level}, have lv${ctx.skillLevel(resource.skill)}), rotating`);
+    achievementLog.warn(`[${ctx.name}] Achievement: ${resource.code} skill too low (need ${resource.skill} lv${resource.level}, have lv${ctx.skillLevel(resource.skill)}), rotating`, {
+      event: 'achievement.gather.skill_insufficient',
+      reasonCode: 'insufficient_skill',
+      context: { character: ctx.name },
+      data: {
+        achievementCode: routine.rotation.achievement?.code || null,
+        resourceCode: resource.code,
+        skill: resource.skill,
+        requiredLevel: resource.level,
+        currentLevel: ctx.skillLevel(resource.skill),
+      },
+    });
     await routine.rotation.forceRotate(ctx);
     return true;
   }
@@ -150,7 +247,17 @@ async function executeGatherObjective(ctx, routine, action) {
     await moveTo(ctx, loc.x, loc.y);
   } catch (err) {
     if (err instanceof NoPathError) {
-      log.warn(`[${ctx.name}] Achievement: cannot reach ${resource.code} at (${loc.x},${loc.y}), marking unreachable`);
+      achievementLog.warn(`[${ctx.name}] Achievement: cannot reach ${resource.code} at (${loc.x},${loc.y}), marking unreachable`, {
+        event: 'achievement.gather.path_unreachable',
+        reasonCode: 'no_path',
+        context: { character: ctx.name },
+        data: {
+          achievementCode: routine.rotation.achievement?.code || null,
+          resourceCode: resource.code,
+          x: loc.x,
+          y: loc.y,
+        },
+      });
       gameData.markLocationUnreachable('resource', resource.code);
       await routine.rotation.forceRotate(ctx);
       return true;
@@ -165,7 +272,17 @@ async function executeGatherObjective(ctx, routine, action) {
   routine._recordProgress(totalQty);
 
   const ach = routine.rotation.achievement;
-  log.info(`[${ctx.name}] Achievement ${ach.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+  achievementLog.debug(`[${ctx.name}] Achievement ${ach.code}: gathered ${items.map(i => `${i.code}x${i.quantity}`).join(', ') || 'nothing'} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+    event: 'achievement.gather.progress',
+    context: { character: ctx.name },
+    data: {
+      achievementCode: ach.code,
+      resourceCode: resource.code,
+      items: items.map(i => ({ code: i.code, quantity: i.quantity })),
+      goalProgress: routine.rotation.goalProgress,
+      goalTarget: routine.rotation.goalTarget,
+    },
+  });
   return !ctx.inventoryFull();
 }
 

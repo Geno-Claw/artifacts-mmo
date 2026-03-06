@@ -21,6 +21,8 @@ import { equipForGathering } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST } from './constants.mjs';
 
+const claimLog = log.createLogger({ scope: 'routine.skill-rotation.order-claims' });
+
 export async function clearActiveOrderClaim(ctx, routine, { reason = 'clear_claim' } = {}) {
   const active = routine._activeOrderClaim;
   if (!active) return;
@@ -29,7 +31,19 @@ export async function clearActiveOrderClaim(ctx, routine, { reason = 'clear_clai
   try {
     releaseClaim(active.orderId, { charName: ctx.name, reason });
   } catch (err) {
-    log.warn(`[${ctx.name}] Order claim release failed (${active.orderId}): ${err?.message || String(err)}`);
+    claimLog.warn(`[${ctx.name}] Order claim release failed (${active.orderId}): ${err?.message || String(err)}`, {
+      event: 'order_claim.release.failed',
+      reasonCode: 'request_failed',
+      context: { character: ctx.name },
+      error: err instanceof Error ? err : new Error(`${err}`),
+      data: {
+        orderId: active.orderId,
+        itemCode: active.itemCode,
+        sourceType: active.sourceType,
+        sourceCode: active.sourceCode,
+        reason,
+      },
+    });
   }
 }
 
@@ -89,7 +103,19 @@ export function claimOrderForChar(ctx, routine, order) {
     claim: claimed.claim,
   };
   routine._activeOrderClaim = active;
-  log.info(`[${ctx.name}] Order claim: ${claimed.itemCode} via ${claimed.sourceType}:${claimed.sourceCode} (remaining ${claimed.remainingQty})`);
+  claimLog.info(`[${ctx.name}] Order claim: ${claimed.itemCode} via ${claimed.sourceType}:${claimed.sourceCode} (remaining ${claimed.remainingQty})`, {
+    event: 'order_claim.acquired',
+    context: { character: ctx.name },
+    data: {
+      orderId: claimed.id,
+      itemCode: claimed.itemCode,
+      sourceType: claimed.sourceType,
+      sourceCode: claimed.sourceCode,
+      remainingQty: claimed.remainingQty,
+      gatherSkill: claimed.gatherSkill || null,
+      craftSkill: claimed.craftSkill || null,
+    },
+  });
   return active;
 }
 
@@ -149,9 +175,31 @@ export function blockUnclaimableOrderForChar(routine, order, ctx, reason = 'cann
       charName: ctx.name,
       blockedRetryMs: routine.orderBoard.blockedRetryMs,
     });
-    log.info(`[${ctx.name}] Order claim skipped (${reason}): ${order.itemCode} via ${order.sourceType}:${order.sourceCode}`);
+    claimLog.info(`[${ctx.name}] Order claim skipped (${reason}): ${order.itemCode} via ${order.sourceType}:${order.sourceCode}`, {
+      event: 'order_claim.skipped',
+      reasonCode: reason,
+      context: { character: ctx.name },
+      data: {
+        orderId: order.id,
+        itemCode: order.itemCode,
+        sourceType: order.sourceType,
+        sourceCode: order.sourceCode,
+      },
+    });
   } catch (err) {
-    log.warn(`[${ctx.name}] Could not block unclaimable order ${order?.id || 'unknown'}: ${err?.message || String(err)}`);
+    claimLog.warn(`[${ctx.name}] Could not block unclaimable order ${order?.id || 'unknown'}: ${err?.message || String(err)}`, {
+      event: 'order_claim.block.failed',
+      reasonCode: 'request_failed',
+      context: { character: ctx.name },
+      error: err instanceof Error ? err : new Error(`${err}`),
+      data: {
+        orderId: order?.id || null,
+        itemCode: order?.itemCode || null,
+        sourceType: order?.sourceType || null,
+        sourceCode: order?.sourceCode || null,
+        reason,
+      },
+    });
   }
 }
 
@@ -669,9 +717,28 @@ export async function depositClaimItemsIfNeeded(ctx, routine, { force = false } 
   });
   const fresh = routine._syncActiveClaimFromBoard();
   if (!fresh) {
-    log.info(`[${ctx.name}] Order fulfilled: ${claim.itemCode}`);
+    claimLog.info(`[${ctx.name}] Order fulfilled: ${claim.itemCode}`, {
+      event: 'order_claim.fulfilled',
+      context: { character: ctx.name },
+      data: {
+        orderId: claim.orderId,
+        itemCode: claim.itemCode,
+        sourceType: claim.sourceType,
+        sourceCode: claim.sourceCode,
+      },
+    });
   } else {
-    log.info(`[${ctx.name}] Order progress: ${fresh.itemCode} remaining ${fresh.remainingQty}`);
+    claimLog.info(`[${ctx.name}] Order progress: ${fresh.itemCode} remaining ${fresh.remainingQty}`, {
+      event: 'order_claim.progress',
+      context: { character: ctx.name },
+      data: {
+        orderId: fresh.orderId,
+        itemCode: fresh.itemCode,
+        remainingQty: fresh.remainingQty,
+        sourceType: fresh.sourceType,
+        sourceCode: fresh.sourceCode,
+      },
+    });
   }
   return true;
 }
@@ -689,9 +756,32 @@ export function enqueueGatherOrderForDeficit(routine, step, order, ctx, deficit)
       sourceLevel: step.resource.level,
       quantity: Math.max(1, Math.floor(Number(deficit) || 0)),
     });
-    log.info(`[${ctx.name}] Order claim: queued gather order for ${step.itemCode} x${deficit} (${step.resource.skill} lv${step.resource.level})`);
+    claimLog.info(`[${ctx.name}] Order claim: queued gather order for ${step.itemCode} x${deficit} (${step.resource.skill} lv${step.resource.level})`, {
+      event: 'order_claim.deficit_order.queued',
+      context: { character: ctx.name },
+      data: {
+        recipeCode: order?.itemCode || null,
+        itemCode: step.itemCode,
+        quantity: Math.max(1, Math.floor(Number(deficit) || 0)),
+        sourceType: 'gather',
+        sourceCode: step.resource.code,
+        gatherSkill: step.resource.skill,
+        sourceLevel: step.resource.level,
+      },
+    });
   } catch (err) {
-    log.warn(`[${ctx.name}] Could not queue gather order for ${step.itemCode}: ${err?.message || String(err)}`);
+    claimLog.warn(`[${ctx.name}] Could not queue gather order for ${step.itemCode}: ${err?.message || String(err)}`, {
+      event: 'order_claim.deficit_order.failed',
+      reasonCode: 'request_failed',
+      context: { character: ctx.name },
+      error: err instanceof Error ? err : new Error(`${err}`),
+      data: {
+        recipeCode: order?.itemCode || null,
+        itemCode: step.itemCode,
+        sourceType: 'gather',
+        sourceCode: step.resource.code,
+      },
+    });
   }
 }
 
@@ -707,9 +797,31 @@ export function enqueueFightOrderForDeficit(routine, step, order, ctx, deficit) 
       sourceLevel: step.monster.level,
       quantity: Math.max(1, Math.floor(Number(deficit) || 0)),
     });
-    log.info(`[${ctx.name}] Order claim: queued fight order for ${step.itemCode} x${deficit} from ${step.monster.code}`);
+    claimLog.info(`[${ctx.name}] Order claim: queued fight order for ${step.itemCode} x${deficit} from ${step.monster.code}`, {
+      event: 'order_claim.deficit_order.queued',
+      context: { character: ctx.name },
+      data: {
+        recipeCode: order?.itemCode || null,
+        itemCode: step.itemCode,
+        quantity: Math.max(1, Math.floor(Number(deficit) || 0)),
+        sourceType: 'fight',
+        sourceCode: step.monster.code,
+        sourceLevel: step.monster.level,
+      },
+    });
   } catch (err) {
-    log.warn(`[${ctx.name}] Could not queue fight order for ${step.itemCode}: ${err?.message || String(err)}`);
+    claimLog.warn(`[${ctx.name}] Could not queue fight order for ${step.itemCode}: ${err?.message || String(err)}`, {
+      event: 'order_claim.deficit_order.failed',
+      reasonCode: 'request_failed',
+      context: { character: ctx.name },
+      error: err instanceof Error ? err : new Error(`${err}`),
+      data: {
+        recipeCode: order?.itemCode || null,
+        itemCode: step.itemCode,
+        sourceType: 'fight',
+        sourceCode: step.monster.code,
+      },
+    });
   }
 }
 
@@ -722,9 +834,31 @@ export async function blockAndReleaseClaim(ctx, routine, reason = 'blocked') {
       charName: ctx.name,
       blockedRetryMs: routine.orderBoard.blockedRetryMs,
     });
-    log.info(`[${ctx.name}] Order claim blocked (${reason}): ${claim.itemCode} via ${claim.sourceCode}`);
+    claimLog.info(`[${ctx.name}] Order claim blocked (${reason}): ${claim.itemCode} via ${claim.sourceCode}`, {
+      event: 'order_claim.blocked',
+      reasonCode: reason,
+      context: { character: ctx.name },
+      data: {
+        orderId: claim.orderId,
+        itemCode: claim.itemCode,
+        sourceType: claim.sourceType,
+        sourceCode: claim.sourceCode,
+      },
+    });
   } catch (err) {
-    log.warn(`[${ctx.name}] Could not block claim ${claim.orderId}: ${err?.message || String(err)}`);
+    claimLog.warn(`[${ctx.name}] Could not block claim ${claim.orderId}: ${err?.message || String(err)}`, {
+      event: 'order_claim.block.failed',
+      reasonCode: 'request_failed',
+      context: { character: ctx.name },
+      error: err instanceof Error ? err : new Error(`${err}`),
+      data: {
+        orderId: claim.orderId,
+        itemCode: claim.itemCode,
+        sourceType: claim.sourceType,
+        sourceCode: claim.sourceCode,
+        reason,
+      },
+    });
   } finally {
     routine._activeOrderClaim = null;
   }
@@ -779,7 +913,14 @@ export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
     }
     claim = routine._syncActiveClaimFromBoard();
     if (!claim) {
-      log.info(`[${ctx.name}] Exchange order fulfilled (bank credit): ${itemCode}`);
+      claimLog.info(`[${ctx.name}] Exchange order fulfilled (bank credit): ${itemCode}`, {
+        event: 'order_claim.exchange.fulfilled',
+        context: { character: ctx.name },
+        data: {
+          itemCode,
+          fulfillmentMode: 'bank_credit',
+        },
+      });
       return { attempted: true, fulfilled: true };
     }
   }
@@ -793,7 +934,14 @@ export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
 
     const fresh = routine._syncActiveClaimFromBoard();
     if (!fresh) {
-      log.info(`[${ctx.name}] Exchange order fulfilled via tasks_trader: ${itemCode}`);
+      claimLog.info(`[${ctx.name}] Exchange order fulfilled via tasks_trader: ${itemCode}`, {
+        event: 'order_claim.exchange.fulfilled',
+        context: { character: ctx.name },
+        data: {
+          itemCode,
+          fulfillmentMode: 'tasks_trader',
+        },
+      });
       return { attempted: true, fulfilled: true };
     }
 
@@ -826,7 +974,14 @@ export async function fulfillTaskExchangeOrderClaim(ctx, routine) {
 
   const fresh = routine._syncActiveClaimFromBoard();
   if (!fresh) {
-    log.info(`[${ctx.name}] Exchange order fulfilled: ${itemCode}`);
+    claimLog.info(`[${ctx.name}] Exchange order fulfilled: ${itemCode}`, {
+      event: 'order_claim.exchange.fulfilled',
+      context: { character: ctx.name },
+      data: {
+        itemCode,
+        fulfillmentMode: 'exchange',
+      },
+    });
     return { attempted: true, fulfilled: true };
   }
 
@@ -868,7 +1023,14 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
     }
     claim = routine._syncActiveClaimFromBoard();
     if (!claim) {
-      log.info(`[${ctx.name}] NPC-buy order fulfilled (bank credit): ${itemCode}`);
+      claimLog.info(`[${ctx.name}] NPC-buy order fulfilled (bank credit): ${itemCode}`, {
+        event: 'order_claim.npc_buy.fulfilled',
+        context: { character: ctx.name },
+        data: {
+          itemCode,
+          fulfillmentMode: 'bank_credit',
+        },
+      });
       return { attempted: true, fulfilled: true };
     }
   }
@@ -885,7 +1047,14 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
     excludeCodes: [claim.itemCode],
   });
   if (withdrawn.length > 0) {
-    log.info(`[${ctx.name}] NPC-buy order: withdrew from bank: ${withdrawn.join(', ')}`);
+    claimLog.debug(`[${ctx.name}] NPC-buy order: withdrew from bank: ${withdrawn.join(', ')}`, {
+      event: 'order_claim.npc_buy.dependencies_withdrawn',
+      context: { character: ctx.name },
+      data: {
+        itemCode,
+        withdrawn,
+      },
+    });
     return { attempted: true, fulfilled: false, reason: 'withdrew_dependencies' };
   }
 
@@ -924,7 +1093,16 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
       }
       const result = await gatherOnce(ctx);
       const items = result.details?.items || [];
-      log.info(`[${ctx.name}] NPC-buy order gather ${step.itemCode}: ${items.map(row => `${row.code}x${row.quantity}`).join(', ') || 'nothing'}`);
+      claimLog.debug(`[${ctx.name}] NPC-buy order gather ${step.itemCode}: ${items.map(row => `${row.code}x${row.quantity}`).join(', ') || 'nothing'}`, {
+        event: 'order_claim.npc_buy.gather.progress',
+        context: { character: ctx.name },
+        data: {
+          orderId: claim.orderId,
+          itemCode: step.itemCode,
+          resourceCode: step.resource.code,
+          items: items.map(row => ({ code: row.code, quantity: row.quantity })),
+        },
+      });
       return { attempted: true, fulfilled: false };
     }
 
@@ -971,11 +1149,31 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
       const fight = parseFightResult(result, ctx);
       if (fight.win) {
         ctx.clearLosses(monsterCode);
-        log.info(`[${ctx.name}] NPC-buy order fight ${monsterCode}: WIN ${fight.turns}t${fight.drops ? ' | ' + fight.drops : ''}`);
+        claimLog.debug(`[${ctx.name}] NPC-buy order fight ${monsterCode}: WIN ${fight.turns}t${fight.drops ? ' | ' + fight.drops : ''}`, {
+          event: 'order_claim.npc_buy.fight.won',
+          context: { character: ctx.name },
+          data: {
+            orderId: claim.orderId,
+            itemCode: claim.itemCode,
+            monsterCode,
+            turns: fight.turns,
+            drops: fight.drops || '',
+          },
+        });
       } else {
         ctx.recordLoss(monsterCode);
         const losses = ctx.consecutiveLosses(monsterCode);
-        log.warn(`[${ctx.name}] NPC-buy order fight ${monsterCode}: LOSS (${losses} losses)`);
+        claimLog.warn(`[${ctx.name}] NPC-buy order fight ${monsterCode}: LOSS (${losses} losses)`, {
+          event: 'order_claim.npc_buy.fight.lost',
+          reasonCode: 'unwinnable_combat',
+          context: { character: ctx.name },
+          data: {
+            orderId: claim.orderId,
+            itemCode: claim.itemCode,
+            monsterCode,
+            losses,
+          },
+        });
         if (losses >= routine.maxLosses) {
           enqueuePlanDeficitOrders(routine, plan, claim, ctx, await routine._getBankItems(true));
           await routine._blockAndReleaseClaim(ctx, 'combat_losses');
@@ -993,7 +1191,18 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
         reason: `npc_buy claim ${claim.itemCode}`,
       });
       if (topUp.error) {
-        log.warn(`[${ctx.name}] NPC-buy order: failed to top up ${step.currency} for ${step.itemCode}: ${topUp.error.message}`);
+        claimLog.warn(`[${ctx.name}] NPC-buy order: failed to top up ${step.currency} for ${step.itemCode}: ${topUp.error.message}`, {
+          event: 'order_claim.npc_buy.currency_top_up_failed',
+          reasonCode: 'bank_unavailable',
+          context: { character: ctx.name },
+          error: topUp.error,
+          data: {
+            orderId: claim.orderId,
+            itemCode: step.itemCode,
+            currency: step.currency,
+            currencyNeeded,
+          },
+        });
       }
       if (carriedCurrencyCount(ctx, step.currency) < currencyNeeded) {
         handleUnviableNpcBuyOrder(routine, claim, ctx, {
