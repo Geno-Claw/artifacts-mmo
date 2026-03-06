@@ -12,6 +12,7 @@
  *   4. Bag — maximize inventory space
  */
 import { calcTurnDamage, simulateCombat } from './combat-simulator.mjs';
+import { canUseItem } from './item-conditions.mjs';
 import * as gameData from './game-data.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
 import { bankCount } from './inventory-manager.mjs';
@@ -189,6 +190,9 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
 
   for (const item of allForSlot) {
     if (candidates.has(item.code)) continue;
+
+    // Skip items the character doesn't meet conditions for (e.g. skill level requirements)
+    if (!canUseItem(item, char)) continue;
 
     // Check inventory
     if (ctx.hasItem(item.code)) {
