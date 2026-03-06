@@ -187,6 +187,7 @@ export async function withdrawPlanFromBank(ctx, plan, batchSize = 1, opts = {}) 
     if (remainingSpace <= 0) break;
 
     const code = step.itemCode;
+    if (code === 'gold') continue;
     if (excluded.has(code)) continue;
 
     const plannedQty = plannedByCode.get(code) || 0;

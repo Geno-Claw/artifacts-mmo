@@ -13,6 +13,15 @@ const {
   createOrMergeOrder,
   initializeOrderBoard,
 } = await import('../src/services/order-board.mjs');
+const {
+  canClaimCraftOrderNow,
+  canClaimNpcBuyOrderNow,
+} = await import('../src/routines/skill-rotation/order-claims.mjs');
+const { withdrawPlanFromBank } = await import('../src/helpers.mjs');
+const {
+  _resetForTests: resetInventoryManagerForTests,
+  applyBankGoldDelta,
+} = await import('../src/services/inventory-manager.mjs');
 const { OrderFulfillmentRoutine } = await import('../src/routines/order-fulfillment.mjs');
 
 function makeCtx({
@@ -283,6 +292,135 @@ async function testNpcBuyClaimDispatch() {
   });
 }
 
+async function testNpcBuyClaimViabilityUsesBankGoldWithoutLevelGate() {
+  resetInventoryManagerForTests();
+  applyBankGoldDelta(190, 'deposit');
+
+  const ctx = makeCtx({
+    name: 'Buyer',
+    level: 1,
+    gold: 15,
+  });
+
+  const plan = [{
+    type: 'npc_trade',
+    itemCode: 'healing_rune',
+    npcCode: 'rune_vendor',
+    currency: 'gold',
+    buyPrice: 200,
+    quantity: 1,
+  }];
+  const routine = {
+    _getCraftClaimItem: () => ({ code: 'healing_rune', level: 20 }),
+    _resolveNpcBuyPlan: () => plan,
+    _canFulfillCraftClaimPlanWithBank: () => ({ ok: true, deficits: [] }),
+    _simulateClaimFight: async () => ({ simResult: { win: true, hpLostPercent: 10 } }),
+  };
+  const order = {
+    itemCode: 'healing_rune',
+    sourceType: 'npc_buy',
+    sourceCode: 'rune_vendor',
+    sourceLevel: 20,
+    remainingQty: 1,
+  };
+
+  const viability = await canClaimNpcBuyOrderNow(ctx, routine, order, new Map(), new Map());
+  assert.equal(viability.ok, true, 'bank gold should satisfy gold-backed npc_buy viability');
+  assert.equal(viability.reason, '');
+}
+
+async function testNpcBuyClaimViabilityAllowsResolvableItemCurrency() {
+  resetInventoryManagerForTests();
+
+  const ctx = makeCtx({
+    name: 'Buyer',
+    level: 1,
+    skillLevels: { mining: 20 },
+  });
+
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'sandwhisper_coin',
+      resource: { code: 'sand_vein', skill: 'mining', level: 10 },
+      quantity: 30,
+    },
+    {
+      type: 'npc_trade',
+      itemCode: 'greater_healing_rune',
+      npcCode: 'sandwhisper_trader',
+      currency: 'sandwhisper_coin',
+      buyPrice: 30,
+      quantity: 1,
+    },
+  ];
+  const routine = {
+    _getCraftClaimItem: () => ({ code: 'greater_healing_rune', level: 40 }),
+    _resolveNpcBuyPlan: () => plan,
+    _canFulfillCraftClaimPlanWithBank: () => ({ ok: true, deficits: [] }),
+    _simulateClaimFight: async () => ({ simResult: { win: true, hpLostPercent: 10 } }),
+  };
+  const order = {
+    itemCode: 'greater_healing_rune',
+    sourceType: 'npc_buy',
+    sourceCode: 'sandwhisper_trader',
+    sourceLevel: 40,
+    remainingQty: 1,
+  };
+
+  const viability = await canClaimNpcBuyOrderNow(ctx, routine, order, new Map(), new Map());
+  assert.equal(viability.ok, true, 'item-currency npc_buy should stay claimable when the currency can be self-obtained');
+}
+
+async function testCraftClaimViabilityUsesBankGoldForNpcTradeSteps() {
+  resetInventoryManagerForTests();
+  applyBankGoldDelta(75, 'deposit');
+
+  const ctx = makeCtx({
+    name: 'Crafter',
+    gold: 25,
+    skillLevels: { gearcrafting: 20 },
+  });
+
+  const routine = {
+    _getCraftClaimItem: () => ({
+      code: 'reinforced_pack',
+      craft: { skill: 'gearcrafting', level: 10 },
+    }),
+    _resolveRecipeChain: () => [{
+      type: 'npc_trade',
+      itemCode: 'vendor_clasp',
+      npcCode: 'tailor',
+      currency: 'gold',
+      buyPrice: 100,
+      quantity: 1,
+    }],
+    _canFulfillCraftClaimPlanWithBank: () => ({ ok: true, deficits: [] }),
+    _simulateClaimFight: async () => ({ simResult: { win: true, hpLostPercent: 10 } }),
+  };
+  const order = {
+    itemCode: 'reinforced_pack',
+    sourceType: 'craft',
+    sourceCode: 'reinforced_pack',
+    craftSkill: 'gearcrafting',
+    sourceLevel: 10,
+    remainingQty: 1,
+  };
+
+  const viability = await canClaimCraftOrderNow(ctx, routine, order, 'gearcrafting', new Map(), new Map());
+  assert.equal(viability.ok, true, 'gold-backed npc_trade recipe steps should count bank gold during claim viability');
+}
+
+async function testWithdrawPlanFromBankSkipsGoldSteps() {
+  const ctx = makeCtx({ name: 'Banker' });
+  const withdrawn = await withdrawPlanFromBank(ctx, [{
+    type: 'bank',
+    itemCode: 'gold',
+    quantity: 500,
+  }]);
+  assert.deepEqual(withdrawn, [], 'gold should not be treated as a bank item withdrawal request');
+}
+
 async function testCraftExpansionThrottle() {
   await withTempOrderBoard(async () => {
     const ctx = makeCtx();
@@ -419,6 +557,10 @@ async function run() {
   await testDirectCraftClaim();
   await testNpcBuyPriorityWhenNoGatherOrFight();
   await testNpcBuyClaimDispatch();
+  await testNpcBuyClaimViabilityUsesBankGoldWithoutLevelGate();
+  await testNpcBuyClaimViabilityAllowsResolvableItemCurrency();
+  await testCraftClaimViabilityUsesBankGoldForNpcTradeSteps();
+  await testWithdrawPlanFromBankSkipsGoldSteps();
   await testCraftExpansionThrottle();
   await testTaskExchangePath();
   await testClaimAdoption();

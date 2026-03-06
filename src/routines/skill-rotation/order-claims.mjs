@@ -287,11 +287,13 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
   for (const step of plan) {
     if (step.type !== 'npc_trade') continue;
     const currencyNeeded = step.quantity * step.buyPrice;
-    const currencyHave = ctx.itemCount(step.currency) + (bankItems.get(step.currency) || 0);
+    const currencyHave = currencyCountWithBank(ctx, bankItems, step.currency);
     // If we don't have enough currency, check if the plan includes a gather/fight step for it
     if (currencyHave < currencyNeeded) {
       const currencySource = plan.find(s =>
-        (s.type === 'gather' || s.type === 'fight') && s.itemCode === step.currency
+        s !== step
+        && s.itemCode === step.currency
+        && (s.type === 'gather' || s.type === 'fight' || s.type === 'bank' || s.type === 'npc_trade')
       );
       if (!currencySource) {
         return { ok: false, reason: `missing_npc_currency:${step.currency}` };
@@ -301,6 +303,7 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
 
   for (const step of plan) {
     if (step.type !== 'bank') continue;
+    if (step.itemCode === 'gold') continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
     if (have < step.quantity) {
       return { ok: false, reason: `missing_bank_dependency:${step.itemCode}` };
@@ -338,11 +341,6 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
     return { ok: false, reason: 'invalid_npc_buy_order' };
   }
 
-  const requiredLevel = Math.max(0, Number(order?.sourceLevel) || Number(item?.level) || 0);
-  if ((Number(ctx.get()?.level) || 0) < requiredLevel) {
-    return { ok: false, reason: 'insufficient_level' };
-  }
-
   const plan = resolveNpcBuyPlanForOrder(routine, order);
   if (!plan || plan.length === 0) {
     return { ok: false, reason: 'unresolvable_npc_buy_plan' };
@@ -364,6 +362,7 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
 
   for (const step of plan) {
     if (step.type !== 'bank') continue;
+    if (step.itemCode === 'gold') continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
     if (have < step.quantity) {
       return { ok: false, reason: `missing_bank_dependency:${step.itemCode}`, plan };
@@ -1060,6 +1059,7 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
 
   for (const step of plan) {
     if (step.type === 'bank') {
+      if (step.itemCode === 'gold') continue;
       const need = step.quantity - ctx.itemCount(step.itemCode);
       if (need <= 0) continue;
 

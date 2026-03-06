@@ -83,6 +83,7 @@ export async function executeCrafting(ctx, routine) {
     const step = plan[i];
 
     if (step.type === 'bank') {
+      if (step.itemCode === 'gold') continue;
       // Must come from bank (event items, etc.) — already withdrawn above
       const have = ctx.itemCount(step.itemCode);
       if (have >= step.quantity) continue; // have enough for at least 1 craft

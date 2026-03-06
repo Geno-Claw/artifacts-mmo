@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+process.env.ARTIFACTS_TOKEN ||= 'test-token';
 import {
   buildNpcCurrencyPlan,
   maxAffordableQuantity,
   missingCurrencyForQuantity,
 } from '../src/services/npc-trade-planner.mjs';
+import {
+  _resetForTests as resetGameDataForTests,
+  _setCachesForTests as setGameDataCachesForTests,
+  resolveNpcBuyPlan,
+} from '../src/services/game-data.mjs';
 
 function asObject(map) {
   return Object.fromEntries([...map.entries()].sort(([a], [b]) => a.localeCompare(b)));
@@ -137,6 +143,83 @@ function test_invalid_offers_skipped() {
   console.log('  PASS: invalid offers are safely ignored');
 }
 
+function test_resolveNpcBuyPlan_gold_currency_skips_bank_gold() {
+  resetGameDataForTests();
+  setGameDataCachesForTests({
+    items: [
+      ['healing_rune', { code: 'healing_rune', type: 'rune', level: 20 }],
+    ],
+    npcBuyOffers: [
+      ['rune_vendor', [
+        ['healing_rune', { code: 'healing_rune', currency: 'gold', buyPrice: 200 }],
+      ]],
+    ],
+  });
+
+  const plan = resolveNpcBuyPlan('healing_rune', 1);
+  assert.ok(Array.isArray(plan), 'gold-backed npc buy plan should resolve');
+  assert.equal(plan.length, 1);
+  assert.deepEqual(plan[0], {
+    type: 'npc_trade',
+    itemCode: 'healing_rune',
+    npcCode: 'rune_vendor',
+    currency: 'gold',
+    buyPrice: 200,
+    quantity: 1,
+  });
+  assert.equal(
+    plan.some((step) => step.type === 'bank' && step.itemCode === 'gold'),
+    false,
+    'gold-backed npc buy plans should not create synthetic bank gold dependencies',
+  );
+  console.log('  PASS: gold-backed npc buy plan skips bank gold dependency');
+}
+
+function test_resolveNpcBuyPlan_item_currency_recurses() {
+  resetGameDataForTests();
+  setGameDataCachesForTests({
+    items: [
+      ['greater_healing_rune', { code: 'greater_healing_rune', type: 'rune', level: 40 }],
+    ],
+    resources: [
+      ['sand_vein', {
+        code: 'sand_vein',
+        skill: 'mining',
+        level: 15,
+        drops: [{ code: 'sandwhisper_coin' }],
+      }],
+    ],
+    npcBuyOffers: [
+      ['sandwhisper_trader', [
+        ['greater_healing_rune', { code: 'greater_healing_rune', currency: 'sandwhisper_coin', buyPrice: 30 }],
+      ]],
+    ],
+  });
+
+  const plan = resolveNpcBuyPlan('greater_healing_rune', 2);
+  assert.ok(Array.isArray(plan), 'item-currency npc buy plan should resolve');
+  assert.deepEqual(plan[0], {
+    type: 'gather',
+    itemCode: 'sandwhisper_coin',
+    resource: {
+      code: 'sand_vein',
+      skill: 'mining',
+      level: 15,
+      drops: [{ code: 'sandwhisper_coin' }],
+    },
+    quantity: 60,
+  });
+  assert.deepEqual(plan[1], {
+    type: 'npc_trade',
+    itemCode: 'greater_healing_rune',
+    npcCode: 'sandwhisper_trader',
+    currency: 'sandwhisper_coin',
+    buyPrice: 30,
+    quantity: 2,
+  });
+  console.log('  PASS: item-currency npc buy plan still expands recursively');
+}
+
 console.log('NPC Trade Planner Tests:');
 test_helpers();
 test_gold_only_plan();
@@ -145,4 +228,7 @@ test_item_currency_with_bank();
 test_mixed_currencies();
 test_priority_with_shared_currency();
 test_invalid_offers_skipped();
+test_resolveNpcBuyPlan_gold_currency_skips_bank_gold();
+test_resolveNpcBuyPlan_item_currency_recurses();
+resetGameDataForTests();
 console.log('All NPC trade planner tests passed!');

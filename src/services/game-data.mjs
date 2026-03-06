@@ -550,10 +550,13 @@ export function resolveRecipeChain(recipe) {
       if (npcMatch || npcItem?.subtype === 'npc') {
         if (npcMatch) {
           const { npcCode, offer } = npcMatch;
-          // Resolve the currency recursively (it may be gatherable/fightable)
-          const currencyNeeded = needed * offer.buyPrice;
-          const ok = resolve([{ code: offer.currency, quantity: currencyNeeded }], 1);
-          if (!ok) return false;
+          // Resolve non-gold currencies recursively. Gold is handled later via
+          // carried gold + bank gold top-up, not as a bank item dependency.
+          if (offer.currency !== 'gold') {
+            const currencyNeeded = needed * offer.buyPrice;
+            const ok = resolve([{ code: offer.currency, quantity: currencyNeeded }], 1);
+            if (!ok) return false;
+          }
 
           const existing = steps.find(s => s.itemCode === mat.code && s.type === 'npc_trade');
           if (existing) {
@@ -697,4 +700,71 @@ export async function getWorkshops() {
   }
   log.info(`[GameData] Found ${Object.keys(workshopCache).length} workshops: ${[...Object.keys(workshopCache)].join(', ')}`);
   return workshopCache;
+}
+
+// Test helpers.
+export function _setCachesForTests({
+  items = null,
+  monsters = null,
+  resources = null,
+  npcBuyOffers = null,
+} = {}) {
+  if (items !== null) {
+    itemsCache = new Map(items);
+  }
+
+  if (monsters !== null) {
+    monstersCache = new Map(monsters);
+    dropToMonsterCache = new Map();
+    for (const monster of monstersCache.values()) {
+      for (const drop of monster?.drops || []) {
+        const existing = dropToMonsterCache.get(drop.code);
+        if (!existing || (Number(monster.level) || 0) < (Number(existing.monster?.level) || 0)) {
+          dropToMonsterCache.set(drop.code, { monster, drop });
+        }
+      }
+    }
+  }
+
+  if (resources !== null) {
+    resourcesCache = new Map(resources);
+    dropToResourceCache = new Map();
+    for (const resource of resourcesCache.values()) {
+      for (const drop of resource?.drops || []) {
+        const existingCode = dropToResourceCache.get(drop.code);
+        const existingLevel = existingCode ? (Number(resourcesCache.get(existingCode)?.level) || 0) : Number.POSITIVE_INFINITY;
+        const resourceLevel = Number(resource?.level) || 0;
+        if (!existingCode || resourceLevel < existingLevel) {
+          dropToResourceCache.set(drop.code, resource.code);
+        }
+      }
+    }
+  }
+
+  if (npcBuyOffers !== null) {
+    npcBuyOfferLookup = new Map();
+    for (const [npcCode, offers] of npcBuyOffers) {
+      npcBuyOfferLookup.set(npcCode, new Map(offers));
+    }
+  }
+}
+
+export function _resetForTests() {
+  itemsCache = null;
+  monstersCache = null;
+  resourcesCache = null;
+  dropToResourceCache = null;
+  dropToMonsterCache = null;
+  resourceLocationCache = {};
+  workshopCache = null;
+  geLocationCache = null;
+  taskRewardsCache = null;
+  taskRewardCodes = null;
+  npcItemsCache = null;
+  npcBuyableLookup = null;
+  npcBuyOfferLookup = null;
+  unreachableLocations.clear();
+  for (const key of Object.keys(monsterLocationCache)) {
+    delete monsterLocationCache[key];
+  }
 }
