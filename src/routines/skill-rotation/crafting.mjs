@@ -259,13 +259,15 @@ export async function executeCrafting(ctx, routine) {
       // Find NPC location
       const npcMaps = await api.getMaps({ content_type: 'npc', content_code: step.npcCode });
       const npcTiles = Array.isArray(npcMaps) ? npcMaps : [];
+      // Prefer tiles without access conditions; fall back to conditioned tiles
+      // (the account may have unlocked the required achievement).
       const npcTile = npcTiles.find(t => {
         const conds = t.access?.conditions;
         return !Array.isArray(conds) || conds.length === 0;
-      });
+      }) || (npcTiles.length > 0 ? npcTiles[0] : null);
 
       if (!npcTile) {
-        log.warn(`[${ctx.name}] Cannot find accessible NPC location for ${step.npcCode} (${npcTiles.length} tile(s) all require conditions)`);
+        log.warn(`[${ctx.name}] Cannot find NPC location for ${step.npcCode}`);
         if (claimMode) {
           await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
         } else {
@@ -274,7 +276,21 @@ export async function executeCrafting(ctx, routine) {
         return true;
       }
 
-      await moveTo(ctx, npcTile.x, npcTile.y);
+      try {
+        await moveTo(ctx, npcTile.x, npcTile.y);
+      } catch (err) {
+        // 496 = condition not met (e.g. missing achievement to access this tile)
+        if (err.status === 496 || err.code === 496) {
+          log.warn(`[${ctx.name}] Cannot access NPC ${step.npcCode} at (${npcTile.x},${npcTile.y}): ${err.message}`);
+          if (claimMode) {
+            await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
+          } else {
+            await routine.rotation.forceRotate(ctx);
+          }
+          return true;
+        }
+        throw err;
+      }
       const result = await api.npcBuy(step.itemCode, buyQty, ctx.name);
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
