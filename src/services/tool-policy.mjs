@@ -123,6 +123,19 @@ export function computeToolNeedsByCode(levelsByChar) {
       const tool = getBestToolForSkillAtLevel(skill, level);
       if (!tool?.code) continue;
       needs.set(tool.code, (needs.get(tool.code) || 0) + 1);
+
+      // If the best tool doesn't exist yet (0 global supply), also count
+      // the next-best lower-tier tool as needed so it doesn't get recycled.
+      const bestOwned = _deps.globalCountFn(tool.code);
+      if (bestOwned <= 0) {
+        const allTools = _deps.gameDataSvc.findItems({ type: 'weapon', subtype: 'tool', maxLevel: tool.level - 1 }) || [];
+        const fallbacks = allTools.filter(t => isToolForSkill(t, skill));
+        fallbacks.sort(compareToolTier);
+        const fallbackTool = fallbacks[0];
+        if (fallbackTool?.code && fallbackTool.code !== tool.code) {
+          needs.set(fallbackTool.code, (needs.get(fallbackTool.code) || 0) + 1);
+        }
+      }
     }
   }
 
