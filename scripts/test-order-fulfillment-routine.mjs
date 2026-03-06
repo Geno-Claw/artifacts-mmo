@@ -16,12 +16,18 @@ const { OrderFulfillmentRoutine } = await import('../src/routines/order-fulfillm
 
 function makeCtx({
   name = 'Tester',
+  level = 1,
+  gold = 0,
   skillLevels = {},
   itemCounts = {},
   inventoryFull = false,
 } = {}) {
+  const char = { level, gold };
   return {
     name,
+    get() {
+      return char;
+    },
     skillLevel(skill) {
       return Number(skillLevels[skill] || 0);
     },
@@ -202,6 +208,80 @@ async function testDirectCraftClaim() {
   });
 }
 
+async function testNpcBuyPriorityWhenNoGatherOrFight() {
+  await withTempOrderBoard(async () => {
+    const ctx = makeCtx({ name: 'Buyer', level: 25 });
+    const routine = makeRoutine();
+
+    let npcBuyAcquireCalls = 0;
+    let npcBuyFulfillCalls = 0;
+    let craftAcquireCalls = 0;
+
+    routine._acquireGatherOrderClaimAnySkill = async () => null;
+    routine._acquireCombatOrderClaim = async () => null;
+    routine._acquireNpcBuyOrderClaim = async () => {
+      npcBuyAcquireCalls += 1;
+      return {
+        orderId: 'npc-order',
+        sourceType: 'npc_buy',
+        sourceCode: 'rune_vendor',
+        itemCode: 'burn_rune',
+        remainingQty: 1,
+      };
+    };
+    routine._acquireCraftOrderClaimAnySkill = async () => {
+      craftAcquireCalls += 1;
+      return {
+        orderId: 'craft-order',
+        sourceType: 'craft',
+        itemCode: 'craft_item',
+        craftSkill: 'weaponcrafting',
+        remainingQty: 1,
+      };
+    };
+    routine._fulfillNpcBuyOrderClaim = async () => {
+      npcBuyFulfillCalls += 1;
+      return { attempted: true, fulfilled: true };
+    };
+
+    const result = await routine.execute(ctx);
+    assert.equal(result, true);
+    assert.equal(npcBuyAcquireCalls, 1, 'npc_buy acquisition should be attempted');
+    assert.equal(npcBuyFulfillCalls, 1, 'npc_buy claim should be fulfilled before craft is considered');
+    assert.equal(craftAcquireCalls, 0, 'craft acquisition should not run once npc_buy work exists');
+  });
+}
+
+async function testNpcBuyClaimDispatch() {
+  await withTempOrderBoard(async () => {
+    const ctx = makeCtx({ name: 'Buyer', level: 25 });
+    const routine = makeRoutine();
+
+    let npcBuyFulfillCalls = 0;
+    let craftCalls = 0;
+    routine._syncActiveClaimFromBoard = () => ({
+      orderId: 'npc-order',
+      sourceType: 'npc_buy',
+      sourceCode: 'rune_vendor',
+      itemCode: 'burn_rune',
+      remainingQty: 1,
+    });
+    routine._fulfillNpcBuyOrderClaim = async () => {
+      npcBuyFulfillCalls += 1;
+      return { attempted: false, fulfilled: true };
+    };
+    routine._executeCrafting = async () => {
+      craftCalls += 1;
+      return true;
+    };
+
+    const result = await routine.execute(ctx);
+    assert.equal(result, true);
+    assert.equal(npcBuyFulfillCalls, 1, 'active npc_buy claims should dispatch to npc_buy fulfillment');
+    assert.equal(craftCalls, 0, 'npc_buy claims should not fall through to crafting');
+  });
+}
+
 async function testCraftExpansionThrottle() {
   await withTempOrderBoard(async () => {
     const ctx = makeCtx();
@@ -324,6 +404,8 @@ async function run() {
   await testGatherPriority();
   await testFightPriorityWhenNoGather();
   await testDirectCraftClaim();
+  await testNpcBuyPriorityWhenNoGatherOrFight();
+  await testNpcBuyClaimDispatch();
   await testCraftExpansionThrottle();
   await testTaskExchangePath();
   await testClaimAdoption();

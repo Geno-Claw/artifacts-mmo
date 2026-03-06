@@ -26,6 +26,7 @@ const FALLBACK_EQUIPPED_SLOTS = [
   { key: 'ring2_slot', category: 'ring', quantityKey: null },
   { key: 'amulet_slot', category: 'amulet', quantityKey: null },
   { key: 'bag_slot', category: 'bag', quantityKey: null },
+  { key: 'rune_slot', category: 'rune', quantityKey: null },
   { key: 'utility1_slot', category: 'utility', quantityKey: 'utility1_slot_quantity' },
   { key: 'utility2_slot', category: 'utility', quantityKey: 'utility2_slot_quantity' },
 ];

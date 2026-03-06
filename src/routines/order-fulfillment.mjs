@@ -1,9 +1,9 @@
 /**
  * Order Fulfillment Routine — dedicated order board worker.
  *
- * Prioritizes direct gather/fight claims first, then craft claims, then
- * task_exchange claims. Falls back to craft prerequisite expansion when
- * no directly completable craft order exists.
+ * Prioritizes direct gather/fight/npc_buy claims first, then craft claims,
+ * then task_exchange claims. Falls back to craft prerequisite expansion
+ * when no directly completable craft order exists.
  */
 import * as log from '../log.mjs';
 import { getOrderBoardSnapshot, listClaimableOrders } from '../services/order-board.mjs';
@@ -127,6 +127,10 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
       this.rotation.currentSkill = 'combat';
       return this._executeCombat(ctx);
     }
+    if (claim.sourceType === 'npc_buy') {
+      const result = await this._fulfillNpcBuyOrderClaim(ctx);
+      return result.attempted || result.fulfilled;
+    }
     if (claim.sourceType === 'craft') {
       const craftSkill = `${claim.craftSkill || ''}`.trim();
       if (!craftSkill) {
@@ -182,6 +186,9 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
     const fight = await this._acquireCombatOrderClaim(ctx);
     if (fight) return fight;
 
+    const npcBuy = await this._acquireNpcBuyOrderClaim(ctx);
+    if (npcBuy) return npcBuy;
+
     const craft = await this._acquireCraftOrderClaimAnySkill(ctx, {
       expandLimit: this.craftScanLimit,
       directFirst: true,
@@ -196,6 +203,10 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
 
   async _acquireGatherOrderClaimAnySkill(ctx) {
     return acquireGatherOrderClaimAnySkill(ctx, this);
+  }
+
+  async _acquireNpcBuyOrderClaim(ctx) {
+    return super._acquireNpcBuyOrderClaim(ctx);
   }
 
   async _acquireCraftOrderClaimAnySkill(ctx, opts = {}) {

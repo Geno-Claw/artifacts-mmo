@@ -212,6 +212,17 @@ export function resolveItemOrderSource(itemCode) {
     };
   }
 
+  const npcMatch = _deps.gameDataSvc.findNpcForItem?.(code);
+  if (npcMatch?.npcCode) {
+    return {
+      sourceType: 'npc_buy',
+      sourceCode: npcMatch.npcCode,
+      gatherSkill: null,
+      craftSkill: null,
+      sourceLevel: toPositiveInt(item?.level),
+    };
+  }
+
   return null;
 }
 
@@ -318,4 +329,3 @@ export function _setDepsForTests(overrides = {}) {
 export function _resetForTests() {
   _deps = createDefaultDeps();
 }
-

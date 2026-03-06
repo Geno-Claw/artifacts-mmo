@@ -29,7 +29,7 @@ import { executeCrafting, equipForCraftFight, handleUnwinnableCraftFight, invent
 import { executeNpcTask, executeItemTask, executeTaskByType, inferTaskType, runNpcTaskFlow } from './npc-tasks.mjs';
 import { runItemTaskFlow, craftForItemTask, craftAndTradeItemTaskFromInventory, placeOrderAndCancel, cancelItemTask, withdrawForItemTask, shouldTradeItemTaskNow, gatherForItemTask, tradeItemTask } from './item-tasks.mjs';
 import { runTaskExchange, maybeRunProactiveExchange, exchangeTaskCoins, collectExchangeTargets, computeUnmetTargets, ensureExchangeCoinsInInventory, depositTargetRewardsToBank, performTaskExchange, performTasksTraderPurchase, runTasksTraderPurchase, inventorySnapshotForTargets, isTasksTraderAvailable } from './task-exchange.mjs';
-import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, canClaimCraftOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit, enqueueFightOrderForDeficit, acquireTaskExchangeOrderClaim, fulfillTaskExchangeOrderClaim, enqueueTaskExchangeOrder } from './order-claims.mjs';
+import { ensureOrderClaim, acquireGatherOrderClaim, acquireCombatOrderClaim, acquireCraftOrderClaim, acquireNpcBuyOrderClaim, canClaimCraftOrderNow, canClaimNpcBuyOrderNow, depositClaimItemsIfNeeded, clearActiveOrderClaim, blockAndReleaseClaim, syncActiveClaimFromBoard, claimOrderForChar, blockUnclaimableOrderForChar, resolveOrderById, enqueueGatherOrderForDeficit, enqueueFightOrderForDeficit, acquireTaskExchangeOrderClaim, fulfillTaskExchangeOrderClaim, fulfillNpcBuyOrderClaim, enqueueTaskExchangeOrder } from './order-claims.mjs';
 import { executeAchievement } from './achievements.mjs';
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
@@ -202,6 +202,10 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.resolveRecipeChain(craft);
   }
 
+  _resolveNpcBuyPlan(itemCode, quantity = 1) {
+    return gameData.resolveNpcBuyPlan(itemCode, quantity);
+  }
+
   _canFulfillCraftClaimPlan(plan, ctx) {
     return gameData.canFulfillPlan(plan, ctx);
   }
@@ -303,8 +307,10 @@ export class SkillRotationRoutine extends BaseRoutine {
   _claimOrderForChar(ctx, order) { return claimOrderForChar(ctx, this, order); }
   async _acquireGatherOrderClaim(ctx) { return acquireGatherOrderClaim(ctx, this); }
   async _acquireCombatOrderClaim(ctx) { return acquireCombatOrderClaim(ctx, this); }
+  async _acquireNpcBuyOrderClaim(ctx) { return acquireNpcBuyOrderClaim(ctx, this); }
   _blockUnclaimableOrderForChar(order, ctx, reason) { return blockUnclaimableOrderForChar(this, order, ctx, reason); }
   async _canClaimCraftOrderNow(ctx, order, craftSkill, bank, simCache) { return canClaimCraftOrderNow(ctx, this, order, craftSkill, bank, simCache); }
+  async _canClaimNpcBuyOrderNow(ctx, order, bank, simCache) { return canClaimNpcBuyOrderNow(ctx, this, order, bank, simCache); }
   async _acquireCraftOrderClaim(ctx, craftSkill) { return acquireCraftOrderClaim(ctx, this, craftSkill); }
   async _ensureOrderClaim(ctx, sourceType, opts) { return ensureOrderClaim(ctx, this, sourceType, opts); }
   async _depositClaimItemsIfNeeded(ctx, opts) { return depositClaimItemsIfNeeded(ctx, this, opts); }
@@ -313,5 +319,6 @@ export class SkillRotationRoutine extends BaseRoutine {
   _enqueueFightOrderForDeficit(step, order, ctx, deficit) { return enqueueFightOrderForDeficit(this, step, order, ctx, deficit); }
   async _acquireTaskExchangeOrderClaim(ctx) { return acquireTaskExchangeOrderClaim(ctx, this); }
   async _fulfillTaskExchangeOrderClaim(ctx) { return fulfillTaskExchangeOrderClaim(ctx, this); }
+  async _fulfillNpcBuyOrderClaim(ctx) { return fulfillNpcBuyOrderClaim(ctx, this); }
   _enqueueTaskExchangeOrder(ctx, itemCode, deficit) { return enqueueTaskExchangeOrder(this, ctx, itemCode, deficit); }
 }

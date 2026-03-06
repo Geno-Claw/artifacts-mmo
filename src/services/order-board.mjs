@@ -35,6 +35,7 @@ function mergeKeyFor(sourceType, sourceCode, itemCode) {
 function normalizeSourceType(value) {
   if (value === 'fight') return 'fight';
   if (value === 'gather') return 'gather';
+  if (value === 'npc_buy') return 'npc_buy';
   if (value === 'craft') return 'craft';
   if (value === 'task_exchange') return 'task_exchange';
   return '';

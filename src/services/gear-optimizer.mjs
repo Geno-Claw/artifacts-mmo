@@ -8,7 +8,7 @@
  * Four-phase greedy approach:
  *   1. Weapon — maximize outgoing DPS (calcTurnDamage)
  *   2. Defensive slots — maximize survivability (simulateCombat → remainingHp)
- *   3. Accessories — maximize survivability (simulateCombat → remainingHp)
+ *   3. Accessories + rune — maximize survivability (simulateCombat → remainingHp)
  *   4. Bag — maximize inventory space
  */
 import { calcTurnDamage, simulateCombat } from './combat-simulator.mjs';
@@ -19,13 +19,13 @@ import { TOOL_EFFECT_BY_SKILL } from './tool-policy.mjs';
 import * as log from '../log.mjs';
 
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
-const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2'];
+const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2', 'rune'];
 
 /**
- * Extract combat sim options (utilities/rune) from character state.
- * These stay constant during gear optimization — only equipment changes.
+ * Extract combat sim options that stay fixed during gear optimization.
+ * Utilities are constant here; runes come from the tested loadout.
  */
-function getSimOptions(ctx) {
+function getBaseSimOptions(ctx) {
   const c = ctx.get();
   const opts = {};
   const utilities = [];
@@ -36,11 +36,20 @@ function getSimOptions(ctx) {
     if (item?.effects) utilities.push({ code, effects: item.effects });
   }
   if (utilities.length > 0) opts.utilities = utilities;
-  const runeCode = c.rune_slot;
-  if (runeCode) {
-    const item = _deps.getItemFn(runeCode);
-    if (item?.effects) opts.rune = { code: runeCode, effects: item.effects };
+  return opts;
+}
+
+function buildSimOptions(baseOptions, gearSet) {
+  const opts = {};
+  if (Array.isArray(baseOptions?.utilities) && baseOptions.utilities.length > 0) {
+    opts.utilities = [...baseOptions.utilities];
   }
+
+  const rune = gearSet?.get('rune') || null;
+  if (rune?.effects?.length) {
+    opts.rune = { code: rune.code, effects: rune.effects };
+  }
+
   return opts;
 }
 
@@ -54,6 +63,7 @@ let _deps = {
   getItemFn: (code) => gameData.getItem(code),
   getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
   findItemsFn: (filters) => gameData.findItems(filters),
+  findNpcForItemFn: (code) => gameData.findNpcForItem(code),
   bankCountFn: (code) => bankCount(code),
 };
 
@@ -162,6 +172,7 @@ function chooseBestBagCandidate(candidates = []) {
  */
 export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
   const includeCraftableUnavailable = opts.includeCraftableUnavailable === true;
+  const includeVendorUnavailable = includeCraftableUnavailable && slot === 'rune';
   const char = ctx.get();
   const charLevel = char.level;
   const candidates = new Map(); // code → { item, source }
@@ -195,6 +206,12 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
     // Planning mode: include craftable items that are not yet owned.
     if (includeCraftableUnavailable && item?.craft?.skill) {
       candidates.set(item.code, { item, source: 'craftable' });
+      continue;
+    }
+
+    // Planning mode: runes can also be bought directly from NPC vendors.
+    if (includeVendorUnavailable && _deps.findNpcForItemFn(item.code)) {
+      candidates.set(item.code, { item, source: 'npc_buy' });
     }
   }
 
@@ -286,7 +303,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
   const bankItems = await _deps.getBankItemsFn();
   const baseStats = getBaseStats(ctx);
-  const simOpts = getSimOptions(ctx);
+  const baseSimOpts = getBaseSimOptions(ctx);
 
   // Start with current gear as baseline
   const loadout = new Map();
@@ -322,7 +339,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = _deps.simulateCombatFn(hypo, monster, simOpts);
+      const result = _deps.simulateCombatFn(hypo, monster, buildSimOptions(baseSimOpts, testLoadout));
       if (
         isBetterResult(result, bestResult)
         || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
@@ -336,8 +353,8 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, simOpts);
-    if (isBetterResult(emptyResult, bestResult)) {
+    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, buildSimOptions(baseSimOpts, emptyLoadout));
+    if (isBetterResult(emptyResult, bestResult) || (slot === 'rune' && isResultTie(emptyResult, bestResult))) {
       bestItem = null;
     }
 
@@ -360,7 +377,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = _deps.simulateCombatFn(hypo, monster, simOpts);
+      const result = _deps.simulateCombatFn(hypo, monster, buildSimOptions(baseSimOpts, testLoadout));
       if (
         isBetterResult(result, bestResult)
         || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
@@ -374,8 +391,8 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, simOpts);
-    if (isBetterResult(emptyResult, bestResult)) {
+    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, buildSimOptions(baseSimOpts, emptyLoadout));
+    if (isBetterResult(emptyResult, bestResult) || (slot === 'rune' && isResultTie(emptyResult, bestResult))) {
       bestItem = null;
     }
 
@@ -391,7 +408,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
   // --- Final validation ---
   const finalStats = buildStats(baseStats, loadout);
-  const finalResult = _deps.simulateCombatFn(finalStats, monster, simOpts);
+  const finalResult = _deps.simulateCombatFn(finalStats, monster, buildSimOptions(baseSimOpts, loadout));
 
   // Convert to slot → itemCode map
   const codeLoadout = new Map();
@@ -431,6 +448,8 @@ export async function findBestCombatTarget(ctx) {
   let bestTarget = null;
 
   for (const monster of monsters) {
+    if (monster?.type === 'boss') continue;
+
     if (gameData.isLocationUnreachable('monster', monster.code)) continue;
     const loc = await _deps.getMonsterLocationFn(monster.code);
     if (!loc) continue;
@@ -470,7 +489,7 @@ export async function findBestCombatTarget(ctx) {
 // --- Gathering gear optimizer ---
 
 
-const NON_WEAPON_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'ring1', 'ring2', 'amulet'];
+const NON_WEAPON_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'ring1', 'ring2', 'amulet', 'rune'];
 
 /**
  * Get the prospecting effect value from an item.
@@ -629,6 +648,7 @@ export function _resetDepsForTests() {
     getItemFn: (code) => gameData.getItem(code),
     getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
     findItemsFn: (filters) => gameData.findItems(filters),
+    findNpcForItemFn: (code) => gameData.findNpcForItem(code),
     bankCountFn: (code) => bankCount(code),
   };
 }

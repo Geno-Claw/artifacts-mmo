@@ -56,6 +56,7 @@ export function categoryFromItem(item) {
   if (type === 'ring') return 'ring';
   if (type === 'amulet') return 'amulet';
   if (type === 'bag') return 'bag';
+  if (type === 'rune') return 'rune';
   if (type === 'utility') return 'utility';
   return null;
 }

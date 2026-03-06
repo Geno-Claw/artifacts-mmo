@@ -256,6 +256,7 @@ const SLOT_TO_TYPE = {
   ring2:      [{ type: 'ring' }],
   amulet:     [{ type: 'amulet' }],
   bag:        [{ type: 'bag' }],
+  rune:       [{ type: 'rune' }],
 };
 
 export function getEquipmentForSlot(slot, charLevel) {
@@ -274,7 +275,7 @@ export function getEquipmentForSlot(slot, charLevel) {
 
 export const EQUIPMENT_SLOTS = [
   'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet', 'bag',
+  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet', 'bag', 'rune',
 ];
 
 // --- Bank items ---
@@ -453,11 +454,25 @@ export function getNpcBuyPrice(npcCode, itemCode) {
 
 const EQUIPMENT_TYPES = new Set([
   'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring', 'amulet', 'bag',
+  'leg_armor', 'boots', 'ring', 'amulet', 'bag', 'rune',
 ]);
 
 export function isEquipmentType(item) {
   return item != null && EQUIPMENT_TYPES.has(item.type);
+}
+
+/**
+ * Resolve a direct NPC-buy acquisition plan for an item quantity.
+ * Reuses the generic recipe/material planner so nested NPC currencies can
+ * still expand into gather/fight/bank/npc_trade prerequisite steps.
+ */
+export function resolveNpcBuyPlan(itemCode, quantity = 1) {
+  const code = `${itemCode || ''}`.trim();
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0));
+  if (!code || qty <= 0) return null;
+  return resolveRecipeChain({
+    items: [{ code, quantity: qty }],
+  });
 }
 
 // --- Recipe chain resolution ---

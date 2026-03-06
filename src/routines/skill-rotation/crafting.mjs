@@ -10,6 +10,7 @@ import { restBeforeFight } from '../../services/food-manager.mjs';
 import { hpNeededForFight } from '../../services/combat-simulator.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { depositBankItems } from '../../services/bank-ops.mjs';
+import { buyItemFromNpc, carriedCurrencyCount, topUpNpcCurrency } from '../../services/npc-purchase.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { RESERVE_PCT, RESERVE_MIN, RESERVE_MAX } from './constants.mjs';
 
@@ -250,23 +251,25 @@ export async function executeCrafting(ctx, routine) {
 
       const buyQty = needed - ctx.itemCount(step.itemCode);
       const currencyNeeded = buyQty * step.buyPrice;
-      if (ctx.itemCount(step.currency) < currencyNeeded) {
+      const currencyTopUp = await topUpNpcCurrency(ctx, step.currency, currencyNeeded, {
+        reason: `craft npc_trade ${step.itemCode}`,
+      });
+      if (currencyTopUp.error) {
+        log.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: failed to top up ${step.currency} for ${step.itemCode}: ${currencyTopUp.error.message}`);
+      }
+
+      if (carriedCurrencyCount(ctx, step.currency) < currencyNeeded) {
         // Not enough currency yet — gather steps should handle it on next pass
         log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${currencyNeeded}x ${step.currency} for NPC trade ${step.itemCode}, have ${ctx.itemCount(step.currency)}`);
         continue;
       }
 
-      // Find NPC location
-      const npcMaps = await api.getMaps({ content_type: 'npc', content_code: step.npcCode });
-      const npcTiles = Array.isArray(npcMaps) ? npcMaps : [];
-      // Prefer tiles without access conditions; fall back to conditioned tiles
-      // (the account may have unlocked the required achievement).
-      const npcTile = npcTiles.find(t => {
-        const conds = t.access?.conditions;
-        return !Array.isArray(conds) || conds.length === 0;
-      }) || (npcTiles.length > 0 ? npcTiles[0] : null);
-
-      if (!npcTile) {
+      const purchase = await buyItemFromNpc(ctx, {
+        npcCode: step.npcCode,
+        itemCode: step.itemCode,
+        quantity: buyQty,
+      });
+      if (!purchase.ok && purchase.reason === 'npc_not_found') {
         log.warn(`[${ctx.name}] Cannot find NPC location for ${step.npcCode}`);
         if (claimMode) {
           await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
@@ -275,25 +278,18 @@ export async function executeCrafting(ctx, routine) {
         }
         return true;
       }
-
-      try {
-        await moveTo(ctx, npcTile.x, npcTile.y);
-      } catch (err) {
-        // 496 = condition not met (e.g. missing achievement to access this tile)
-        if (err.status === 496 || err.code === 496) {
-          log.warn(`[${ctx.name}] Cannot access NPC ${step.npcCode} at (${npcTile.x},${npcTile.y}): ${err.message}`);
-          if (claimMode) {
-            await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
-          } else {
-            await routine.rotation.forceRotate(ctx);
-          }
-          return true;
+      if (!purchase.ok && purchase.reason === 'condition_not_met') {
+        log.warn(`[${ctx.name}] Cannot access NPC ${step.npcCode}: ${purchase.error?.message || 'condition not met'}`);
+        if (claimMode) {
+          await routine._blockAndReleaseClaim(ctx, `npc_inaccessible:${step.npcCode}`);
+        } else {
+          await routine.rotation.forceRotate(ctx);
         }
-        throw err;
+        return true;
       }
-      const result = await api.npcBuy(step.itemCode, buyQty, ctx.name);
-      ctx.applyActionResult(result);
-      await api.waitForCooldown(result);
+      if (!purchase.ok) {
+        return true;
+      }
       log.info(`[${ctx.name}] ${routine.rotation.currentSkill}: NPC trade — bought ${step.itemCode} x${buyQty} from ${step.npcCode}`);
       continue;
     }

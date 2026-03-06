@@ -26,7 +26,14 @@ function makeTool(code, skill, level) {
   };
 }
 
-function installGameDataDeps({ tools = [], items = new Map(), resources = new Map(), monsters = new Map() } = {}) {
+function installGameDataDeps({
+  tools = [],
+  items = new Map(),
+  resources = new Map(),
+  monsters = new Map(),
+  npcOffers = new Map(),
+  globalCounts = new Map(),
+} = {}) {
   const toolList = [...tools];
   const itemMap = new Map(items);
 
@@ -53,6 +60,12 @@ function installGameDataDeps({ tools = [], items = new Map(), resources = new Ma
       getMonsterForDrop(code) {
         return monsters.get(code) || null;
       },
+      findNpcForItem(code) {
+        return npcOffers.get(code) || null;
+      },
+    },
+    globalCountFn(code) {
+      return Number(globalCounts.get(code) || 0);
     },
   });
 }
@@ -72,7 +85,20 @@ async function testToolNeedsAndTargetsRespectMixedLevels() {
     makeTool('apprentice_mortar', 'alchemy', 5),
     makeTool('master_mortar', 'alchemy', 20),
   ];
-  installGameDataDeps({ tools });
+  installGameDataDeps({
+    tools,
+    globalCounts: new Map([
+      ['stone_pick', 1],
+      ['iron_pick', 1],
+      ['steel_pick', 1],
+      ['wood_axe', 1],
+      ['iron_axe', 1],
+      ['basic_rod', 1],
+      ['pro_rod', 1],
+      ['apprentice_mortar', 1],
+      ['master_mortar', 1],
+    ]),
+  });
 
   const levels = {
     Low: 5,
@@ -115,6 +141,7 @@ async function testResolveItemOrderSourcePriority() {
     ['crafted_tool', { code: 'crafted_tool', craft: { skill: 'weaponcrafting', level: 11 }, level: 11 }],
     ['gathered_tool', { code: 'gathered_tool', level: 5 }],
     ['dropped_tool', { code: 'dropped_tool', level: 8 }],
+    ['vendor_rune', { code: 'vendor_rune', level: 20 }],
   ]);
   const resources = new Map([
     ['gathered_tool', { code: 'ash_tree', skill: 'woodcutting', level: 3 }],
@@ -122,8 +149,11 @@ async function testResolveItemOrderSourcePriority() {
   const monsters = new Map([
     ['dropped_tool', { monster: { code: 'wolf', level: 9 } }],
   ]);
+  const npcOffers = new Map([
+    ['vendor_rune', { npcCode: 'rune_vendor' }],
+  ]);
 
-  installGameDataDeps({ tools: [], items, resources, monsters });
+  installGameDataDeps({ tools: [], items, resources, monsters, npcOffers });
 
   const craft = resolveItemOrderSource('crafted_tool');
   assert.equal(craft?.sourceType, 'craft');
@@ -138,6 +168,10 @@ async function testResolveItemOrderSourcePriority() {
   const fight = resolveItemOrderSource('dropped_tool');
   assert.equal(fight?.sourceType, 'fight');
   assert.equal(fight?.sourceCode, 'wolf');
+
+  const vendor = resolveItemOrderSource('vendor_rune');
+  assert.equal(vendor?.sourceType, 'npc_buy');
+  assert.equal(vendor?.sourceCode, 'rune_vendor');
 
   const missing = resolveItemOrderSource('unknown_tool');
   assert.equal(missing, null);
@@ -224,4 +258,3 @@ run().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

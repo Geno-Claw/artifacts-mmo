@@ -46,6 +46,7 @@ function makeCtx({
     ring1_slot: equipped.ring1 || 'none',
     ring2_slot: equipped.ring2 || 'none',
     amulet_slot: equipped.amulet || 'none',
+    rune_slot: equipped.rune || 'none',
     bag_slot: equipped.bag || 'none',
     utility1_slot: utility.utility1 || '',
     utility1_slot_quantity: Number(utility.utility1Qty) || 0,
@@ -1112,6 +1113,94 @@ async function testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(basePath) {
   await flushGearState();
 }
 
+async function testRuneVariantsPublishNpcBuyOrders(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({ name: 'Runer', level: 30, capacity: 30 });
+  const created = [];
+  const itemsByCode = new Map([
+    ['starter_sword', { code: 'starter_sword', type: 'weapon', level: 1 }],
+    ['burn_rune', { code: 'burn_rune', type: 'rune', level: 20 }],
+    ['healing_rune', { code: 'healing_rune', type: 'rune', level: 20 }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([
+        { code: 'ember_wisp', level: 20 },
+        { code: 'reef_sprite', level: 20 },
+      ]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async (_ctx, monsterCode) => ({
+      loadout: mapLoadout({
+        weapon: 'starter_sword',
+        rune: monsterCode === 'ember_wisp' ? 'burn_rune' : 'healing_rune',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: monsterCode === 'ember_wisp' ? 4 : 5,
+        remainingHp: monsterCode === 'ember_wisp' ? 110 : 105,
+      },
+    }),
+    getBankRevisionFn: () => 12,
+    globalCountFn: (code) => (code === 'starter_sword' ? 1 : 0),
+    resolveItemOrderSourceFn: (code) => {
+      if (code === 'burn_rune' || code === 'healing_rune') {
+        return {
+          sourceType: 'npc_buy',
+          sourceCode: 'rune_vendor',
+          sourceLevel: 20,
+          craftSkill: null,
+          gatherSkill: null,
+        };
+      }
+      return null;
+    },
+    createOrMergeOrderFn: (request) => {
+      created.push(request);
+      return { id: `order-${request.itemCode}` };
+    },
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-rune-orders.json'),
+    characters: [{
+      name: 'Runer',
+      settings: {},
+      routines: [{
+        type: 'skillRotation',
+        orderBoard: {
+          enabled: true,
+          createOrders: true,
+        },
+      }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Runer');
+  assert.equal(state.required.burn_rune, 1, 'required should include the fire-target rune');
+  assert.equal(state.required.healing_rune, 1, 'required should include the sustain rune');
+  assert.equal(state.desired.burn_rune, 1, 'missing burn rune should propagate into desired');
+  assert.equal(state.desired.healing_rune, 1, 'missing healing rune should propagate into desired');
+
+  const added = publishDesiredOrdersForCharacter('Runer');
+  assert.equal(added, 2, 'each missing rune variant should publish an npc_buy order');
+
+  const byItem = new Map(created.map(order => [order.itemCode, order]));
+  assert.equal(byItem.get('burn_rune')?.sourceType, 'npc_buy');
+  assert.equal(byItem.get('burn_rune')?.sourceCode, 'rune_vendor');
+  assert.equal(byItem.get('healing_rune')?.sourceType, 'npc_buy');
+  assert.equal(byItem.get('healing_rune')?.sourceCode, 'rune_vendor');
+
+  await flushGearState();
+}
+
 async function testFallbackOverClaimPreventedAcrossCharacters(basePath) {
   _resetGearStateForTests();
 
@@ -1209,6 +1298,7 @@ async function run() {
     await testPublishDesiredOrdersSkipsToolItems(tempDir);
     await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);
     await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
+    await testRuneVariantsPublishNpcBuyOrders(tempDir);
     await testFallbackOverClaimPreventedAcrossCharacters(tempDir);
     console.log('test-gear-state: PASS');
   } finally {

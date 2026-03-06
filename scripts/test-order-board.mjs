@@ -223,6 +223,23 @@ async function run() {
     assert.equal(craftClaimable.length, 1, 'craft order should be claimable by matching craft skill');
     assert.equal(craftClaimable[0].craftSkill, 'gearcrafting');
 
+    const npcBuyOrder = createOrMergeOrder({
+      requesterName: 'GenoClaw2',
+      recipeCode: 'gear_state:GenoClaw2:burn_rune',
+      itemCode: 'burn_rune',
+      sourceType: 'npc_buy',
+      sourceCode: 'rune_vendor',
+      sourceLevel: 20,
+      quantity: 1,
+    });
+    assert.ok(npcBuyOrder, 'npc_buy order should be created');
+    const npcBuyClaimable = listClaimableOrders({
+      sourceType: 'npc_buy',
+      charName: 'MerchantX',
+    });
+    assert.equal(npcBuyClaimable.length, 1, 'npc_buy order should be claimable');
+    assert.equal(npcBuyClaimable[0].sourceCode, 'rune_vendor');
+
     const claimedCraft = claimOrder(craftOrder.id, { charName: 'CrafterX', leaseMs: 2_000 });
     assert.ok(claimedCraft, 'craft order should be claimable');
     const craftProgress = recordDeposits({

@@ -13,7 +13,7 @@ import { toPositiveInt } from '../utils.mjs';
 const RESERVED_FREE_SLOTS = 10;
 const CARRY_SLOT_PRIORITY = [
   'weapon', 'shield', 'helmet', 'body_armor', 'leg_armor',
-  'boots', 'bag', 'amulet', 'ring1', 'ring2',
+  'boots', 'amulet', 'ring1', 'ring2', 'rune', 'bag',
 ];
 const UTILITY_SLOTS = ['utility1_slot', 'utility2_slot'];
 const TOOL_SKILLS = ['mining', 'woodcutting', 'fishing', 'alchemy'];
@@ -168,6 +168,8 @@ export async function computeCharacterRequirements(name, ctx, cfg, deps) {
   const allRecords = [];
   const monsters = deps.gameDataSvc.findMonstersByLevel(level);
   for (const monster of monsters) {
+    if (monster?.type === 'boss') continue;
+
     const result = await deps.optimizeForMonsterFn(ctx, monster.code, {
       includeCraftableUnavailable: true,
     });

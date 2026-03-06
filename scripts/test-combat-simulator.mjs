@@ -416,6 +416,31 @@ test('player frenzy rune boosts damage on expected crits', () => {
     `frenzy turns ${resultRune.turns} should be <= no-rune ${resultNoRune.turns}`);
 });
 
+console.log('\nUnsupported solo rune effects:');
+
+test('unsupported ally and boss rune effects are solo no-ops', () => {
+  const char = makeChar({ hp: 1200, attack_fire: 60, initiative: 200, critical_strike: 25 });
+  const mon = makeMonster({ hp: 700, attack_fire: 25, initiative: 50 });
+  const rune = {
+    code: 'unsupported_rune',
+    effects: [
+      { code: 'healing_aura', value: 10 },
+      { code: 'guard', value: 30 },
+      { code: 'vampiric_strike', value: 50 },
+      { code: 'shell', value: 40 },
+    ],
+  };
+
+  const resultNoRune = simulateCombat(char, mon);
+  const resultRune = simulateCombat(char, mon, { rune });
+
+  assert.deepEqual(
+    resultRune,
+    resultNoRune,
+    'solo simulator should treat unsupported ally/boss rune effects as no-ops',
+  );
+});
+
 // === Monster lifesteal & frenzy ===
 
 console.log('\nMonster lifesteal:');

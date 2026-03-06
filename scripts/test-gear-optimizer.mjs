@@ -7,6 +7,7 @@ const {
   _chooseBestBagCandidateForTests,
   _resetDepsForTests,
   _setDepsForTests,
+  findBestCombatTarget,
   optimizeForGathering,
   optimizeForMonster,
 } = gearOptimizer;
@@ -42,6 +43,7 @@ function makeCtx({
     ring2_slot: equipped.ring2 || null,
     amulet_slot: equipped.amulet || null,
     bag_slot: equipped.bag || null,
+    rune_slot: equipped.rune || null,
   };
 
   const inv = new Map(Object.entries(inventory).map(([code, qty]) => [code, Number(qty) || 0]));
@@ -64,6 +66,7 @@ function installOptimizerDeps({
   itemsByCode = new Map(),
   equipmentBySlot = new Map(),
   gatherTools = [],
+  npcOffers = new Map(),
 } = {}) {
   _setDepsForTests({
     getMonsterFn: () => ({ code: 'test_monster' }),
@@ -76,6 +79,7 @@ function installOptimizerDeps({
       if (type === 'weapon' && subtype === 'tool') return gatherTools;
       return [];
     },
+    findNpcForItemFn: (code) => npcOffers.get(code) || null,
     bankCountFn: () => 0,
     calcTurnDamageFn: () => 1,
     simulateCombatFn: () => ({
@@ -182,6 +186,129 @@ async function testOptimizeForGatheringIncludesBestBag() {
   assert.equal(result.loadout.get('bag'), 'backpack', 'gathering optimizer should select highest-capacity bag');
 }
 
+async function testOptimizeForMonsterUsesCandidateRuneEffects() {
+  _resetDepsForTests();
+
+  const burnRune = makeItem('burn_rune', { level: 20, effects: [{ code: 'burn', value: 20 }] });
+  const healingRune = makeItem('healing_rune', { level: 20, effects: [{ code: 'healing', value: 5 }] });
+  const itemsByCode = new Map([
+    [burnRune.code, burnRune],
+    [healingRune.code, healingRune],
+  ]);
+  const equipmentBySlot = new Map([
+    ['rune', [burnRune, healingRune]],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+  });
+
+  _setDepsForTests({
+    simulateCombatFn: (_stats, _monster, options = {}) => {
+      const code = options?.rune?.code || null;
+      return {
+        win: true,
+        remainingHp: code === 'burn_rune' ? 150 : 100,
+        turns: code === 'burn_rune' ? 3 : 5,
+        hpLostPercent: code === 'burn_rune' ? 10 : 30,
+      };
+    },
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    equipped: {
+      rune: 'healing_rune',
+    },
+    inventory: {
+      burn_rune: 1,
+      healing_rune: 1,
+    },
+  });
+
+  const result = await optimizeForMonster(ctx, 'test_monster');
+  assert.ok(result, 'optimizeForMonster should return a result');
+  assert.equal(result.loadout.get('rune'), 'burn_rune', 'optimizer should evaluate the candidate rune, not the currently equipped one');
+}
+
+async function testOptimizeForMonsterPlanningIncludesVendorRune() {
+  _resetDepsForTests();
+
+  const burnRune = makeItem('burn_rune', { level: 20, effects: [{ code: 'burn', value: 20 }] });
+  const itemsByCode = new Map([[burnRune.code, burnRune]]);
+  const equipmentBySlot = new Map([
+    ['rune', [burnRune]],
+  ]);
+  const npcOffers = new Map([
+    [burnRune.code, { npcCode: 'rune_vendor' }],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+    npcOffers,
+  });
+
+  const ctx = makeCtx({ level: 20 });
+  const candidates = gearOptimizer.getCandidatesForSlot(ctx, 'rune', new Map(), {
+    includeCraftableUnavailable: true,
+  });
+
+  assert.equal(candidates.length, 1, 'planning candidates should include a vendor rune');
+  assert.equal(candidates[0].source, 'npc_buy');
+}
+
+async function testOptimizeForMonsterPrefersEmptyRuneOnTie() {
+  _resetDepsForTests();
+
+  const auraRune = makeItem('healing_aura_rune', { level: 20, effects: [{ code: 'healing_aura', value: 10 }] });
+  const itemsByCode = new Map([[auraRune.code, auraRune]]);
+  const equipmentBySlot = new Map([
+    ['rune', [auraRune]],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    inventory: {
+      healing_aura_rune: 1,
+    },
+  });
+
+  const result = await optimizeForMonster(ctx, 'test_monster');
+  assert.ok(result, 'optimizeForMonster should return a result');
+  assert.equal(result.loadout.get('rune'), null, 'unsupported solo rune effects should not beat an empty rune slot on a tie');
+}
+
+async function testFindBestCombatTargetSkipsBosses() {
+  _resetDepsForTests();
+
+  installOptimizerDeps();
+  _setDepsForTests({
+    findMonstersByLevelFn: () => [
+      { code: 'event_boss', level: 30, type: 'boss' },
+      { code: 'regular_mob', level: 20, type: 'monster' },
+    ],
+    getMonsterLocationFn: async (code) => ({ x: code === 'event_boss' ? 9 : 1, y: 1 }),
+    getMonsterFn: (code) => ({ code }),
+    simulateCombatFn: (_stats, monster) => ({
+      win: true,
+      remainingHp: monster.code === 'event_boss' ? 500 : 100,
+      turns: monster.code === 'event_boss' ? 1 : 3,
+      hpLostPercent: monster.code === 'event_boss' ? 0 : 10,
+    }),
+  });
+
+  const ctx = makeCtx({ level: 30 });
+  const target = await findBestCombatTarget(ctx);
+  assert.equal(target?.monsterCode, 'regular_mob', 'boss monsters should be excluded from local target selection');
+}
+
 async function run() {
   try {
     testBagRankingPrefersInventorySpace();
@@ -189,6 +316,10 @@ async function run() {
     testBagRankingBreaksFinalTieByCodeAsc();
     await testOptimizeForMonsterIncludesBestBag();
     await testOptimizeForGatheringIncludesBestBag();
+    await testOptimizeForMonsterUsesCandidateRuneEffects();
+    await testOptimizeForMonsterPlanningIncludesVendorRune();
+    await testOptimizeForMonsterPrefersEmptyRuneOnTie();
+    await testFindBestCombatTargetSkipsBosses();
     console.log('test-gear-optimizer: PASS');
   } finally {
     _resetDepsForTests();
