@@ -471,7 +471,11 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
         seed: slotSeed,
       }),
     ));
-    if (isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult))) {
+    const emptyWinsDefensive = isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult));
+    // Never strip gear when both options lose — optimizing "die faster" is pointless,
+    // and the item may have non-combat benefits (XP, prospecting, etc.)
+    const bothLose = bestResult && !bestResult.winRate && !emptyResult?.winRate;
+    if (emptyWinsDefensive && !bothLose) {
       bestItem = null;
     }
 
@@ -518,7 +522,9 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
       }
     }
 
-    // Also test empty slot
+    // Also test empty slot — but only prefer empty if strictly better combat outcome.
+    // Non-combat benefits (XP bonus, prospecting, etc.) aren't captured by the sim,
+    // so we should never strip gear that ties with empty.
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
@@ -530,7 +536,11 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
         seed: slotSeed,
       }),
     ));
-    if (isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult))) {
+    const emptyWins = isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult));
+    // Never strip gear when both options lose — optimizing "die faster" is pointless,
+    // and the item may have non-combat benefits (XP, prospecting, etc.)
+    const bothLoseAcc = bestResult && !bestResult.winRate && !emptyResult?.winRate;
+    if (emptyWins && !bothLoseAcc) {
       bestItem = null;
     }
 
