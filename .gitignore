@@ -12,3 +12,4 @@ report/.order-board-v2-rollout
 config/characters.json
 config/characters-local.json
 report/index.html
+.last-deployed-sha
