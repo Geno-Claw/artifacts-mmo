@@ -71,7 +71,7 @@ export async function executeCombat(ctx, routine) {
   // Withdraw food from bank for remaining fights (once per combat goal/claim)
   if (!routine._foodWithdrawn) {
     const remaining = claim
-      ? (claim.remainingQty || 20)
+      ? gameData.estimatedFightsForDrops(monsterCode, claim.itemCode, claim.remainingQty || 20)
       : (routine.rotation.goalTarget - routine.rotation.goalProgress);
     await withdrawFoodForFights(ctx, monsterCode, remaining);
     routine._foodWithdrawn = true;

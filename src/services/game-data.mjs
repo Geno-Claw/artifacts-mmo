@@ -173,6 +173,23 @@ export function getMonsterForDrop(itemCode) {
   return dropToMonsterCache?.get(itemCode) || null;
 }
 
+/**
+ * Estimate how many fights are needed to obtain a given quantity of a drop item.
+ * Uses drop rate and avg quantity per drop, with a 1.2x safety margin.
+ * Falls back to raw quantity if drop info is unavailable.
+ */
+export function estimatedFightsForDrops(monsterCode, itemCode, quantity) {
+  const monster = monstersCache?.get(monsterCode);
+  const drop = monster?.drops?.find(d => d.code === itemCode);
+  if (!drop || !drop.rate || drop.rate <= 0) return quantity;
+
+  const avgQtyPerDrop = (drop.min_quantity + drop.max_quantity) / 2;
+  const avgPerKill = (drop.rate / 100) * avgQtyPerDrop;
+  if (avgPerKill <= 0) return quantity;
+
+  return Math.ceil((quantity / avgPerKill) * 1.2);
+}
+
 /** Returns true if the item code is obtainable from task coin exchange. */
 export function isTaskReward(code) {
   return taskRewardCodes?.has(code) || false;
