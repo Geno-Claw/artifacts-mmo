@@ -446,70 +446,11 @@ function renderAchievementsModal(detail) {
 }
 
 function renderConfigModal(detail) {
-  const configPath = safeText(detail?.configPath, '--');
-  const hash = safeText(modalState.configIfMatchHash, '--');
-  const updatedAt = formatTime(detail?.updatedAtMs);
-  const editorText = `${modalState.configEditorText ?? ''}`;
-  const validationErrors = Array.isArray(modalState.configValidationErrors)
-    ? modalState.configValidationErrors
-    : [];
-  const busy = modalState.configBusy;
-  const busyAttr = busy ? ' disabled' : '';
+  if (typeof renderStructuredConfigModal === 'function') {
+    return renderStructuredConfigModal(detail);
+  }
 
-  const validationHtml = validationErrors.length > 0
-    ? `
-      <section class="modal-section">
-        <h3 class="modal-section-title">Validation Errors</h3>
-        <div class="config-validation-list">
-          ${validationErrors.map((row) => `
-            <div class="config-validation-item">
-              <span class="config-validation-path">${escapeHtml(safeText(row.path, '$'))}</span>
-              <span class="config-validation-message">${escapeHtml(safeText(row.message, 'Validation error'))}</span>
-            </div>
-          `).join('')}
-        </div>
-      </section>
-    `
-    : '';
-
-  return `
-    <div class="config-editor">
-      <section class="modal-section">
-        <h3 class="modal-section-title">Active Config</h3>
-        <div class="config-editor-meta">
-          <article class="modal-stat">
-            <div class="modal-stat-label">Path</div>
-            <div class="modal-stat-value">${escapeHtml(configPath)}</div>
-          </article>
-          <article class="modal-stat">
-            <div class="modal-stat-label">If-Match Hash</div>
-            <div class="modal-stat-value">${escapeHtml(hash)}</div>
-          </article>
-        </div>
-        <div class="achievement-result-count">Loaded ${escapeHtml(updatedAt)}</div>
-      </section>
-      <section class="modal-section">
-        <h3 class="modal-section-title">Raw JSON</h3>
-        <textarea
-          class="config-editor-textarea"
-          data-config-json
-          spellcheck="false"
-          autocapitalize="off"
-          autocomplete="off"
-          autocorrect="off"
-          aria-label="Raw config JSON editor"${busyAttr}
-        >${escapeHtml(editorText)}</textarea>
-      </section>
-      <section class="modal-section">
-        <h3 class="modal-section-title">Actions</h3>
-        <div class="config-editor-actions">
-          <button type="button" class="config-editor-btn" data-config-action="validate"${busyAttr}>VALIDATE</button>
-          <button type="button" class="config-editor-btn" data-config-action="save"${busyAttr}>SAVE</button>
-        </div>
-      </section>
-      ${validationHtml}
-    </div>
-  `;
+  return '<div class="modal-empty">Config editor is unavailable.</div>';
 }
 
 function renderAchievementsListInPlace() {
@@ -646,7 +587,10 @@ function renderModal() {
       const accountName = safeText(modalState.detail?.summary?.account, 'Account');
       modalRefs.title.textContent = `${accountName} - ${label}`;
     } else if (modalState.activeKind === 'config') {
-      modalRefs.title.textContent = `Runtime Config - ${label}`;
+      const focusedCharacter = safeText(modalState.configFocusedCharacter, '');
+      modalRefs.title.textContent = focusedCharacter
+        ? `Runtime Config - ${focusedCharacter}`
+        : 'Runtime Config';
     } else if (modalState.activeKind === 'bank') {
       modalRefs.title.textContent = `Account ${label}`;
     } else {

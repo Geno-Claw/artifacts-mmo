@@ -448,6 +448,11 @@
         "type": {
           "const": "skillRotation"
         },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable skill rotation for this character"
+        },
         "priority": {
           "type": "number",
           "default": 5,

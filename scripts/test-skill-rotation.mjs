@@ -2478,6 +2478,36 @@ async function testBuildCraftCandidateAcceptsWhenBankCoversMaterials() {
   assert.equal(candidate.recipe.code, 'ash_plank');
 }
 
+async function testSkillRotationRoutineEnabledHotReload() {
+  const routine = new SkillRotationRoutine({
+    enabled: false,
+    weights: { mining: 1 },
+    goals: { mining: 5 },
+  });
+  const ctx = {
+    inventoryFull() {
+      return false;
+    },
+  };
+
+  assert.equal(routine.canRun(ctx), false, 'routine should not run while disabled');
+
+  routine.rotation.currentSkill = 'mining';
+  routine.rotation.goalProgress = 3;
+  routine.updateConfig({
+    enabled: true,
+    weights: { mining: 2 },
+    goals: { mining: 8 },
+  });
+
+  assert.equal(routine.canRun(ctx), true, 'routine should hot-reload enabled=true');
+  assert.equal(routine.rotation.currentSkill, 'mining', 'hot-reload should not reset current rotation state');
+  assert.equal(routine.rotation.goalProgress, 3, 'hot-reload should preserve in-progress goal state');
+
+  routine.updateConfig({ enabled: false });
+  assert.equal(routine.canRun(ctx), false, 'routine should stop running after enabled=false hot-reload');
+}
+
 async function run() {
   await testContextTaskCoinsUsesInventoryOnly();
   await testAlchemyFallbackToGatherAtLevel1();
@@ -2534,6 +2564,7 @@ async function run() {
   await testCraftClaimRejectsInsufficientIntermediateCraftSkill();
   await testCraftClaimQueuesGatherOrderOnInsufficientSkill();
   await testBuildCraftCandidateAcceptsWhenBankCoversMaterials();
+  await testSkillRotationRoutineEnabledHotReload();
   resetOrderPriorityForTests();
   console.log('skill-rotation tests passed');
 }

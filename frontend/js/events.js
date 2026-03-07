@@ -137,6 +137,9 @@ function onModalContentClick(event) {
   }
 
   if (modalState.activeKind !== 'config') return;
+  if (typeof handleConfigModalClick === 'function' && handleConfigModalClick(event)) {
+    return;
+  }
   const button = closestFromEventTarget(event, 'button[data-config-action]');
   if (!button || !modalRefs.content.contains(button) || button.disabled) return;
 
@@ -180,6 +183,9 @@ function onModalContentInput(event) {
   }
 
   if (modalState.activeKind !== 'config') return;
+  if (typeof handleConfigModalInput === 'function' && handleConfigModalInput(event)) {
+    return;
+  }
   const editor = closestFromEventTarget(event, 'textarea[data-config-json]');
   if (!editor || !modalRefs.content.contains(editor)) return;
 

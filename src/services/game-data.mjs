@@ -139,6 +139,10 @@ export function getResource(code) {
   return resourcesCache?.get(code) || null;
 }
 
+export function getAllResources() {
+  return resourcesCache ? [...resourcesCache.values()] : [];
+}
+
 /**
  * Find which resource drops a given item.
  * Returns the resource object (with code, skill, level, drops), or null.

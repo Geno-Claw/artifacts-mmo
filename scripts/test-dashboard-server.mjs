@@ -289,6 +289,42 @@ function mutateConfigName(config, suffix) {
   return next;
 }
 
+function mutateRoutineField(config, {
+  characterIndex = 0,
+  routineType,
+  path,
+  value,
+}) {
+  const next = deepCloneJson(config);
+  const character = next.characters?.[characterIndex];
+  assert.ok(character, `config.characters[${characterIndex}] must exist`);
+  const routine = character.routines?.find((entry) => entry?.type === routineType);
+  assert.ok(routine, `routine ${routineType} must exist`);
+
+  const segments = `${path || ''}`.split('.').filter(Boolean);
+  assert.ok(segments.length > 0, 'path must not be empty');
+
+  let node = routine;
+  for (let index = 0; index < segments.length - 1; index++) {
+    const segment = segments[index];
+    if (!node[segment] || typeof node[segment] !== 'object' || Array.isArray(node[segment])) {
+      node[segment] = {};
+    }
+    node = node[segment];
+  }
+  node[segments[segments.length - 1]] = value;
+  return next;
+}
+
+function removeRoutine(config, { characterIndex = 0, routineType }) {
+  const next = deepCloneJson(config);
+  const character = next.characters?.[characterIndex];
+  assert.ok(character, `config.characters[${characterIndex}] must exist`);
+  character.routines = (Array.isArray(character.routines) ? character.routines : [])
+    .filter((entry) => entry?.type !== routineType);
+  return next;
+}
+
 function createConfigFixture(rootDir) {
   const tempDir = mkdtempSync(join(tmpdir(), 'dashboard-config-test-'));
   const configPath = join(tempDir, 'characters.json');
@@ -1083,6 +1119,24 @@ async function run() {
       'GET /api/config should return active BOT_CONFIG path',
     );
 
+    const getConfigOptions = await requestJson(`${baseUrl}/api/config/options`);
+    assert.equal(getConfigOptions.res.status, 200, `Expected /api/config/options 200, got ${getConfigOptions.res.status}`);
+    assert.ok(Array.isArray(getConfigOptions.payload?.resources), '/api/config/options should include resources array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.npcEvents), '/api/config/options should include npcEvents array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.skillNames), '/api/config/options should include skillNames array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.achievementTypes), '/api/config/options should include achievementTypes array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.routines), '/api/config/options should include routines array');
+    assert.equal(typeof getConfigOptions.payload?.descriptions, 'object', '/api/config/options should include descriptions map');
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.['events.gatherResources'],
+      'string',
+      '/api/config/options should expose schema descriptions for structured fields',
+    );
+    assert.ok(
+      getConfigOptions.payload.routines.some((entry) => entry?.type === 'skillRotation' && entry?.defaultConfig?.enabled === false),
+      '/api/config/options should expose routine metadata with materialized defaults',
+    );
+
     const validateValid = await requestJson(`${baseUrl}/api/config/validate`, {
       method: 'POST',
       body: { config: deepCloneJson(getConfig.payload.config) },
@@ -1094,14 +1148,18 @@ async function run() {
 
     const validateInvalid = await requestJson(`${baseUrl}/api/config/validate`, {
       method: 'POST',
-      body: { config: { characters: [{ name: 'MissingRoutines' }] } },
+      body: { config: { characters: [{ name: 'BrokenCharacter', routines: [{ type: 'rest', triggerPct: 'bad' }] }] } },
     });
     assert.equal(validateInvalid.res.status, 200, `Expected invalid /api/config/validate 200, got ${validateInvalid.res.status}`);
     assert.equal(validateInvalid.payload?.ok, false, 'invalid config should return ok=false');
     assertValidationErrorsShape(validateInvalid.payload?.errors, 'invalid config errors');
 
     const staleHash = `${getConfig.payload.hash}`;
-    const savedConfig = mutateConfigName(getConfig.payload.config, 'phase4save');
+    const savedConfig = mutateRoutineField(getConfig.payload.config, {
+      routineType: 'event',
+      path: 'enabled',
+      value: false,
+    });
     const atomicProbe = openAtomicProbe(configFixture.configPath);
     let saveRes;
     try {
@@ -1117,16 +1175,67 @@ async function run() {
       atomicProbe.close();
     }
     assert.equal(saveRes.res.status, 200, `Expected /api/config PUT 200, got ${saveRes.res.status}`);
-    assertHasKeys(saveRes.payload, ['ok', 'hash', 'savedAtMs'], 'PUT /api/config success payload');
+    assertHasKeys(saveRes.payload, ['ok', 'hash', 'savedAtMs', 'requiresRestart', 'restartReasons'], 'PUT /api/config success payload');
     assert.equal(saveRes.payload.ok, true, 'successful save should return ok=true');
     assert.equal(typeof saveRes.payload.hash, 'string', 'successful save should return new hash string');
     assert.equal(typeof saveRes.payload.savedAtMs, 'number', 'successful save should return numeric savedAtMs');
+    assert.equal(saveRes.payload.requiresRestart, false, 'hot-reloadable field edits should not require restart');
+    assert.deepEqual(saveRes.payload.restartReasons, [], 'hot-reloadable field edits should not report restart reasons');
 
     const savedDiskConfig = JSON.parse(readFileSync(configFixture.configPath, 'utf-8'));
     assert.equal(
-      savedDiskConfig?.characters?.[0]?.name,
-      savedConfig?.characters?.[0]?.name,
+      savedDiskConfig?.characters?.[0]?.routines?.find((entry) => entry?.type === 'event')?.enabled,
+      false,
       'successful save should persist updated config to disk',
+    );
+
+    const restartHash = `${saveRes.payload.hash}`;
+    const restartConfig = mutateConfigName(savedDiskConfig, 'phase4restart');
+    const restartSave = await requestJson(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      body: {
+        config: restartConfig,
+        ifMatchHash: restartHash,
+      },
+    });
+    assert.equal(restartSave.res.status, 200, `Expected restart metadata save 200, got ${restartSave.res.status}`);
+    assert.equal(restartSave.payload?.requiresRestart, true, 'roster changes should require restart');
+    assert.ok(
+      Array.isArray(restartSave.payload?.restartReasons)
+      && restartSave.payload.restartReasons.some((reason) => `${reason}`.includes('Character roster changed')),
+      'roster changes should report a restart reason',
+    );
+
+    const materializeHash = `${restartSave.payload.hash}`;
+    const materializeConfig = removeRoutine(restartConfig, {
+      characterIndex: 0,
+      routineType: 'orderFulfillment',
+    });
+    const materializeSave = await requestJson(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      body: {
+        config: materializeConfig,
+        ifMatchHash: materializeHash,
+      },
+    });
+    assert.equal(materializeSave.res.status, 200, `Expected missing routine save 200, got ${materializeSave.res.status}`);
+    assert.equal(materializeSave.payload?.requiresRestart, true, 'routine materialization should require restart');
+    assert.ok(
+      Array.isArray(materializeSave.payload?.restartReasons)
+      && materializeSave.payload.restartReasons.some((reason) => `${reason}`.includes('Routine membership changed')),
+      'routine materialization should report routine membership restart reason',
+    );
+    const materializedDiskConfig = JSON.parse(readFileSync(configFixture.configPath, 'utf-8'));
+    const materializedRoutineTypes = materializedDiskConfig.characters?.[0]?.routines?.map((entry) => entry?.type) || [];
+    assert.deepEqual(
+      materializedRoutineTypes.slice(0, 7),
+      ['rest', 'depositBank', 'bankExpansion', 'event', 'completeTask', 'orderFulfillment', 'skillRotation'],
+      'save normalization should materialize the managed routine template in canonical order',
+    );
+    assert.equal(
+      materializedDiskConfig.characters?.[0]?.routines?.find((entry) => entry?.type === 'orderFulfillment')?.enabled,
+      false,
+      'materialized toggleable routines should default to enabled=false',
     );
 
     const conflictInodeBefore = fs.statSync(configFixture.configPath).ino;

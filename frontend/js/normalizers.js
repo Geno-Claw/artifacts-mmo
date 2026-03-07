@@ -519,12 +519,30 @@ function buildConfigRequestPayload(parsedConfig) {
 }
 
 function parseConfigEditorJson() {
+  const parsed = typeof parseConfigEditorRawText === 'function'
+    ? parseConfigEditorRawText(`${modalState.configEditorText ?? ''}`)
+    : null;
+  if (parsed?.ok) {
+    modalState.configDraft = parsed.value;
+    modalState.configRawParseError = '';
+    return { ok: true, value: parsed.value };
+  }
+  if (parsed && !parsed.ok) {
+    modalState.configRawParseError = parsed.error;
+    modalState.configValidationErrors = [];
+    setConfigResultBanner('error', `MALFORMED JSON - ${safeText(parsed.error, 'Unable to parse config JSON')}`);
+    return { ok: false, value: null };
+  }
+
   try {
     const value = JSON.parse(`${modalState.configEditorText ?? ''}`);
+    modalState.configDraft = value;
+    modalState.configRawParseError = '';
     return { ok: true, value };
   } catch (err) {
+    modalState.configRawParseError = safeText(err?.message, 'Unable to parse config JSON');
     modalState.configValidationErrors = [];
-    setConfigResultBanner('error', `MALFORMED JSON - ${safeText(err?.message, 'Unable to parse config JSON')}`);
+    setConfigResultBanner('error', `MALFORMED JSON - ${modalState.configRawParseError}`);
     return { ok: false, value: null };
   }
 }

@@ -8,9 +8,15 @@ import {
   getCachedAchievementDefinitions,
 } from './services/account-cache.mjs';
 import {
+  analyzeConfigRestartRequirements,
+  CONFIG_EDITOR_ACHIEVEMENT_TYPES,
+  CONFIG_EDITOR_SKILL_NAMES,
   ConfigStoreError,
+  getCharactersSchema,
+  getRoutineEditorMetadata,
   loadConfigSnapshot,
   normalizeConfig,
+  prepareConfigForSave,
   saveConfigAtomically,
   validateBotConfig,
 } from './services/config-store.mjs';
@@ -23,7 +29,8 @@ import {
 import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
 import { clearGearState } from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
-import { findItems } from './services/game-data.mjs';
+import { getNpcEventCodes } from './services/event-manager.mjs';
+import { findItems, getAllResources, getNpcBuyableItems } from './services/game-data.mjs';
 import { toPositiveInt } from './utils.mjs';
 import {
   isSandbox,
@@ -81,6 +88,105 @@ function statusFromError(err, fallback = 502) {
   return fallback;
 }
 
+const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
+  events: '#/$defs/eventsConfig',
+  'events.gatherResources': '#/$defs/eventsConfig/properties/gatherResources',
+  npcBuyList: '#/properties/npcBuyList',
+  'npcBuyList[].code': '#/properties/npcBuyList/additionalProperties/items/properties/code',
+  'npcBuyList[].maxTotal': '#/properties/npcBuyList/additionalProperties/items/properties/maxTotal',
+  'characters[].settings.potions.enabled': '#/$defs/potionSettings/properties/enabled',
+  'characters[].settings.potions.combat.enabled': '#/$defs/combatPotionSettings/properties/enabled',
+  'characters[].settings.potions.combat.refillBelow': '#/$defs/combatPotionSettings/properties/refillBelow',
+  'characters[].settings.potions.combat.targetQuantity': '#/$defs/combatPotionSettings/properties/targetQuantity',
+  'characters[].settings.potions.combat.poisonBias': '#/$defs/combatPotionSettings/properties/poisonBias',
+  'characters[].settings.potions.combat.respectNonPotionUtility': '#/$defs/combatPotionSettings/properties/respectNonPotionUtility',
+  'characters[].settings.potions.combat.monsterTypes': '#/$defs/combatPotionSettings/properties/monsterTypes',
+  'characters[].settings.potions.bankTravel.enabled': '#/$defs/bankTravelPotionSettings/properties/enabled',
+  'characters[].settings.potions.bankTravel.mode': '#/$defs/bankTravelPotionSettings/properties/mode',
+  'characters[].settings.potions.bankTravel.allowRecall': '#/$defs/bankTravelPotionSettings/properties/allowRecall',
+  'characters[].settings.potions.bankTravel.allowForestBank': '#/$defs/bankTravelPotionSettings/properties/allowForestBank',
+  'characters[].settings.potions.bankTravel.minSavingsSeconds': '#/$defs/bankTravelPotionSettings/properties/minSavingsSeconds',
+  'characters[].settings.potions.bankTravel.includeReturnToOrigin': '#/$defs/bankTravelPotionSettings/properties/includeReturnToOrigin',
+  'characters[].settings.potions.bankTravel.moveSecondsPerTile': '#/$defs/bankTravelPotionSettings/properties/moveSecondsPerTile',
+  'characters[].settings.potions.bankTravel.itemUseSeconds': '#/$defs/bankTravelPotionSettings/properties/itemUseSeconds',
+  'characters[].routines.rest.priority': '#/$defs/restRoutine/properties/priority',
+  'characters[].routines.rest.triggerPct': '#/$defs/restRoutine/properties/triggerPct',
+  'characters[].routines.rest.targetPct': '#/$defs/restRoutine/properties/targetPct',
+  'characters[].routines.depositBank.priority': '#/$defs/depositBankRoutine/properties/priority',
+  'characters[].routines.depositBank.threshold': '#/$defs/depositBankRoutine/properties/threshold',
+  'characters[].routines.depositBank.sellOnGE': '#/$defs/depositBankRoutine/properties/sellOnGE',
+  'characters[].routines.depositBank.recycleEquipment': '#/$defs/depositBankRoutine/properties/recycleEquipment',
+  'characters[].routines.depositBank.depositGold': '#/$defs/depositBankRoutine/properties/depositGold',
+  'characters[].routines.bankExpansion.priority': '#/$defs/bankExpansionRoutine/properties/priority',
+  'characters[].routines.bankExpansion.checkIntervalMs': '#/$defs/bankExpansionRoutine/properties/checkIntervalMs',
+  'characters[].routines.bankExpansion.maxGoldPct': '#/$defs/bankExpansionRoutine/properties/maxGoldPct',
+  'characters[].routines.bankExpansion.goldBuffer': '#/$defs/bankExpansionRoutine/properties/goldBuffer',
+  'characters[].routines.event.priority': '#/$defs/eventRoutine/properties/priority',
+  'characters[].routines.event.enabled': '#/$defs/eventRoutine/properties/enabled',
+  'characters[].routines.event.monsterEvents': '#/$defs/eventRoutine/properties/monsterEvents',
+  'characters[].routines.event.resourceEvents': '#/$defs/eventRoutine/properties/resourceEvents',
+  'characters[].routines.event.npcEvents': '#/$defs/eventRoutine/properties/npcEvents',
+  'characters[].routines.event.minTimeRemainingMs': '#/$defs/eventRoutine/properties/minTimeRemainingMs',
+  'characters[].routines.event.maxMonsterType': '#/$defs/eventRoutine/properties/maxMonsterType',
+  'characters[].routines.event.cooldownMs': '#/$defs/eventRoutine/properties/cooldownMs',
+  'characters[].routines.event.minWinrate': '#/$defs/eventRoutine/properties/minWinrate',
+  'characters[].routines.completeTask.priority': '#/$defs/completeTaskRoutine/properties/priority',
+  'characters[].routines.skillRotation.enabled': '#/$defs/skillRotationRoutine/properties/enabled',
+  'characters[].routines.skillRotation.priority': '#/$defs/skillRotationRoutine/properties/priority',
+  'characters[].routines.skillRotation.maxLosses': '#/$defs/skillRotationRoutine/properties/maxLosses',
+  'characters[].routines.skillRotation.weights': '#/$defs/skillRotationRoutine/properties/weights',
+  'characters[].routines.skillRotation.goals': '#/$defs/skillRotationRoutine/properties/goals',
+  'characters[].routines.skillRotation.achievementTypes': '#/$defs/skillRotationRoutine/properties/achievementTypes',
+  'characters[].routines.skillRotation.orderBoard': '#/$defs/skillRotationRoutine/properties/orderBoard',
+  'characters[].routines.skillRotation.orderBoard.enabled': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/enabled',
+  'characters[].routines.skillRotation.orderBoard.createOrders': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/createOrders',
+  'characters[].routines.skillRotation.orderBoard.fulfillOrders': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/fulfillOrders',
+  'characters[].routines.skillRotation.orderBoard.leaseMs': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/leaseMs',
+  'characters[].routines.skillRotation.orderBoard.blockedRetryMs': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/blockedRetryMs',
+  'characters[].routines.orderFulfillment.priority': '#/$defs/orderFulfillmentRoutine/properties/priority',
+  'characters[].routines.orderFulfillment.enabled': '#/$defs/orderFulfillmentRoutine/properties/enabled',
+  'characters[].routines.orderFulfillment.maxLosses': '#/$defs/orderFulfillmentRoutine/properties/maxLosses',
+  'characters[].routines.orderFulfillment.craftScanLimit': '#/$defs/orderFulfillmentRoutine/properties/craftScanLimit',
+  'characters[].routines.orderFulfillment.orderBoard': '#/$defs/orderFulfillmentRoutine/properties/orderBoard',
+  'characters[].routines.orderFulfillment.orderBoard.enabled': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/enabled',
+  'characters[].routines.orderFulfillment.orderBoard.createOrders': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/createOrders',
+  'characters[].routines.orderFulfillment.orderBoard.fulfillOrders': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/fulfillOrders',
+  'characters[].routines.orderFulfillment.orderBoard.leaseMs': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/leaseMs',
+  'characters[].routines.orderFulfillment.orderBoard.blockedRetryMs': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/blockedRetryMs',
+});
+
+function decodeJsonPointerSegment(text) {
+  return `${text ?? ''}`.replace(/~1/g, '/').replace(/~0/g, '~');
+}
+
+function getNodeAtJsonPointer(root, pointer) {
+  if (!root || typeof root !== 'object' || typeof pointer !== 'string' || !pointer.startsWith('#/')) {
+    return null;
+  }
+
+  const segments = pointer.slice(2).split('/').map((segment) => decodeJsonPointerSegment(segment));
+  let node = root;
+  for (const segment of segments) {
+    if (!node || typeof node !== 'object' || !Object.hasOwn(node, segment)) {
+      return null;
+    }
+    node = node[segment];
+  }
+  return node;
+}
+
+async function buildConfigDescriptionPayload() {
+  const schema = await getCharactersSchema();
+  const descriptions = {};
+  for (const [path, pointer] of Object.entries(CONFIG_EDITOR_DESCRIPTION_POINTERS)) {
+    const node = getNodeAtJsonPointer(schema, pointer);
+    const description = firstText(node?.description, '');
+    if (!description) continue;
+    descriptions[path] = description;
+  }
+  return descriptions;
+}
+
 function sendStructuredError(res, err, fallbackCode) {
   if (res.headersSent) return;
   const status = statusFromError(err);
@@ -133,6 +239,47 @@ function isObject(value) {
 
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function compareByCode(a, b) {
+  return `${a?.code ?? ''}`.localeCompare(`${b?.code ?? ''}`);
+}
+
+async function buildConfigOptionsPayload() {
+  const resourceOptions = getAllResources()
+    .map((resource) => ({
+      code: `${resource?.code ?? ''}`.trim(),
+      name: `${resource?.name ?? resource?.code ?? ''}`.trim(),
+      skill: `${resource?.skill ?? ''}`.trim(),
+      level: Number(resource?.level) || 0,
+    }))
+    .filter((resource) => resource.code)
+    .sort(compareByCode);
+
+  const npcCodes = [...new Set(getNpcEventCodes().filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const npcEvents = npcCodes.map((code) => ({
+    code,
+    buyableItems: getNpcBuyableItems(code)
+      .map((item) => ({
+        code: `${item?.code ?? ''}`.trim(),
+        name: `${item?.name ?? item?.code ?? ''}`.trim(),
+        type: `${item?.type ?? ''}`.trim(),
+        level: Number(item?.level) || 0,
+        currency: `${item?.currency ?? ''}`.trim(),
+        buyPrice: Number(item?.buy_price) || 0,
+      }))
+      .filter((item) => item.code)
+      .sort(compareByCode),
+  }));
+
+  return {
+    resources: resourceOptions,
+    npcEvents,
+    skillNames: [...CONFIG_EDITOR_SKILL_NAMES],
+    achievementTypes: [...CONFIG_EDITOR_ACHIEVEMENT_TYPES],
+    routines: await getRoutineEditorMetadata(),
+    descriptions: await buildConfigDescriptionPayload(),
+  };
 }
 
 async function readJsonBody(req) {
@@ -532,6 +679,7 @@ export async function startDashboardServer({
               path: snapshot.path,
               hash: snapshot.hash,
               config: snapshot.config,
+              updatedAtMs: Date.now(),
             });
           } catch (err) {
             sendConfigError(res, err, 'config_get_failed');
@@ -564,9 +712,10 @@ export async function startDashboardServer({
           }
 
           try {
-            const { config: normalizedConfig } = await normalizeConfig(body.config);
+            const { config: preparedConfig } = await prepareConfigForSave(body.config);
+            const { config: normalizedSubmitted } = await normalizeConfig(body.config);
 
-            const validation = await validateBotConfig(normalizedConfig);
+            const validation = await validateBotConfig(preparedConfig);
             if (!validation.ok) {
               sendError(
                 res,
@@ -592,11 +741,33 @@ export async function startDashboardServer({
               return;
             }
 
-            const saved = await saveConfigAtomically(normalizedConfig);
+            const { config: normalizedCurrent } = await normalizeConfig(current.config);
+            const restartReasons = [];
+            const seenRestartReasons = new Set();
+            for (const candidate of [
+              analyzeConfigRestartRequirements(normalizedCurrent, normalizedSubmitted),
+              analyzeConfigRestartRequirements(normalizedCurrent, preparedConfig),
+            ]) {
+              for (const reason of candidate.restartReasons) {
+                if (seenRestartReasons.has(reason)) continue;
+                seenRestartReasons.add(reason);
+                restartReasons.push(reason);
+              }
+            }
+
+            const restartInfo = {
+              requiresRestart: restartReasons.length > 0,
+              restartReasons,
+            };
+            const saved = await saveConfigAtomically(preparedConfig);
             sendJson(res, 200, {
               ok: true,
+              path: saved.path,
               hash: saved.hash,
               savedAtMs: saved.savedAtMs,
+              config: preparedConfig,
+              requiresRestart: restartInfo.requiresRestart,
+              restartReasons: restartInfo.restartReasons,
             });
           } catch (err) {
             sendConfigError(res, err, 'config_put_failed');
@@ -605,6 +776,21 @@ export async function startDashboardServer({
         }
 
         sendJson(res, 405, { error: 'method_not_allowed' });
+        return;
+      }
+
+      if (pathname === '/api/config/options') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { error: 'method_not_allowed' });
+          return;
+        }
+
+        try {
+          const optionsPayload = await buildConfigOptionsPayload();
+          sendJson(res, 200, optionsPayload);
+        } catch (err) {
+          sendConfigError(res, err, 'config_options_failed');
+        }
         return;
       }
 
@@ -632,7 +818,8 @@ export async function startDashboardServer({
         }
 
         try {
-          const result = await validateBotConfig(body.config);
+          const { config: preparedConfig } = await prepareConfigForSave(body.config);
+          const result = await validateBotConfig(preparedConfig);
           sendJson(res, 200, result);
         } catch (err) {
           sendConfigError(res, err, 'config_validate_failed');

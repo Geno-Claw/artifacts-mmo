@@ -258,13 +258,26 @@ async function fetchConfigDetail() {
   renderModal();
 
   try {
-    const res = await fetch((window.__BASE_PATH__||'')+'/api/config', {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    const payloadRaw = await res.json().catch(() => null);
+    const base = window.__BASE_PATH__ || '';
+    const [res, optionsRes] = await Promise.all([
+      fetch(`${base}/api/config`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      }),
+      fetch(`${base}/api/config/options`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      }),
+    ]);
+    const [payloadRaw, optionsPayloadRaw] = await Promise.all([
+      res.json().catch(() => null),
+      optionsRes.json().catch(() => null),
+    ]);
     if (!res.ok) {
       throw new Error(buildApiErrorMessage(res, payloadRaw, 'Config load failed'));
+    }
+    if (!optionsRes.ok) {
+      throw new Error(buildApiErrorMessage(optionsRes, optionsPayloadRaw, 'Config options load failed'));
     }
 
     if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeKind !== 'config') {
@@ -272,15 +285,28 @@ async function fetchConfigDetail() {
     }
 
     const envelope = normalizeConfigEnvelope(payloadRaw, { requireJson: true });
+    const parsed = typeof parseConfigEditorRawText === 'function'
+      ? parseConfigEditorRawText(envelope.rawJson)
+      : { ok: true, value: payloadRaw?.config || {}, error: '' };
+    if (!parsed.ok) {
+      throw new Error(`Config payload parse failed: ${parsed.error}`);
+    }
     modalState.detail = {
       configPath: envelope.configPath,
       updatedAtMs: envelope.updatedAtMs,
     };
+    modalState.configDraft = parsed.value;
     modalState.configEditorText = envelope.rawJson;
+    modalState.configOptions = typeof normalizeConfigEditorOptions === 'function'
+      ? normalizeConfigEditorOptions(optionsPayloadRaw)
+      : (optionsPayloadRaw || {});
+    modalState.configRawParseError = '';
     modalState.configIfMatchHash = envelope.ifMatchHash;
     modalState.status = 'ready';
     modalState.errorText = '';
     modalState.configValidationErrors = [];
+    modalState.configRequiresRestart = false;
+    modalState.configRestartReasons = [];
     setConfigResultBanner('', '');
   } catch (err) {
     if (err?.name === 'AbortError') return;
@@ -439,8 +465,15 @@ async function runConfigSave() {
     }
 
     const envelope = normalizeConfigEnvelope(payloadRaw, { requireJson: false });
+    const savedConfig = payload && typeof payload.config === 'object' ? payload.config : null;
     if (safeText(envelope.rawJson, '')) {
       modalState.configEditorText = envelope.rawJson;
+    }
+    if (savedConfig) {
+      modalState.configDraft = savedConfig;
+      if (!safeText(envelope.rawJson, '')) {
+        modalState.configEditorText = `${JSON.stringify(savedConfig, null, 2)}`;
+      }
     }
     if (safeText(envelope.ifMatchHash, '')) {
       modalState.configIfMatchHash = envelope.ifMatchHash;
@@ -449,8 +482,15 @@ async function runConfigSave() {
       configPath: envelope.configPath || safeText(modalState.detail?.configPath, ''),
       updatedAtMs: envelope.updatedAtMs || Date.now(),
     };
+    modalState.configRawParseError = '';
     modalState.configValidationErrors = [];
-    setConfigResultBanner('success', 'SAVE SUCCESS - config persisted.');
+    modalState.configRequiresRestart = payload?.requiresRestart === true;
+    modalState.configRestartReasons = Array.isArray(payload?.restartReasons) ? payload.restartReasons : [];
+    if (modalState.configRequiresRestart) {
+      setConfigResultBanner('warning', 'SAVE SUCCESS - config persisted. Restart required for some changes.');
+    } else {
+      setConfigResultBanner('success', 'SAVE SUCCESS - config persisted.');
+    }
   } catch (err) {
     if (err?.name === 'AbortError') return;
     if (!isModalOpen() || modalState.activeKind !== 'config') return;
@@ -542,7 +582,7 @@ async function fetchAccountAchievementsDetail() {
 function openCharacterModal(name, kind) {
   if (!name || !MODAL_KIND_LABELS[kind] || !modalRefs.host || !modalRefs.dialog) return;
   if (kind === 'config') {
-    openConfigModal();
+    openConfigModal({ focusCharacterName: name });
     return;
   }
   if (kind === 'bank') {
@@ -571,6 +611,14 @@ function openCharacterModal(name, kind) {
   modalState.logScopeFilter = '';
   modalState.logReasonFilter = '';
   modalState.configEditorText = '';
+  modalState.configDraft = null;
+  modalState.configOptions = null;
+  modalState.configView = 'global';
+  modalState.configFocusedCharacter = '';
+  modalState.configCharacterTab = 'settings';
+  modalState.configRawParseError = '';
+  modalState.configRequiresRestart = false;
+  modalState.configRestartReasons = [];
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
   modalState.configBusy = false;
@@ -588,7 +636,7 @@ function openCharacterModal(name, kind) {
   fetchCharacterDetail(name);
 }
 
-function openConfigModal() {
+function openConfigModal({ focusCharacterName = '' } = {}) {
   if (!modalRefs.host || !modalRefs.dialog) return;
 
   modalState.lastFocusedElement = document.activeElement instanceof HTMLElement
@@ -608,6 +656,14 @@ function openConfigModal() {
   modalState.logScopeFilter = '';
   modalState.logReasonFilter = '';
   modalState.configEditorText = '';
+  modalState.configDraft = null;
+  modalState.configOptions = null;
+  modalState.configView = focusCharacterName ? 'characters' : 'global';
+  modalState.configFocusedCharacter = focusCharacterName;
+  modalState.configCharacterTab = 'settings';
+  modalState.configRawParseError = '';
+  modalState.configRequiresRestart = false;
+  modalState.configRestartReasons = [];
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
   modalState.configBusy = false;
@@ -744,6 +800,14 @@ function closeCharacterModal({ restoreFocus = true } = {}) {
   modalState.logScopeFilter = '';
   modalState.logReasonFilter = '';
   modalState.configEditorText = '';
+  modalState.configDraft = null;
+  modalState.configOptions = null;
+  modalState.configView = 'global';
+  modalState.configFocusedCharacter = '';
+  modalState.configCharacterTab = 'settings';
+  modalState.configRawParseError = '';
+  modalState.configRequiresRestart = false;
+  modalState.configRestartReasons = [];
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
   modalState.configBusy = false;

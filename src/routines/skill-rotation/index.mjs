@@ -60,8 +60,9 @@ function normalizeOrderBoardConfig(cfg = {}) {
 }
 
 export class SkillRotationRoutine extends BaseRoutine {
-  constructor({ priority = 5, maxLosses = MAX_LOSSES_DEFAULT, orderBoard = {}, ...rotationCfg } = {}) {
+  constructor({ priority = 5, enabled = true, maxLosses = MAX_LOSSES_DEFAULT, orderBoard = {}, ...rotationCfg } = {}) {
     super({ name: 'Skill Rotation', priority, loop: true, type: rotationCfg.type });
+    this.enabled = enabled === true;
     this.rotation = new SkillRotation({ ...rotationCfg, orderBoard });
     this.maxLosses = maxLosses;
     this.orderBoard = normalizeOrderBoardConfig(orderBoard);
@@ -72,7 +73,8 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._nextExchangeClaimAttemptAt = 0;
   }
 
-  updateConfig({ maxLosses, orderBoard, ...rotationCfg } = {}) {
+  updateConfig({ enabled, maxLosses, orderBoard, ...rotationCfg } = {}) {
+    if (enabled !== undefined) this.enabled = enabled === true;
     if (maxLosses !== undefined) this.maxLosses = maxLosses;
     if (orderBoard !== undefined) this.orderBoard = normalizeOrderBoardConfig(orderBoard);
     this.rotation.updateConfig({ ...rotationCfg, orderBoard });
@@ -81,6 +83,7 @@ export class SkillRotationRoutine extends BaseRoutine {
   // --- Core routine interface ---
 
   canRun(ctx) {
+    if (!this.enabled) return false;
     if (ctx.inventoryFull()) return false;
     return true;
   }

@@ -5,6 +5,61 @@ import { resolve } from 'path';
 const DEFAULT_BOT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_SCHEMA_PATH = './config/characters.schema.json';
 
+export const MANAGED_ROUTINE_ORDER = Object.freeze([
+  'rest',
+  'depositBank',
+  'bankExpansion',
+  'event',
+  'completeTask',
+  'orderFulfillment',
+  'skillRotation',
+]);
+
+export const TOGGLEABLE_ROUTINE_TYPES = Object.freeze([
+  'event',
+  'orderFulfillment',
+  'skillRotation',
+]);
+
+const TOGGLEABLE_ROUTINE_TYPE_SET = new Set(TOGGLEABLE_ROUTINE_TYPES);
+
+export const CONFIG_EDITOR_SKILL_NAMES = Object.freeze([
+  'mining',
+  'woodcutting',
+  'fishing',
+  'cooking',
+  'alchemy',
+  'weaponcrafting',
+  'gearcrafting',
+  'jewelrycrafting',
+  'combat',
+  'npc_task',
+  'item_task',
+  'achievement',
+]);
+
+export const CONFIG_EDITOR_ACHIEVEMENT_TYPES = Object.freeze([
+  'combat_kill',
+  'gathering',
+  'crafting',
+  'combat_drop',
+  'use',
+  'recycling',
+  'task',
+  'npc_buy',
+  'npc_sell',
+]);
+
+export const ROUTINE_EDITOR_METADATA = Object.freeze([
+  { type: 'rest', label: 'Rest', toggleable: false, readOnly: false },
+  { type: 'depositBank', label: 'Deposit Bank', toggleable: false, readOnly: false },
+  { type: 'bankExpansion', label: 'Bank Expansion', toggleable: false, readOnly: false },
+  { type: 'event', label: 'Events', toggleable: true, readOnly: false },
+  { type: 'completeTask', label: 'Complete Task', toggleable: false, readOnly: true },
+  { type: 'orderFulfillment', label: 'Order Fulfillment', toggleable: true, readOnly: false },
+  { type: 'skillRotation', label: 'Skill Rotation', toggleable: true, readOnly: false },
+]);
+
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -104,6 +159,10 @@ async function loadCharactersSchema(options = {}) {
   cachedSchemaPath = schemaPath;
   cachedSchema = schema;
   return schema;
+}
+
+export async function getCharactersSchema(options = {}) {
+  return loadCharactersSchema(options);
 }
 
 function decodeJsonPointerSegment(text) {
@@ -297,6 +356,190 @@ export async function validateBotConfig(config, options = {}) {
   return {
     ok: finalErrors.length === 0,
     errors: finalErrors,
+  };
+}
+
+function routineItemsSchema(rootSchema) {
+  return rootSchema?.properties?.characters?.items?.properties?.routines?.items || null;
+}
+
+function buildRoutineFromSchema(type, rootSchema) {
+  const itemsSchema = routineItemsSchema(rootSchema);
+  if (!itemsSchema) return { type };
+
+  const normalized = applySchemaDefaults({ type }, itemsSchema, rootSchema);
+  if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) {
+    return { type };
+  }
+  return normalized;
+}
+
+function buildManagedRoutinePlaceholder(type, rootSchema) {
+  const base = buildRoutineFromSchema(type, rootSchema);
+  if (TOGGLEABLE_ROUTINE_TYPE_SET.has(type)) {
+    return {
+      ...base,
+      enabled: false,
+    };
+  }
+  return base;
+}
+
+function isPlainObject(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toRoutineArray(value) {
+  return Array.isArray(value) ? value.filter(isPlainObject) : [];
+}
+
+function cloneJson(value) {
+  return structuredClone(value);
+}
+
+function materializeCharacterRoutines(characterConfig, rootSchema) {
+  const routines = toRoutineArray(characterConfig?.routines);
+  const nextManaged = [];
+  const extras = [];
+  const seenManaged = new Set();
+
+  for (const routine of routines) {
+    const type = typeof routine?.type === 'string' ? routine.type : '';
+    if (!MANAGED_ROUTINE_ORDER.includes(type) || seenManaged.has(type)) {
+      extras.push(cloneJson(routine));
+      continue;
+    }
+    seenManaged.add(type);
+    nextManaged.push(cloneJson(routine));
+  }
+
+  const byType = new Map(nextManaged.map(routine => [routine.type, routine]));
+  const orderedManaged = MANAGED_ROUTINE_ORDER.map((type) => {
+    const existing = byType.get(type);
+    if (existing) return existing;
+    return buildManagedRoutinePlaceholder(type, rootSchema);
+  });
+
+  return orderedManaged.concat(extras);
+}
+
+export async function getRoutineEditorMetadata(options = {}) {
+  const schema = await loadCharactersSchema(options);
+  return ROUTINE_EDITOR_METADATA.map((entry) => ({
+    ...entry,
+    defaultConfig: buildManagedRoutinePlaceholder(entry.type, schema),
+  }));
+}
+
+export async function prepareConfigForSave(config, options = {}) {
+  const schema = await loadCharactersSchema(options);
+  const normalizedRoot = applySchemaDefaults(config, schema, schema);
+  const next = cloneJson(normalizedRoot);
+  const characters = Array.isArray(next?.characters) ? next.characters : [];
+
+  for (let index = 0; index < characters.length; index++) {
+    const character = isPlainObject(characters[index]) ? characters[index] : {};
+    characters[index] = {
+      ...character,
+      routines: materializeCharacterRoutines(character, schema),
+    };
+  }
+
+  return {
+    config: next,
+    changed: !valuesEqual(config, next),
+  };
+}
+
+function namesInOrder(config) {
+  const characters = Array.isArray(config?.characters) ? config.characters : [];
+  return characters.map(char => `${char?.name ?? ''}`.trim()).filter(Boolean);
+}
+
+function countsByRoutineType(characterConfig) {
+  const counts = new Map();
+  for (const routine of toRoutineArray(characterConfig?.routines)) {
+    const type = `${routine?.type ?? ''}`.trim();
+    if (!type) continue;
+    counts.set(type, (counts.get(type) || 0) + 1);
+  }
+  return counts;
+}
+
+function mapsEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (const [key, value] of a) {
+    if (b.get(key) !== value) return false;
+  }
+  return true;
+}
+
+function prioritiesByRoutineType(characterConfig) {
+  const priorities = new Map();
+  for (const routine of toRoutineArray(characterConfig?.routines)) {
+    const type = `${routine?.type ?? ''}`.trim();
+    if (!type) continue;
+    const bucket = priorities.get(type) || [];
+    bucket.push(Number(routine?.priority));
+    priorities.set(type, bucket);
+  }
+  return priorities;
+}
+
+function priorityMapsEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (const [key, values] of a) {
+    const other = b.get(key);
+    if (!Array.isArray(other) || other.length !== values.length) return false;
+    for (let index = 0; index < values.length; index++) {
+      if (other[index] !== values[index]) return false;
+    }
+  }
+  return true;
+}
+
+export function analyzeConfigRestartRequirements(currentConfig, nextConfig) {
+  const restartReasons = [];
+  const currentNames = namesInOrder(currentConfig);
+  const nextNames = namesInOrder(nextConfig);
+
+  if (!valuesEqual(currentNames, nextNames)) {
+    restartReasons.push('Character roster changed');
+  }
+
+  const currentByName = new Map(
+    (Array.isArray(currentConfig?.characters) ? currentConfig.characters : [])
+      .filter(isPlainObject)
+      .map(character => [`${character.name ?? ''}`.trim(), character]),
+  );
+  const nextByName = new Map(
+    (Array.isArray(nextConfig?.characters) ? nextConfig.characters : [])
+      .filter(isPlainObject)
+      .map(character => [`${character.name ?? ''}`.trim(), character]),
+  );
+
+  for (const name of nextNames) {
+    if (!currentByName.has(name) || !nextByName.has(name)) continue;
+
+    const currentChar = currentByName.get(name);
+    const nextChar = nextByName.get(name);
+    const currentCounts = countsByRoutineType(currentChar);
+    const nextCounts = countsByRoutineType(nextChar);
+    if (!mapsEqual(currentCounts, nextCounts)) {
+      restartReasons.push(`Routine membership changed for ${name}`);
+      continue;
+    }
+
+    const currentPriorities = prioritiesByRoutineType(currentChar);
+    const nextPriorities = prioritiesByRoutineType(nextChar);
+    if (!priorityMapsEqual(currentPriorities, nextPriorities)) {
+      restartReasons.push(`Routine priority changed for ${name}`);
+    }
+  }
+
+  return {
+    requiresRestart: restartReasons.length > 0,
+    restartReasons,
   };
 }
 
