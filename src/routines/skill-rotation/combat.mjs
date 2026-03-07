@@ -51,7 +51,8 @@ export async function executeCombat(ctx, routine) {
   const { ready = true } = await equipForCombat(ctx, monsterCode);
   if (!ready) {
     const context = claim ? 'order fight' : 'combat';
-    logger.warn(`[${ctx.name}] ${context}: combat gear not ready for ${monsterCode}, deferring`, {
+    const action = claim ? 'blocking claim' : 'deferring';
+    logger.warn(`[${ctx.name}] ${context}: combat gear not ready for ${monsterCode}, ${action}`, {
       event: 'combat.gear.not_ready',
       reasonCode: 'routine_conditions_changed',
       data: {
@@ -59,6 +60,10 @@ export async function executeCombat(ctx, routine) {
         sourceType: claim?.sourceType || null,
       },
     });
+    if (claim) {
+      await routine._blockAndReleaseClaim(ctx, `combat_gear_not_ready:${monsterCode}`);
+      return true;
+    }
     return false;
   }
   await prepareCombatPotions(ctx, monsterCode);

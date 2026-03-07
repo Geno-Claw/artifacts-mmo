@@ -299,6 +299,10 @@ function filterDuplicateFamilyCandidates(candidates, slot, loadout, ctx, bankIte
     ), 0);
     if (priorUses <= 0) return true;
 
+    // Artifacts cannot stack the same item code across the family, even when
+    // multiple copies are owned.
+    if (familySlots === ARTIFACT_SLOTS) return false;
+
     if (includeCraftableUnavailable && source === 'craftable') return true;
 
     const c = ctx.get();

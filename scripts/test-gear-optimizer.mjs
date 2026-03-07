@@ -274,7 +274,7 @@ async function testOptimizeForMonsterSupportsArtifactSlots() {
   assert.equal(result.loadout.get('artifact3'), null, 'single-copy artifacts should not be duplicated into artifact3');
 }
 
-async function testOptimizeForMonsterAllowsMultipleArtifactCopies() {
+async function testOptimizeForMonsterDoesNotDuplicateArtifactCopies() {
   _resetDepsForTests();
 
   const noviceGuide = makeItem('novice_guide', { level: 10, effects: [{ code: 'wisdom', value: 25 }] });
@@ -309,8 +309,45 @@ async function testOptimizeForMonsterAllowsMultipleArtifactCopies() {
   const result = await optimizeForMonster(ctx, 'test_monster');
   assert.ok(result, 'optimizeForMonster should return a result');
   assert.equal(result.loadout.get('artifact1'), 'novice_guide', 'first artifact slot should use the owned artifact');
-  assert.equal(result.loadout.get('artifact2'), 'novice_guide', 'second artifact slot should reuse the artifact when a second copy exists');
-  assert.equal(result.loadout.get('artifact3'), null, 'artifact3 should remain empty when only two copies exist');
+  assert.equal(result.loadout.get('artifact2'), null, 'artifact2 should stay empty even when a second copy exists');
+  assert.equal(result.loadout.get('artifact3'), null, 'artifact3 should stay empty even when multiple copies exist');
+}
+
+async function testOptimizeForMonsterAllowsDuplicateRingsWhenEnoughCopiesExist() {
+  _resetDepsForTests();
+
+  const scholarRing = makeItem('scholar_ring', { level: 10, effects: [{ code: 'wisdom', value: 25 }] });
+  const itemsByCode = new Map([[scholarRing.code, scholarRing]]);
+  const equipmentBySlot = new Map([
+    ['ring1', [scholarRing]],
+    ['ring2', [scholarRing]],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+  });
+
+  _setDepsForTests({
+    simulateCombatFn: (stats) => ({
+      win: true,
+      remainingHp: stats.wisdom || 0,
+      turns: 10,
+      hpLostPercent: 0,
+    }),
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    inventory: {
+      scholar_ring: 2,
+    },
+  });
+
+  const result = await optimizeForMonster(ctx, 'test_monster');
+  assert.ok(result, 'optimizeForMonster should return a result');
+  assert.equal(result.loadout.get('ring1'), 'scholar_ring', 'first ring slot should use the owned ring');
+  assert.equal(result.loadout.get('ring2'), 'scholar_ring', 'ring2 should still allow the same ring when enough copies exist');
 }
 
 async function testOptimizeForGatheringIncludesArtifactProspecting() {
@@ -350,6 +387,45 @@ async function testOptimizeForGatheringIncludesArtifactProspecting() {
   assert.equal(result.loadout.get('artifact1'), 'novice_guide', 'gathering optimizer should select an artifact with prospecting');
   assert.equal(result.loadout.get('artifact2'), null, 'gathering optimizer should respect single-copy artifact limits');
   assert.equal(result.loadout.get('artifact3'), null, 'gathering optimizer should leave extra artifact slots empty without copies');
+}
+
+async function testOptimizeForGatheringDoesNotDuplicateArtifactCopies() {
+  _resetDepsForTests();
+
+  const noviceGuide = makeItem('novice_guide', { level: 10, effects: [{ code: 'prospecting', value: 25 }] });
+  const pickaxe = makeItem('copper_pickaxe', {
+    level: 1,
+    effects: [{ code: 'mining', value: 1 }],
+  });
+  const itemsByCode = new Map([
+    [noviceGuide.code, noviceGuide],
+    [pickaxe.code, pickaxe],
+  ]);
+  const equipmentBySlot = new Map([
+    ['artifact1', [noviceGuide]],
+    ['artifact2', [noviceGuide]],
+    ['artifact3', [noviceGuide]],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+    gatherTools: [pickaxe],
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    inventory: {
+      novice_guide: 3,
+      copper_pickaxe: 1,
+    },
+  });
+
+  const result = await optimizeForGathering(ctx, 'mining');
+  assert.ok(result, 'optimizeForGathering should return a result');
+  assert.equal(result.loadout.get('artifact1'), 'novice_guide', 'gathering optimizer should still select the artifact');
+  assert.equal(result.loadout.get('artifact2'), null, 'gathering optimizer should not duplicate the artifact into artifact2');
+  assert.equal(result.loadout.get('artifact3'), null, 'gathering optimizer should not duplicate the artifact into artifact3');
 }
 
 async function testOptimizeForMonsterPlanningIncludesVendorRune() {
@@ -438,8 +514,10 @@ async function run() {
     await testOptimizeForGatheringIncludesBestBag();
     await testOptimizeForMonsterUsesCandidateRuneEffects();
     await testOptimizeForMonsterSupportsArtifactSlots();
-    await testOptimizeForMonsterAllowsMultipleArtifactCopies();
+    await testOptimizeForMonsterDoesNotDuplicateArtifactCopies();
+    await testOptimizeForMonsterAllowsDuplicateRingsWhenEnoughCopiesExist();
     await testOptimizeForGatheringIncludesArtifactProspecting();
+    await testOptimizeForGatheringDoesNotDuplicateArtifactCopies();
     await testOptimizeForMonsterPlanningIncludesVendorRune();
     await testOptimizeForMonsterPrefersEmptyRuneOnTie();
     await testFindBestCombatTargetSkipsBosses();

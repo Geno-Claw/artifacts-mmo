@@ -10,6 +10,7 @@ const { CharacterContext } = await import('../src/context.mjs');
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation/index.mjs');
 const gameData = await import('../src/services/game-data.mjs');
+const gearOptimizer = await import('../src/services/gear-optimizer.mjs');
 const orderBoard = await import('../src/services/order-board.mjs');
 const orderPriority = await import('../src/services/order-priority.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');
@@ -45,6 +46,11 @@ const {
   _setCachesForTests: setGameDataCachesForTests,
   _resetForTests: resetGameDataForTests,
 } = gameData;
+
+const {
+  _setDepsForTests: setGearOptimizerDepsForTests,
+  _resetDepsForTests: resetGearOptimizerDepsForTests,
+} = gearOptimizer;
 
 function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
   return {
@@ -1647,6 +1653,78 @@ async function testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates() {
   assert.equal(rotateCalls, 1, 'should force rotate to next recipe');
 }
 
+async function testCombatReadyFalseWithClaimBlocksAndReleasesClaim() {
+  resetGameDataForTests();
+  setGearOptimizerDepsForTests({
+    getMonsterFn: () => null,
+  });
+
+  try {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+    routine._ensureOrderClaim = async () => ({
+      orderId: 'fight-order-1',
+      itemCode: 'milk_bucket',
+      sourceType: 'fight',
+      sourceCode: 'cow',
+    });
+    routine.rotation = {
+      monster: null,
+      monsterLoc: null,
+      forceRotate: async () => null,
+    };
+
+    let blockReason = null;
+    routine._blockAndReleaseClaim = async (_ctx, reason) => {
+      blockReason = reason;
+    };
+
+    const result = await withMockFetch(async (url, opts = {}) => {
+      const requestUrl = new URL(url);
+      const method = `${opts.method || 'GET'}`.toUpperCase();
+      if (method === 'GET' && requestUrl.pathname === '/maps') {
+        const contentType = requestUrl.searchParams.get('content_type');
+        const contentCode = requestUrl.searchParams.get('content_code');
+        if (contentType === 'monster' && contentCode === 'cow') {
+          return makeJsonResponse([{ x: 2, y: 2 }]);
+        }
+      }
+      return makeJsonResponse([]);
+    }, async () => routine._executeCombat(makeCombatCtx()));
+
+    assert.equal(result, true, 'claim-mode gear failure should return true to avoid tight retry');
+    assert.equal(blockReason, 'combat_gear_not_ready:cow', 'claim-mode gear failure should block and release the claim');
+  } finally {
+    resetGearOptimizerDepsForTests();
+    resetGameDataForTests();
+  }
+}
+
+async function testCombatReadyFalseWithoutClaimStillDefers() {
+  setGearOptimizerDepsForTests({
+    getMonsterFn: () => null,
+  });
+
+  try {
+    const routine = new SkillRotationRoutine();
+    routine._ensureOrderClaim = async () => null;
+    routine.rotation = {
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+      forceRotate: async () => null,
+    };
+
+    const result = await routine._executeCombat(makeCombatCtx());
+    assert.equal(result, false, 'non-claim gear failure should keep deferring');
+  } finally {
+    resetGearOptimizerDepsForTests();
+  }
+}
+
 async function testRoutineCanDisableOrderFulfillment() {
   const routine = new SkillRotationRoutine({
     orderBoard: {
@@ -3027,6 +3105,8 @@ async function run() {
   await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
   await testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim();
   await testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates();
+  await testCombatReadyFalseWithClaimBlocksAndReleasesClaim();
+  await testCombatReadyFalseWithoutClaimStillDefers();
   await testRoutineCanDisableOrderFulfillment();
   await testRoutineRoutesCraftClaimsBySkill();
   await testRoutineCraftingFallsBackWhenNoCraftClaim();
@@ -3059,12 +3139,14 @@ async function run() {
   await testSkillRotationRoutineEnabledHotReload();
   resetOrderPriorityForTests();
   resetGameDataForTests();
+  resetGearOptimizerDepsForTests();
   console.log('skill-rotation tests passed');
 }
 
 run().catch((err) => {
   resetOrderPriorityForTests();
   resetGameDataForTests();
+  resetGearOptimizerDepsForTests();
   console.error(err);
   process.exit(1);
 });
