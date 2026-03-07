@@ -123,6 +123,16 @@ export async function runNpcTaskFlow(ctx, routine) {
     routine.rotation.goalProgress = routine.rotation.goalTarget;
     return true;
   }
+
+  // Pre-travel viability check: verify fight is winnable with actual equipped gear
+  // before spending actions on food withdrawal and travel.
+  const preCheck = await getFightReadiness(ctx, monster);
+  if (preCheck.status === 'unwinnable') {
+    log.warn(`[${ctx.name}] NPC Task: ${monster} not viable after equip (need ${preCheck.requiredHp}hp, max ${preCheck.maxHp}hp), skipping`);
+    routine.rotation.goalProgress = routine.rotation.goalTarget;
+    return true;
+  }
+
   await prepareCombatPotions(ctx, monster);
 
   // Withdraw food from bank for all remaining task fights (once per NPC task)

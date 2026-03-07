@@ -66,6 +66,31 @@ export async function executeCombat(ctx, routine) {
     }
     return false;
   }
+
+  // Pre-travel viability check: verify fight is winnable with equipped gear before
+  // spending actions on food withdrawal, potions, and travel.
+  const preCheck = await getFightReadiness(ctx, monsterCode);
+  if (preCheck.status === 'unwinnable') {
+    const context = claim ? 'order fight' : 'combat';
+    const action = claim ? 'blocking claim' : 'rotating';
+    logger.warn(`[${ctx.name}] ${context}: ${monsterCode} not viable after equip (need ${preCheck.requiredHp}hp, max ${preCheck.maxHp}hp), ${action}`, {
+      event: 'combat.pre_travel.unwinnable',
+      reasonCode: 'unwinnable_combat',
+      data: {
+        monsterCode,
+        requiredHp: preCheck.requiredHp,
+        maxHp: preCheck.maxHp,
+        sourceType: claim?.sourceType || null,
+      },
+    });
+    if (claim) {
+      await routine._blockAndReleaseClaim(ctx, `combat_not_viable:${monsterCode}`);
+    } else {
+      await routine.rotation.forceRotate(ctx);
+    }
+    return true;
+  }
+
   await prepareCombatPotions(ctx, monsterCode);
 
   // Withdraw food from bank for all remaining fights (once per combat goal)
