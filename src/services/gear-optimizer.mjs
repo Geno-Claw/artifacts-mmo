@@ -7,11 +7,18 @@
  *
  * Four-phase greedy approach:
  *   1. Weapon — maximize outgoing DPS (calcTurnDamage)
- *   2. Defensive slots — maximize survivability (simulateCombat → remainingHp)
- *   3. Accessories + rune — maximize survivability (simulateCombat → remainingHp)
+ *   2. Defensive slots — maximize survivability (simulateCombat → win rate)
+ *   3. Accessories + rune — maximize survivability (simulateCombat → win rate)
  *   4. Bag — maximize inventory space
  */
-import { calcTurnDamage, simulateCombat } from './combat-simulator.mjs';
+import {
+  calcTurnDamage,
+  findRequiredHpForFight,
+  isCombatResultViable,
+  isBetterCombatResult,
+  isCombatResultTie,
+  simulateCombat,
+} from './combat-simulator.mjs';
 import { canUseItem } from './item-conditions.mjs';
 import * as gameData from './game-data.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
@@ -23,6 +30,8 @@ import { toPositiveInt } from '../utils.mjs';
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
 const ARTIFACT_SLOTS = ['artifact1', 'artifact2', 'artifact3'];
 const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2', ...ARTIFACT_SLOTS, 'rune'];
+const OPTIMIZER_CANDIDATE_ITERATIONS = 200;
+const OPTIMIZER_FINAL_ITERATIONS = 400;
 const MULTI_SLOT_FAMILIES = [
   ['ring1', 'ring2'],
   ARTIFACT_SLOTS,
@@ -49,7 +58,16 @@ function getBaseSimOptions(ctx) {
   return opts;
 }
 
-function buildSimOptions(baseOptions, gearSet) {
+function hashString(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function buildSimOptions(baseOptions, gearSet, extraOptions = {}) {
   const opts = {};
   if (Array.isArray(baseOptions?.utilities) && baseOptions.utilities.length > 0) {
     opts.utilities = [...baseOptions.utilities];
@@ -60,11 +78,27 @@ function buildSimOptions(baseOptions, gearSet) {
     opts.rune = { code: rune.code, effects: rune.effects };
   }
 
-  return opts;
+  return { ...opts, ...extraOptions };
+}
+
+function buildOptimizerSeedBase(ctx, monsterCode) {
+  const c = ctx.get();
+  return hashString(JSON.stringify({
+    character: ctx.name,
+    monsterCode,
+    level: Number(c?.level || 0),
+    hp: Number(c?.hp || 0),
+    maxHp: Number(c?.max_hp || 0),
+    utility1: c?.utility1_slot || null,
+    utility1Qty: Number(c?.utility1_slot_quantity || 0),
+    utility2: c?.utility2_slot || null,
+    utility2Qty: Number(c?.utility2_slot_quantity || 0),
+  }));
 }
 
 let _deps = {
   calcTurnDamageFn: calcTurnDamage,
+  findRequiredHpForFightFn: findRequiredHpForFight,
   simulateCombatFn: simulateCombat,
   getMonsterFn: (code) => gameData.getMonster(code),
   getMonsterLocationFn: (code) => gameData.getMonsterLocation(code),
@@ -240,29 +274,14 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
 // --- Comparison ---
 
 /**
- * Is result A better than result B?
+ * Compare Monte Carlo combat results.
  * Priority:
- *  - any win beats any loss
- *  - wins: higher remainingHp, then fewer turns
- *  - losses: higher remainingHp, then more turns (survive longer)
+ *  - viable beats non-viable
+ *  - higher winRate
+ *  - lower requiredHp (when attached)
+ *  - fewer turns
+ *  - higher remaining HP
  */
-function isBetterResult(a, b) {
-  if (!b) return true;
-  if (!a) return false;
-  if (a.win && !b.win) return true;
-  if (!a.win && b.win) return false;
-  if (a.remainingHp !== b.remainingHp) return a.remainingHp > b.remainingHp;
-  if (a.win) return a.turns < b.turns;
-  return a.turns > b.turns;
-}
-
-function isResultTie(a, b) {
-  if (!a || !b) return false;
-  return Boolean(a.win) === Boolean(b.win)
-    && Number(a.remainingHp || 0) === Number(b.remainingHp || 0)
-    && Number(a.turns || 0) === Number(b.turns || 0);
-}
-
 function isPreferredItemOnTie(candidate, currentBest) {
   if (!candidate && !currentBest) return false;
   if (candidate && !currentBest) return true;
@@ -275,6 +294,35 @@ function isPreferredItemOnTie(candidate, currentBest) {
   const aCode = `${candidate.code || ''}`;
   const bCode = `${currentBest.code || ''}`;
   return aCode.localeCompare(bCode) < 0;
+}
+
+function normalizeSimResult(result) {
+  if (!result || typeof result !== 'object') return result;
+
+  const canWin = typeof result.canWin === 'boolean'
+    ? result.canWin
+    : Boolean(result.win);
+  const winRate = Number.isFinite(Number(result.winRate))
+    ? Number(result.winRate)
+    : (canWin ? 100 : 0);
+  const avgTurns = Number.isFinite(Number(result.avgTurns))
+    ? Number(result.avgTurns)
+    : Number(result.turns || 0);
+  const avgRemainingHp = Number.isFinite(Number(result.avgRemainingHp))
+    ? Number(result.avgRemainingHp)
+    : Number(result.remainingHp || 0);
+  const avgHpLostPercent = Number.isFinite(Number(result.avgHpLostPercent))
+    ? Number(result.avgHpLostPercent)
+    : Number(result.hpLostPercent || 0);
+
+  return {
+    ...result,
+    canWin,
+    winRate,
+    avgTurns,
+    avgRemainingHp,
+    avgHpLostPercent,
+  };
 }
 
 // --- Duplicate-slot families ---
@@ -337,12 +385,16 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
   const candidateOpts = {
     includeCraftableUnavailable: opts.includeCraftableUnavailable === true,
   };
+  const candidateIterations = toPositiveInt(opts.candidateIterations, OPTIMIZER_CANDIDATE_ITERATIONS);
+  const finalIterations = Math.max(candidateIterations, toPositiveInt(opts.finalIterations, OPTIMIZER_FINAL_ITERATIONS));
   const monster = _deps.getMonsterFn(monsterCode);
   if (!monster) return null;
 
   const bankItems = await _deps.getBankItemsFn();
   const baseStats = getBaseStats(ctx);
   const baseSimOpts = getBaseSimOptions(ctx);
+  const optimizerSeedBase = buildOptimizerSeedBase(ctx, monsterCode);
+  const seedForSlot = (slot) => hashString(`${optimizerSeedBase}:${slot}`);
 
   // Start with current gear as baseline
   const loadout = new Map();
@@ -351,18 +403,29 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     loadout.set(slot, code ? _deps.getItemFn(code) : null);
   }
 
-  // --- Phase 1: Weapon (maximize outgoing DPS) ---
+  // --- Phase 1: Weapon (maximize combat viability) ---
   const weaponCandidates = getCandidatesForSlot(ctx, 'weapon', bankItems, candidateOpts);
-  let bestWeaponDmg = -1;
+  let bestWeaponResult = null;
   let bestWeapon = loadout.get('weapon');
+  const weaponSeed = seedForSlot('weapon');
 
   for (const { item } of weaponCandidates) {
     const testLoadout = new Map(loadout);
     testLoadout.set('weapon', item);
     const hypo = buildStats(baseStats, testLoadout);
-    const dmg = _deps.calcTurnDamageFn(hypo, monster);
-    if (dmg > bestWeaponDmg || (dmg === bestWeaponDmg && isPreferredItemOnTie(item, bestWeapon))) {
-      bestWeaponDmg = dmg;
+    const result = normalizeSimResult(_deps.simulateCombatFn(
+      hypo,
+      monster,
+      buildSimOptions(baseSimOpts, testLoadout, {
+        iterations: candidateIterations,
+        seed: weaponSeed,
+      }),
+    ));
+    if (
+      isBetterCombatResult(result, bestWeaponResult)
+      || (isCombatResultTie(result, bestWeaponResult) && isPreferredItemOnTie(item, bestWeapon))
+    ) {
+      bestWeaponResult = result;
       bestWeapon = item;
     }
   }
@@ -373,15 +436,23 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const candidates = getCandidatesForSlot(ctx, slot, bankItems, candidateOpts);
     let bestResult = null;
     let bestItem = loadout.get(slot);
+    const slotSeed = seedForSlot(slot);
 
     for (const { item } of candidates) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = _deps.simulateCombatFn(hypo, monster, buildSimOptions(baseSimOpts, testLoadout));
+      const result = normalizeSimResult(_deps.simulateCombatFn(
+        hypo,
+        monster,
+        buildSimOptions(baseSimOpts, testLoadout, {
+          iterations: candidateIterations,
+          seed: slotSeed,
+        }),
+      ));
       if (
-        isBetterResult(result, bestResult)
-        || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
+        isBetterCombatResult(result, bestResult)
+        || (isCombatResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
       ) {
         bestResult = result;
         bestItem = item;
@@ -392,8 +463,15 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, buildSimOptions(baseSimOpts, emptyLoadout));
-    if (isBetterResult(emptyResult, bestResult) || (slot === 'rune' && isResultTie(emptyResult, bestResult))) {
+    const emptyResult = normalizeSimResult(_deps.simulateCombatFn(
+      emptyHypo,
+      monster,
+      buildSimOptions(baseSimOpts, emptyLoadout, {
+        iterations: candidateIterations,
+        seed: slotSeed,
+      }),
+    ));
+    if (isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult))) {
       bestItem = null;
     }
 
@@ -417,15 +495,23 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
     let bestResult = null;
     let bestItem = loadout.get(slot);
+    const slotSeed = seedForSlot(slot);
 
     for (const { item } of candidates) {
       const testLoadout = new Map(loadout);
       testLoadout.set(slot, item);
       const hypo = buildStats(baseStats, testLoadout);
-      const result = _deps.simulateCombatFn(hypo, monster, buildSimOptions(baseSimOpts, testLoadout));
+      const result = normalizeSimResult(_deps.simulateCombatFn(
+        hypo,
+        monster,
+        buildSimOptions(baseSimOpts, testLoadout, {
+          iterations: candidateIterations,
+          seed: slotSeed,
+        }),
+      ));
       if (
-        isBetterResult(result, bestResult)
-        || (isResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
+        isBetterCombatResult(result, bestResult)
+        || (isCombatResultTie(result, bestResult) && isPreferredItemOnTie(item, bestItem))
       ) {
         bestResult = result;
         bestItem = item;
@@ -436,8 +522,15 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     const emptyLoadout = new Map(loadout);
     emptyLoadout.set(slot, null);
     const emptyHypo = buildStats(baseStats, emptyLoadout);
-    const emptyResult = _deps.simulateCombatFn(emptyHypo, monster, buildSimOptions(baseSimOpts, emptyLoadout));
-    if (isBetterResult(emptyResult, bestResult) || (slot === 'rune' && isResultTie(emptyResult, bestResult))) {
+    const emptyResult = normalizeSimResult(_deps.simulateCombatFn(
+      emptyHypo,
+      monster,
+      buildSimOptions(baseSimOpts, emptyLoadout, {
+        iterations: candidateIterations,
+        seed: slotSeed,
+      }),
+    ));
+    if (isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult))) {
       bestItem = null;
     }
 
@@ -453,7 +546,16 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
   // --- Final validation ---
   const finalStats = buildStats(baseStats, loadout);
-  const finalResult = _deps.simulateCombatFn(finalStats, monster, buildSimOptions(baseSimOpts, loadout));
+  const finalSimOptions = buildSimOptions(baseSimOpts, loadout, {
+    iterations: finalIterations,
+    seed: seedForSlot('final'),
+  });
+  const finalResult = normalizeSimResult(_deps.simulateCombatFn(finalStats, monster, finalSimOptions));
+  const requiredHp = _deps.findRequiredHpForFightFn(finalStats, monster, finalSimOptions);
+  const simResult = {
+    ...finalResult,
+    requiredHp: requiredHp.requiredHp,
+  };
 
   // Convert to slot → itemCode map
   const codeLoadout = new Map();
@@ -475,7 +577,7 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     // Simulation-only — only log at info level when actually equipping (see helpers.mjs)
   }
 
-  return { loadout: codeLoadout, simResult: finalResult };
+  return { loadout: codeLoadout, simResult };
 }
 
 /**
@@ -500,8 +602,7 @@ export async function findBestCombatTarget(ctx) {
     if (!loc) continue;
 
     const result = await optimizeForMonster(ctx, monster.code);
-    if (!result || !result.simResult.win) continue;
-    if (result.simResult.hpLostPercent > 90) continue; // need ≥10% HP remaining
+    if (!result || !isCombatResultViable(result.simResult)) continue;
 
     const candidate = {
       monsterCode: monster.code,
@@ -514,16 +615,13 @@ export async function findBestCombatTarget(ctx) {
     if (!bestTarget
       || monster.level > bestTarget.monster.level
       || (monster.level === bestTarget.monster.level
-        && result.simResult.turns < bestTarget.simResult.turns)
-      || (monster.level === bestTarget.monster.level
-        && result.simResult.turns === bestTarget.simResult.turns
-        && result.simResult.remainingHp > bestTarget.simResult.remainingHp)) {
+        && isBetterCombatResult(result.simResult, bestTarget.simResult))) {
       bestTarget = candidate;
     }
   }
 
   if (bestTarget) {
-    log.info(`[${ctx.name}] Best target: ${bestTarget.monsterCode} (lv${bestTarget.monster.level}) — ${bestTarget.simResult.turns}t, ${Math.round(bestTarget.simResult.remainingHp)}hp remaining`);
+    log.info(`[${ctx.name}] Best target: ${bestTarget.monsterCode} (lv${bestTarget.monster.level}) — ${bestTarget.simResult.winRate.toFixed(1)}% win, need ${bestTarget.simResult.requiredHp ?? 'n/a'}hp`);
   } else {
     log.info(`[${ctx.name}] No beatable monster found with any gear combination`);
   }
@@ -696,6 +794,7 @@ export function _setDepsForTests(overrides = {}) {
 export function _resetDepsForTests() {
   _deps = {
     calcTurnDamageFn: calcTurnDamage,
+    findRequiredHpForFightFn: findRequiredHpForFight,
     simulateCombatFn: simulateCombat,
     getMonsterFn: (code) => gameData.getMonster(code),
     getMonsterLocationFn: (code) => gameData.getMonsterLocation(code),

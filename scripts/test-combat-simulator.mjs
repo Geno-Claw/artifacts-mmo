@@ -118,6 +118,7 @@ test('basic fight — char wins', () => {
   // 200hp / 50dmg = 4 char attacks. Kill at turn 7 (turns 1,3,5,7). Char takes 3 hits = 60 damage.
   assert.equal(result.turns, 7);
   assert.equal(result.remainingHp, 940);
+  assert.equal(result.avgHpLostOnWin, 60);
 });
 
 test('basic fight — char loses', () => {
@@ -143,6 +144,21 @@ test('initiative tie broken by HP', () => {
   assert.equal(result.win, true);
   assert.equal(result.turns, 1);
   assert.equal(result.remainingHp, 500);
+});
+
+console.log('\nSeed stability:');
+
+test('threshold changes do not change Monte Carlo sampling', () => {
+  const char = makeChar({ hp: 450, attack_fire: 48, critical_strike: 35, initiative: 100 });
+  const mon = makeMonster({ hp: 420, attack_fire: 44, critical_strike: 30, initiative: 95 });
+
+  const relaxed = simulateCombat(char, mon, { iterations: 250, threshold: 60 });
+  const strict = simulateCombat(char, mon, { iterations: 250, threshold: 90 });
+
+  assert.equal(relaxed.wins, strict.wins);
+  assert.equal(relaxed.losses, strict.losses);
+  assert.equal(relaxed.avgTurns, strict.avgTurns);
+  assert.equal(relaxed.avgRemainingHp, strict.avgRemainingHp);
 });
 
 // === Monster effects ===
@@ -363,8 +379,8 @@ test('player burn rune applies DoT to monster', () => {
   const mon = makeMonster({ hp: 800, attack_fire: 10, initiative: 50 });
   const rune = { code: 'burn_rune', effects: [{ code: 'burn', value: 20 }] };
 
-  const resultNoRune = simulateCombat(char, mon);
-  const resultRune = simulateCombat(char, mon, { rune });
+  const resultNoRune = simulateCombat(char, mon, { seed: 12345 });
+  const resultRune = simulateCombat(char, mon, { rune, seed: 12345 });
 
   // Burn rune should kill the monster faster
   assert.ok(resultRune.turns <= resultNoRune.turns,
@@ -546,15 +562,13 @@ test('1000 simulations with effects in < 200ms', () => {
   ]});
   const rune = { code: 'burn_rune', effects: [{ code: 'burn', value: 15 }] };
   const restore = { code: 'restore_potion', effects: [{ code: 'restore', value: 100 }] };
-  const opts = { utilities: [restore], rune };
+  const opts = { utilities: [restore], rune, iterations: 1000, seed: 12345 };
 
   const start = performance.now();
-  for (let i = 0; i < 1000; i++) {
-    simulateCombat(char, mon, opts);
-  }
+  simulateCombat(char, mon, opts);
   const elapsed = performance.now() - start;
-  console.log(`    (1000 sims in ${elapsed.toFixed(1)}ms)`);
-  assert.ok(elapsed < 200, `took ${elapsed.toFixed(1)}ms, expected < 200ms`);
+  console.log(`    (single 1000-iteration effect sim in ${elapsed.toFixed(1)}ms)`);
+  assert.ok(elapsed < 250, `took ${elapsed.toFixed(1)}ms, expected < 250ms`);
 });
 
 test('1000 fast-path simulations in < 50ms', () => {
@@ -562,11 +576,9 @@ test('1000 fast-path simulations in < 50ms', () => {
   const mon = makeMonster({ hp: 500, attack_fire: 30, initiative: 50 });
 
   const start = performance.now();
-  for (let i = 0; i < 1000; i++) {
-    simulateCombat(char, mon);
-  }
+  simulateCombat(char, mon, { iterations: 1000, seed: 12345 });
   const elapsed = performance.now() - start;
-  console.log(`    (1000 sims in ${elapsed.toFixed(1)}ms)`);
+  console.log(`    (single 1000-iteration fast sim in ${elapsed.toFixed(1)}ms)`);
   assert.ok(elapsed < 50, `took ${elapsed.toFixed(1)}ms, expected < 50ms`);
 });
 

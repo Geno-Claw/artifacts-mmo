@@ -8,6 +8,7 @@
  * Pure algorithm — no module-level state.  All external services are
  * passed in via the `deps` parameter so callers can inject mocks.
  */
+import { isBetterCombatResult, isCombatResultViable } from './combat-simulator.mjs';
 import { toPositiveInt } from '../utils.mjs';
 
 const RESERVED_FREE_SLOTS = 10;
@@ -96,8 +97,9 @@ function mergeExtra(current, extra) {
 
 function compareMonsterRecords(a, b) {
   if (a.level !== b.level) return b.level - a.level;
-  if (a.turns !== b.turns) return a.turns - b.turns;
-  return b.remainingHp - a.remainingHp;
+  if (isBetterCombatResult(a.simResult, b.simResult)) return -1;
+  if (isBetterCombatResult(b.simResult, a.simResult)) return 1;
+  return a.monsterCode.localeCompare(b.monsterCode);
 }
 
 // ── sub-requirement helpers ──────────────────────────────────────────
@@ -174,14 +176,12 @@ export async function computeCharacterRequirements(name, ctx, cfg, deps) {
     const result = await deps.optimizeForMonsterFn(ctx, monster.code, {
       includeCraftableUnavailable: true,
     });
-    if (!result?.simResult?.win) continue;
-    if (result.simResult.hpLostPercent > 90) continue;
+    if (!isCombatResultViable(result?.simResult)) continue;
 
     allRecords.push({
       monsterCode: monster.code,
       level: toPositiveInt(monster.level),
-      turns: toPositiveInt(result.simResult.turns),
-      remainingHp: Number(result.simResult.remainingHp) || 0,
+      simResult: result.simResult,
       loadout: result.loadout,
       counts: countsFromLoadout(result.loadout, char),
     });

@@ -10,6 +10,7 @@ import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { getCachedAccountDetails, getCachedAccountAchievements } from '../../services/account-cache.mjs';
+import { isCombatResultViable } from '../../services/combat-simulator.mjs';
 import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
@@ -77,7 +78,7 @@ async function executeFightObjective(ctx, routine, action) {
     });
     return false;
   }
-  if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+  if (!isCombatResultViable(simResult)) {
     achievementLog.warn(`[${ctx.name}] Achievement: simulation predicts loss vs ${monsterCode}, rotating`, {
       event: 'achievement.fight.unwinnable',
       reasonCode: 'unwinnable_combat',
@@ -373,7 +374,7 @@ async function executeCraftObjective(ctx, routine, action) {
         await routine.rotation.forceRotate(ctx);
         return true;
       }
-      if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+      if (!isCombatResultViable(simResult)) {
         log.warn(`[${ctx.name}] Achievement ${ach.code}: can't beat ${monsterCode} for ${step.itemCode}, rotating`);
         await routine.rotation.forceRotate(ctx);
         return true;
@@ -618,7 +619,7 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
       if (gameData.isLocationUnreachable('monster', target)) return null;
 
       const sim = await optimizeForMonster(ctx, target);
-      if (!sim?.simResult?.win || sim.simResult.hpLostPercent > 90) return null;
+      if (!isCombatResultViable(sim?.simResult)) return null;
 
       const loc = await gameData.getMonsterLocation(target);
       if (!loc) return null;
@@ -678,7 +679,7 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
         if (inBank + inInventory >= step.quantity) continue; // already have enough
 
         const sim = await optimizeForMonster(ctx, step.monster.code);
-        if (!sim?.simResult?.win || sim.simResult.hpLostPercent > 90) return null;
+        if (!isCombatResultViable(sim?.simResult)) return null;
       }
 
       // Check workshop exists
@@ -698,7 +699,7 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
       if (gameData.isLocationUnreachable('monster', monster.code)) return null;
 
       const sim = await optimizeForMonster(ctx, monster.code);
-      if (!sim?.simResult?.win || sim.simResult.hpLostPercent > 90) return null;
+      if (!isCombatResultViable(sim?.simResult)) return null;
 
       const loc = await gameData.getMonsterLocation(monster.code);
       if (!loc) return null;

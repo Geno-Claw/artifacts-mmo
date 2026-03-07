@@ -7,7 +7,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { canUseItem } from './item-conditions.mjs';
-import { hpNeededForFight, simulateCombat } from './combat-simulator.mjs';
+import { buildEquippedSimOptions, hpNeededForFight, simulateCombat } from './combat-simulator.mjs';
 import { withdrawBankItems } from './bank-ops.mjs';
 import { logWithdrawalWarnings } from '../utils.mjs';
 
@@ -208,28 +208,55 @@ export async function restUntil(ctx, hpPct = 80) {
  *   requiredHp: number | null,
  *   maxHp: number,
  *   targetPct: number | null,
+ *   winRate: number,
+ *   threshold: number,
+ *   iterations: number,
  * }>}
  */
 export async function getFightReadiness(ctx, monsterCode) {
   const c = ctx.get();
-  const minHp = hpNeededForFight(ctx, monsterCode);
+  const monster = gameData.getMonster(monsterCode);
   const maxHp = c.max_hp;
+  if (!monster) {
+    return {
+      status: 'unwinnable',
+      requiredHp: null,
+      maxHp,
+      targetPct: null,
+      winRate: 0,
+      threshold: 0,
+      iterations: 0,
+    };
+  }
+
+  const simOptions = buildEquippedSimOptions(c);
+  const fullHpResult = simulateCombat(c, monster, simOptions);
+  const minHp = hpNeededForFight(ctx, monsterCode, simOptions);
   if (minHp === null) {
     return {
       status: 'unwinnable',
       requiredHp: null,
       maxHp,
       targetPct: null,
+      winRate: fullHpResult.winRate,
+      threshold: fullHpResult.threshold,
+      iterations: fullHpResult.iterations,
     };
   }
 
   const targetPct = Math.ceil((minHp / maxHp) * 100);
+  const currentResult = c.hp >= minHp
+    ? simulateCombat(c, monster, { ...simOptions, startingHp: c.hp })
+    : fullHpResult;
   if (c.hp >= minHp) {
     return {
       status: 'ready',
       requiredHp: minHp,
       maxHp,
       targetPct,
+      winRate: currentResult.winRate,
+      threshold: currentResult.threshold,
+      iterations: currentResult.iterations,
     };
   }
 
@@ -251,6 +278,9 @@ export async function getFightReadiness(ctx, monsterCode) {
       requiredHp: minHp,
       maxHp,
       targetPct,
+      winRate: fullHpResult.winRate,
+      threshold: fullHpResult.threshold,
+      iterations: fullHpResult.iterations,
     };
   }
 
@@ -287,16 +317,23 @@ export async function getFightReadiness(ctx, monsterCode) {
         requiredHp: minHp,
         maxHp: fresh.max_hp,
         targetPct,
+        winRate: fullHpResult.winRate,
+        threshold: fullHpResult.threshold,
+        iterations: fullHpResult.iterations,
       };
     }
   }
 
   const fresh = ctx.get();
+  const freshResult = simulateCombat(fresh, monster, { ...simOptions, startingHp: fresh.hp });
   return {
     status: fresh.hp >= minHp ? 'ready' : 'needs_rest',
     requiredHp: minHp,
     maxHp: fresh.max_hp,
     targetPct,
+    winRate: freshResult.winRate,
+    threshold: freshResult.threshold,
+    iterations: freshResult.iterations,
   };
 }
 
@@ -329,10 +366,10 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
   if (!monster) return false;
 
   const charStats = ctx.get();
-  const result = simulateCombat(charStats, monster);
-  if (!result.win) return false;
+  const result = simulateCombat(charStats, monster, buildEquippedSimOptions(charStats));
+  if (!result.canWin || result.avgHpLostOnWin == null) return false;
 
-  const damageTaken = charStats.max_hp - result.remainingHp;
+  const damageTaken = Math.round(result.avgHpLostOnWin);
   const totalHealingNeeded = Math.max(0, damageTaken * numFights - (charStats.max_hp - 1));
 
   if (totalHealingNeeded <= 0) {

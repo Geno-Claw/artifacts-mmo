@@ -90,7 +90,7 @@ function test_default_config() {
   assert.equal(routine.minTimeRemainingMs, 120_000);
   assert.equal(routine.maxMonsterType, 'elite');
   assert.equal(routine.cooldownMs, 60_000);
-  assert.equal(routine.minWinrate, 90);
+  assert.equal(Object.hasOwn(routine, 'minWinrate'), false);
   console.log('  PASS: default config values');
 }
 
@@ -100,14 +100,12 @@ function test_custom_config() {
     enabled: false,
     monsterEvents: false,
     npcEvents: true,
-    minWinrate: 90,
     cooldownMs: 30_000,
   });
   assert.equal(routine.priority, 85);
   assert.equal(routine.enabled, false);
   assert.equal(routine.monsterEvents, false);
   assert.equal(routine.npcEvents, true);
-  assert.equal(routine.minWinrate, 90);
   assert.equal(routine.cooldownMs, 30_000);
   console.log('  PASS: custom config values');
 }
@@ -118,13 +116,11 @@ function test_updateConfig() {
   routine.updateConfig({
     enabled: false,
     monsterEvents: false,
-    minWinrate: 90,
     cooldownMs: 30_000,
   });
 
   assert.equal(routine.enabled, false);
   assert.equal(routine.monsterEvents, false);
-  assert.equal(routine.minWinrate, 90);
   assert.equal(routine.cooldownMs, 30_000);
   // Unchanged
   assert.equal(routine.resourceEvents, true);
@@ -601,20 +597,20 @@ async function test_executeMonsterTreatsReadinessUnwinnableAsCooldown() {
   resetGameDataForTests();
   setGameDataCachesForTests({
     monsters: [[
-      'boar',
+      'ogre',
       {
-        code: 'boar',
+        code: 'ogre',
         hp: 100,
-        attack_fire: 91,
+        attack_fire: 120,
       },
     ]],
   });
 
   const routine = new EventRoutine();
-  const target = { code: 'boar_evt', type: 'monster', monsterCode: 'boar', map: { x: 1, y: 1 } };
+  const target = { code: 'ogre_evt', type: 'monster', monsterCode: 'ogre', map: { x: 1, y: 1 } };
   routine._targetEvent = target;
   routine._prepared = true;
-  setActiveEvent('boar_evt', 'monster');
+  setActiveEvent('ogre_evt', 'monster');
 
   const result = await routine._executeMonster(
     makeCtx({
@@ -628,7 +624,7 @@ async function test_executeMonsterTreatsReadinessUnwinnableAsCooldown() {
   assert.equal(result, false);
   assert.equal(routine._targetEvent, null, 'unwinnable event target should be cleared');
   assert.equal(routine._prepared, false, 'prepared state should reset when the target is cleared');
-  assert.ok(routine._eventCooldowns.boar_evt > 0, 'unwinnable event should set a cooldown');
+  assert.ok(routine._eventCooldowns.ogre_evt > 0, 'unwinnable event should set a cooldown');
 
   clearEvents();
   resetGameDataForTests();

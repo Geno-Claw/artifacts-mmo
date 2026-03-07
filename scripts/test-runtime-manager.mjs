@@ -5,11 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  applyGlobalCombatConfigToCharacterConfig,
   RuntimeOperationConflictError,
   createRuntimeManager,
 } from '../src/runtime-manager.mjs';
 import { fight } from '../src/api.mjs';
+import {
+  _resetForTests as resetCombatConfigForTests,
+  getCombatWinRateThreshold,
+  loadCombatConfig,
+} from '../src/services/combat-config.mjs';
 import {
   _resetOrderBoardForTests,
   claimOrder,
@@ -559,37 +563,20 @@ async function testActionEventsPopulateUiLogWithoutWebsocket() {
   }
 }
 
-function testApplyGlobalCombatConfigToCharacterConfig() {
-  const charCfg = {
-    name: 'Alpha',
-    routines: [
-      { type: 'rest', triggerPct: 40 },
-      { type: 'event', enabled: true, cooldownMs: 60_000 },
-    ],
-  };
+function testLoadCombatConfig() {
+  resetCombatConfigForTests();
+  loadCombatConfig({ combat: { winRateThreshold: 77 } });
+  assert.equal(getCombatWinRateThreshold(), 77, 'combat config loader should apply configured threshold');
 
-  const merged = applyGlobalCombatConfigToCharacterConfig(charCfg, {
-    combat: { winRateThreshold: 77 },
-  });
-
-  assert.equal(merged.routines[0].type, 'rest');
-  assert.equal(merged.routines[1].type, 'event');
-  assert.equal(merged.routines[1].minWinrate, 77, 'event routines should inherit the global combat threshold');
-  assert.equal(
-    Object.hasOwn(charCfg.routines[1], 'minWinrate'),
-    false,
-    'global combat injection should not mutate the original character config',
-  );
-
-  const fallback = applyGlobalCombatConfigToCharacterConfig(charCfg, {});
-  assert.equal(fallback.routines[1].minWinrate, 90, 'missing global combat config should fall back to 90');
+  loadCombatConfig({});
+  assert.equal(getCombatWinRateThreshold(), 90, 'combat config loader should fall back to default threshold');
 }
 
 async function run() {
   const manager = createRuntimeManager({ defaultStopTimeoutMs: 25 });
   const controls = installDeterministicRuntimeStubs(manager);
 
-  testApplyGlobalCombatConfigToCharacterConfig();
+  testLoadCombatConfig();
   await testLifecycleTransitions(manager, controls);
   await testOperationLockConflict(manager, controls);
   await testRolloutHardClearRunsOnce();

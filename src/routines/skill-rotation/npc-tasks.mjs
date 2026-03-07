@@ -5,6 +5,7 @@ import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult } from '../../helpers.mjs';
+import { isCombatResultViable } from '../../services/combat-simulator.mjs';
 import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
@@ -118,7 +119,7 @@ export async function runNpcTaskFlow(ctx, routine) {
     log.warn(`[${ctx.name}] NPC Task: combat gear not ready for ${monster}, deferring`);
     return false;
   }
-  if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+  if (!isCombatResultViable(simResult)) {
     log.warn(`[${ctx.name}] NPC Task: simulation predicts loss vs ${monster} even with optimal gear, skipping`);
     routine.rotation.goalProgress = routine.rotation.goalTarget;
     return true;

@@ -3,6 +3,7 @@
  */
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
+import { isCombatResultViable } from '../../services/combat-simulator.mjs';
 import {
   claimOrder,
   getOrderBoardSnapshot,
@@ -161,7 +162,7 @@ export async function acquireCombatOrderClaim(ctx, routine) {
 
   for (const order of orders) {
     const sim = await routine._simulateClaimFight(ctx, order.sourceCode);
-    if (!sim || !sim.simResult?.win || sim.simResult.hpLostPercent > 90) continue;
+    if (!isCombatResultViable(sim?.simResult)) continue;
 
     const active = routine._claimOrderForChar(ctx, order);
     if (active) return active;
@@ -425,7 +426,7 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
 
     const sim = simCache.get(monsterCode);
     const simResult = sim?.simResult;
-    if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+    if (!isCombatResultViable(simResult)) {
       return { ok: false, reason: `combat_not_viable:${monsterCode}` };
     }
   }
@@ -521,7 +522,7 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
 
     const sim = simCache.get(monsterCode);
     const simResult = sim?.simResult;
-    if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+    if (!isCombatResultViable(simResult)) {
       return { ok: false, reason: `combat_not_viable:${monsterCode}`, plan, budget };
     }
   }
@@ -1285,7 +1286,7 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
       }
 
       const { simResult, ready = true } = await routine._equipForCraftFight(ctx, monsterCode);
-      if (!ready || !simResult || !simResult.win || simResult.hpLostPercent > 90) {
+      if (!ready || !isCombatResultViable(simResult)) {
         enqueuePlanDeficitOrders(routine, plan, claim, ctx, await routine._getBankItems(true));
         await routine._blockAndReleaseClaim(ctx, `combat_not_viable:${monsterCode}`);
         return { attempted: false, fulfilled: false, reason: `combat_not_viable:${monsterCode}` };

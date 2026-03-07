@@ -149,10 +149,23 @@ function scorePotionCandidate(item, charStats, monster, { poisonBias = true, hea
   const simOpts = { utilities: [{ code: item.code, effects: item.effects }] };
   const sim = _simulateCombat(hypoStats, monster, simOpts);
   let score = 0;
+  const canWin = typeof sim?.canWin === 'boolean'
+    ? sim.canWin
+    : (Boolean(sim?.win) && Number(sim?.hpLostPercent ?? 100) <= 90);
+  const winRate = Number.isFinite(Number(sim?.winRate))
+    ? Number(sim.winRate)
+    : (canWin ? 100 : 0);
+  const avgHpLostPercent = Number.isFinite(Number(sim?.avgHpLostPercent))
+    ? Number(sim.avgHpLostPercent)
+    : Number(sim?.hpLostPercent ?? 100);
+  const avgTurns = Number.isFinite(Number(sim?.avgTurns))
+    ? Number(sim.avgTurns)
+    : Number(sim?.turns ?? 100);
 
-  if (sim.win) score += 1_000_000;
-  score += Math.round((100 - sim.hpLostPercent) * 1000);
-  score += Math.round(Math.max(0, 100 - sim.turns) * 5);
+  if (canWin) score += 1_000_000;
+  score += Math.round(winRate * 1_000);
+  score += Math.round((100 - avgHpLostPercent) * 1_000);
+  score += Math.round(Math.max(0, 100 - avgTurns) * 5);
 
   if (poisonBias && hasMonsterPoison(monster) && effectValue(item, 'antipoison') > 0) {
     score += 500;

@@ -235,6 +235,64 @@ async function testOptimizeForMonsterUsesCandidateRuneEffects() {
   assert.equal(result.loadout.get('rune'), 'burn_rune', 'optimizer should evaluate the candidate rune, not the currently equipped one');
 }
 
+async function testOptimizeForMonsterUsesStableSeedPerSlotComparison() {
+  _resetDepsForTests();
+
+  const burnRune = makeItem('burn_rune', { level: 20, effects: [{ code: 'burn', value: 20 }] });
+  const healingRune = makeItem('healing_rune', { level: 20, effects: [{ code: 'healing', value: 5 }] });
+  const itemsByCode = new Map([
+    [burnRune.code, burnRune],
+    [healingRune.code, healingRune],
+  ]);
+  const equipmentBySlot = new Map([
+    ['rune', [burnRune, healingRune]],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+  });
+
+  const calls = [];
+  _setDepsForTests({
+    simulateCombatFn: (_stats, _monster, options = {}) => {
+      calls.push({
+        iterations: options.iterations,
+        seed: options.seed,
+        rune: options?.rune?.code || null,
+      });
+      return {
+        win: true,
+        remainingHp: 100,
+        turns: 5,
+        hpLostPercent: 10,
+      };
+    },
+    findRequiredHpForFightFn: () => ({ requiredHp: null }),
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    inventory: {
+      burn_rune: 1,
+      healing_rune: 1,
+    },
+  });
+
+  await optimizeForMonster(ctx, 'test_monster');
+
+  const comparisonCalls = calls.filter(call => call.iterations === 200);
+  const countsBySeed = new Map();
+  for (const call of comparisonCalls) {
+    countsBySeed.set(call.seed, (countsBySeed.get(call.seed) || 0) + 1);
+  }
+  assert.equal(
+    Math.max(...countsBySeed.values()),
+    3,
+    'same-slot comparisons should share a seed across both rune candidates and the empty slot',
+  );
+}
+
 async function testOptimizeForMonsterSupportsArtifactSlots() {
   _resetDepsForTests();
 
@@ -513,6 +571,7 @@ async function run() {
     await testOptimizeForMonsterIncludesBestBag();
     await testOptimizeForGatheringIncludesBestBag();
     await testOptimizeForMonsterUsesCandidateRuneEffects();
+    await testOptimizeForMonsterUsesStableSeedPerSlotComparison();
     await testOptimizeForMonsterSupportsArtifactSlots();
     await testOptimizeForMonsterDoesNotDuplicateArtifactCopies();
     await testOptimizeForMonsterAllowsDuplicateRingsWhenEnoughCopiesExist();

@@ -7,14 +7,15 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import { canBeatMonster } from './combat-simulator.mjs';
+import { getCombatWinRateThreshold } from './combat-config.mjs';
+import { buildEquippedSimOptions, simulateCombat } from './combat-simulator.mjs';
+import * as gameData from './game-data.mjs';
 
 const TAG = '[EventSim]';
 
 const DEFAULT_ITERATIONS = 10;
-const DEFAULT_MIN_WINRATE = 90;
 
-/** Cache: "charName:monsterCode:level:equipHash" → { canWin, winrate, avgTurns, cachedAt } */
+/** Cache: "charName:monsterCode:level:equipHash" → { summary, cachedAt } */
 const simCache = new Map();
 const CACHE_TTL_MS = 5 * 60_000; // 5 minutes
 
@@ -58,6 +59,14 @@ function cacheKey(ctx, monsterCode) {
   return `${ctx.name}:${monsterCode}:${char.level}:${equipCodes}`;
 }
 
+function buildResult(summary, threshold) {
+  return {
+    ...summary,
+    canWin: (Number(summary?.winrate) || 0) >= threshold,
+    threshold,
+  };
+}
+
 /**
  * Evaluate whether a character can beat an event monster.
  *
@@ -66,18 +75,19 @@ function cacheKey(ctx, monsterCode) {
  *
  * @param {CharacterContext} ctx
  * @param {string} monsterCode
- * @param {{ iterations?: number, minWinrate?: number }} options
+ * @param {{ iterations?: number }} options
  * @returns {Promise<{ canWin: boolean, winrate: number, avgTurns: number, source: 'api'|'local' }>}
  */
 export async function canCharacterBeatEvent(ctx, monsterCode, {
   iterations = DEFAULT_ITERATIONS,
-  minWinrate = DEFAULT_MIN_WINRATE,
 } = {}) {
+  const threshold = getCombatWinRateThreshold();
+
   // Check cache
   const key = cacheKey(ctx, monsterCode);
   const cached = simCache.get(key);
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
-    return cached.result;
+    return buildResult(cached.summary, threshold);
   }
 
   // Try server-side simulation API
@@ -95,14 +105,14 @@ export async function canCharacterBeatEvent(ctx, monsterCode, {
       ? data.results.reduce((sum, r) => sum + r.turns, 0) / data.results.length
       : 0;
 
-    const result = {
-      canWin: winrate >= minWinrate,
+    const summary = {
       winrate,
       avgTurns: Math.round(avgTurns),
       source: 'api',
     };
+    const result = buildResult(summary, threshold);
 
-    simCache.set(key, { result, cachedAt: Date.now() });
+    simCache.set(key, { summary, cachedAt: Date.now() });
     log.info(`${TAG} ${ctx.name} vs ${monsterCode}: ${winrate}% winrate (${iterations} iters) → ${result.canWin ? 'GO' : 'SKIP'}`);
     return result;
   } catch (err) {
@@ -110,16 +120,30 @@ export async function canCharacterBeatEvent(ctx, monsterCode, {
   }
 
   // Fallback: local combat simulator
-  const canWin = canBeatMonster(ctx, monsterCode);
-  const result = {
-    canWin,
-    winrate: canWin ? 100 : 0,
-    avgTurns: 0,
+  const monster = gameData.getMonster(monsterCode);
+  if (!monster) {
+    const summary = {
+      winrate: 0,
+      avgTurns: 0,
+      source: 'local',
+    };
+    simCache.set(key, { summary, cachedAt: Date.now() });
+    return buildResult(summary, threshold);
+  }
+
+  const local = simulateCombat(ctx.get(), monster, {
+    ...buildEquippedSimOptions(ctx.get()),
+    iterations,
+  });
+  const summary = {
+    winrate: local.winRate,
+    avgTurns: Math.round(local.avgTurns),
     source: 'local',
   };
+  const result = buildResult(summary, threshold);
 
-  simCache.set(key, { result, cachedAt: Date.now() });
-  log.info(`${TAG} ${ctx.name} vs ${monsterCode}: local sim → ${canWin ? 'GO' : 'SKIP'}`);
+  simCache.set(key, { summary, cachedAt: Date.now() });
+  log.info(`${TAG} ${ctx.name} vs ${monsterCode}: local sim ${local.winRate}% (${local.iterations} iters) → ${result.canWin ? 'GO' : 'SKIP'}`);
   return result;
 }
 

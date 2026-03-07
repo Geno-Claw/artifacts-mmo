@@ -1183,7 +1183,7 @@ async function testCraftFightStepTreatsReadinessUnwinnableAsNonViable() {
     {
       code: 'boar',
       hp: 100,
-      attack_fire: 91,
+      attack_fire: 120,
     },
   ], async () => {
     const routine = new SkillRotationRoutine();
@@ -1230,7 +1230,7 @@ async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
     {
       code: 'pig',
       hp: 100,
-      attack_fire: 91,
+      attack_fire: 120,
     },
   ], async () => {
     const claim = {

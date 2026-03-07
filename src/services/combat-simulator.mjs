@@ -1,218 +1,363 @@
 /**
- * Combat simulator — predicts fight outcomes using the documented
- * Artifacts MMO damage formulas. Pure math, no API calls.
+ * Combat simulator — Monte Carlo combat viability using the documented
+ * Artifacts MMO damage formulas.
  *
- * Formulas (from https://docs.artifactsmmo.com/concepts/stats_and_fights):
- *   Damage bonus:  Round(attack * damage_pct / 100)
- *   Resistance:    Round(attack * res_pct / 100)
- *   Critical:      1 stat = 1% chance for 1.5x total attack
- *   Initiative:    highest goes first; ties broken by HP, then random
- *   Max turns:     100 (timeout = loss)
- *
- * Supports monster effects (barrier, healing, reconstitution, poison, burn,
- * corrupted, berserker_rage, void_drain, protective_bubble, lifesteal, frenzy),
- * player utility effects (restore, antipoison), and player rune effects
- * (burn, lifesteal, healing, frenzy).
+ * `simulateCombat()` is the production aggregate API.
+ * `simulateCombatOnce()` runs a single randomized fight and is kept for
+ * validation/testing and the Monte Carlo engine itself.
  */
 import * as gameData from './game-data.mjs';
 import * as log from '../log.mjs';
+import { getCombatWinRateThreshold } from './combat-config.mjs';
 
 const ELEMENTS = ['fire', 'earth', 'water', 'air'];
 const MAX_TURNS = 100;
+export const DEFAULT_MONTE_CARLO_ITERATIONS = 1000;
+const SIM_RESULT_CACHE_LIMIT = 4000;
+const SUPPORTED_MONSTER_EFFECTS = new Set([
+  'barrier',
+  'healing',
+  'reconstitution',
+  'poison',
+  'burn',
+  'corrupted',
+  'berserker_rage',
+  'void_drain',
+  'protective_bubble',
+  'lifesteal',
+  'frenzy',
+]);
+const SUPPORTED_UTILITY_EFFECTS = new Set(['restore', 'antipoison']);
+const SUPPORTED_RUNE_EFFECTS = new Set(['burn', 'lifesteal', 'healing', 'frenzy']);
+const simResultCache = new Map();
 
-// --- Damage calculation ---
-
-/**
- * Calculate expected damage per turn from attacker to defender.
- * Uses expected-value crit (not random) for deterministic results.
- */
-export function calcTurnDamage(attacker, defender) {
-  return calcDamage(attacker, defender, 0, 0);
+function toFiniteNumber(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
 }
 
-/**
- * Internal damage calc with modifier support.
- * @param {object} attacker
- * @param {object} defender
- * @param {number} resReduction — flat reduction subtracted from defender's resistance % (positive = less res)
- * @param {number} dmgBonus — bonus damage % added to attacker's dmg
- */
-function calcDamage(attacker, defender, resReduction, dmgBonus) {
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+export function createSeededRng(seed = 1) {
+  let state = (Number(seed) >>> 0) || 1;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function resolveThreshold(optionThreshold) {
+  const threshold = Number(optionThreshold);
+  if (Number.isFinite(threshold)) return clamp(threshold, 0, 100);
+  return getCombatWinRateThreshold();
+}
+
+function resolveIterations(optionIterations) {
+  const iterations = Number(optionIterations);
+  if (!Number.isFinite(iterations) || iterations <= 0) return DEFAULT_MONTE_CARLO_ITERATIONS;
+  return Math.max(1, Math.floor(iterations));
+}
+
+function normalizeStartingHp(charStats, startingHp) {
+  const maxHp = Math.max(1, Number(charStats?.max_hp || charStats?.hp || 1));
+  if (!Number.isFinite(Number(startingHp))) return maxHp;
+  return clamp(Math.floor(Number(startingHp)), 0, maxHp);
+}
+
+function normalizeEffectsForSeed(effects) {
+  return (effects || [])
+    .map((effect) => ({
+      code: effect?.code || effect?.name || '',
+      value: Number(effect?.value) || 0,
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code) || a.value - b.value);
+}
+
+function pickSeedStats(stats) {
+  if (!stats || typeof stats !== 'object') return null;
+
+  const picked = {
+    hp: Number(stats.hp || 0),
+    max_hp: Number(stats.max_hp || 0),
+    initiative: Number(stats.initiative || 0),
+    critical_strike: Number(stats.critical_strike || 0),
+    dmg: Number(stats.dmg || 0),
+    effects: normalizeEffectsForSeed(stats.effects),
+  };
+
+  for (const element of ELEMENTS) {
+    picked[`attack_${element}`] = Number(stats[`attack_${element}`] || 0);
+    picked[`dmg_${element}`] = Number(stats[`dmg_${element}`] || 0);
+    picked[`res_${element}`] = Number(stats[`res_${element}`] || 0);
+  }
+
+  return picked;
+}
+
+function buildSimulationSignature(charStats, monsterStats, options, iterations) {
+  return JSON.stringify({
+    char: pickSeedStats(charStats),
+    monster: pickSeedStats(monsterStats),
+    monsterEffects: parseMonsterEffects(monsterStats),
+    utilityEffects: parseUtilityEffects(options),
+    runeEffects: parseRuneEffects(options),
+    iterations,
+    startingHp: options?.startingHp ?? null,
+    seed: Number.isFinite(Number(options?.seed)) ? Number(options.seed) : null,
+  });
+}
+
+function buildDefaultSeed(charStats, monsterStats, options, iterations, threshold) {
+  return hashString(buildSimulationSignature(charStats, monsterStats, options, iterations));
+}
+
+function buildAggregateBaseResult(results, iterations) {
+  let wins = 0;
+  let totalTurns = 0;
+  let totalRemainingHp = 0;
+  let totalHpLostPercent = 0;
+  let totalHpLostOnWin = 0;
+
+  for (const result of results) {
+    totalTurns += Number(result.turns || 0);
+    totalRemainingHp += Number(result.remainingHp || 0);
+    totalHpLostPercent += Number(result.hpLostPercent || 0);
+    if (result.win) {
+      wins++;
+      totalHpLostOnWin += Number(result.hpLost || 0);
+    }
+  }
+
+  const losses = iterations - wins;
+  return {
+    iterations,
+    wins,
+    losses,
+    winRate: (wins / iterations) * 100,
+    avgTurns: totalTurns / iterations,
+    avgRemainingHp: totalRemainingHp / iterations,
+    avgHpLostPercent: totalHpLostPercent / iterations,
+    avgHpLostOnWin: wins > 0 ? totalHpLostOnWin / wins : null,
+  };
+}
+
+function materializeAggregateResult(baseResult, threshold) {
+  const canWin = baseResult.winRate >= threshold;
+  return {
+    ...baseResult,
+    canWin,
+    threshold,
+    // Legacy aliases used by downstream code/tests during migration.
+    win: canWin,
+    turns: baseResult.avgTurns,
+    remainingHp: baseResult.avgRemainingHp,
+    hpLostPercent: baseResult.avgHpLostPercent,
+  };
+}
+
+function getCachedAggregateResult(cacheKey, threshold) {
+  if (!simResultCache.has(cacheKey)) return null;
+  const baseResult = simResultCache.get(cacheKey);
+  // Refresh insertion order for simple LRU behavior.
+  simResultCache.delete(cacheKey);
+  simResultCache.set(cacheKey, baseResult);
+  return materializeAggregateResult(baseResult, threshold);
+}
+
+function setCachedAggregateResult(cacheKey, baseResult) {
+  simResultCache.set(cacheKey, baseResult);
+  while (simResultCache.size > SIM_RESULT_CACHE_LIMIT) {
+    const oldestKey = simResultCache.keys().next().value;
+    if (!oldestKey) break;
+    simResultCache.delete(oldestKey);
+  }
+}
+
+function critChance(stats) {
+  return clamp((Number(stats?.critical_strike) || 0) / 100, 0, 1);
+}
+
+function rollCrit(stats, rng) {
+  return rng() < critChance(stats);
+}
+
+function calcBaseDamage(attacker, defender, resReduction = 0, dmgBonus = 0) {
   let totalDmg = 0;
 
-  for (const el of ELEMENTS) {
-    const base = attacker[`attack_${el}`] || 0;
+  for (const element of ELEMENTS) {
+    const base = Number(attacker?.[`attack_${element}`] || 0);
     if (base === 0) continue;
 
-    const dmgPct = (attacker[`dmg_${el}`] || 0) + (attacker.dmg || 0) + dmgBonus;
+    const dmgPct = Number(attacker?.[`dmg_${element}`] || 0) + Number(attacker?.dmg || 0) + dmgBonus;
     const boosted = base + Math.round(base * dmgPct / 100);
 
-    const resPct = (defender[`res_${el}`] || 0) - resReduction;
+    const resPct = Number(defender?.[`res_${element}`] || 0) - resReduction;
     const reduction = Math.round(boosted * resPct / 100);
 
     totalDmg += Math.max(0, boosted - reduction);
   }
 
-  const critChance = Math.min((attacker.critical_strike || 0) / 100, 1);
-  totalDmg = Math.round(totalDmg * (1 + critChance * 0.5));
-
   return totalDmg;
 }
 
-/** Sum of all element base attacks. */
+/**
+ * Deterministic expected-value helper retained for logs and heuristics.
+ */
+export function calcTurnDamage(attacker, defender) {
+  const base = calcBaseDamage(attacker, defender, 0, 0);
+  return Math.round(base * (1 + critChance(attacker) * 0.5));
+}
+
+function calcRandomDamage(attacker, defender, rng, {
+  resReduction = 0,
+  dmgBonus = 0,
+  crit = null,
+} = {}) {
+  const didCrit = typeof crit === 'boolean' ? crit : rollCrit(attacker, rng);
+  const base = calcBaseDamage(attacker, defender, resReduction, dmgBonus);
+  return {
+    damage: didCrit ? Math.round(base * 1.5) : base,
+    crit: didCrit,
+  };
+}
+
 function sumAttack(stats) {
   let sum = 0;
-  for (const el of ELEMENTS) sum += stats[`attack_${el}`] || 0;
+  for (const element of ELEMENTS) {
+    sum += Number(stats?.[`attack_${element}`] || 0);
+  }
   return sum;
 }
 
-// --- Effect parsing ---
-
-function parseEffects(effectsArray) {
+function parseEffects(effectsArray, allowedEffects = null) {
   const fx = {};
-  for (const e of effectsArray || []) {
-    const code = e.code || e.name;
-    const value = Number(e.value) || 0;
-    if (code && value) fx[code] = (fx[code] || 0) + value;
+  for (const effect of effectsArray || []) {
+    const code = effect?.code || effect?.name;
+    const value = Number(effect?.value) || 0;
+    if (!code || !value) continue;
+    if (allowedEffects && !allowedEffects.has(code)) continue;
+    fx[code] = (fx[code] || 0) + value;
   }
   return fx;
 }
 
 function parseMonsterEffects(monster) {
-  return parseEffects(monster?.effects);
+  return parseEffects(monster?.effects, SUPPORTED_MONSTER_EFFECTS);
 }
 
 function parseUtilityEffects(options) {
   const combined = {};
-  for (const util of options?.utilities || []) {
-    const fx = parseEffects(util?.effects);
-    for (const [k, v] of Object.entries(fx)) {
-      combined[k] = (combined[k] || 0) + v;
+  for (const utility of options?.utilities || []) {
+    const fx = parseEffects(utility?.effects, SUPPORTED_UTILITY_EFFECTS);
+    for (const [key, value] of Object.entries(fx)) {
+      combined[key] = (combined[key] || 0) + value;
     }
   }
   return combined;
 }
 
 function parseRuneEffects(options) {
-  return parseEffects(options?.rune?.effects);
+  return parseEffects(options?.rune?.effects, SUPPORTED_RUNE_EFFECTS);
 }
 
 function hasAnyEffect(monFx, utilFx, runeFx) {
   for (const fx of [monFx, utilFx, runeFx]) {
-    for (const key in fx) if (fx[key]) return true;
+    for (const key of Object.keys(fx)) {
+      if (fx[key]) return true;
+    }
   }
   return false;
 }
 
-// --- Initiative ---
-
-function charGoesFirst(charStats, monsterStats) {
-  const charInit = charStats.initiative || 0;
-  const monInit = monsterStats.initiative || 0;
+function charGoesFirst(charStats, monsterStats, rng = Math.random, startingHp = null) {
+  const charInit = Number(charStats?.initiative || 0);
+  const monInit = Number(monsterStats?.initiative || 0);
   if (charInit !== monInit) return charInit > monInit;
-  return (charStats.max_hp || charStats.hp) >= monsterStats.hp;
+
+  const charHp = startingHp == null
+    ? Number(charStats?.max_hp || charStats?.hp || 0)
+    : Number(startingHp || 0);
+  const monHp = Number(monsterStats?.hp || 0);
+  if (charHp !== monHp) return charHp > monHp;
+  return rng() < 0.5;
 }
 
-// --- Result helper ---
-
-function makeResult(win, turns, remainingHp, maxHp) {
+function makeSingleFightResult(win, turns, remainingHp, maxHp) {
   const hp = Math.max(0, remainingHp);
+  const safeMaxHp = Math.max(1, maxHp);
   return {
     win,
     turns,
     remainingHp: hp,
-    hpLostPercent: ((maxHp - hp) / maxHp) * 100,
+    hpLost: Math.max(0, safeMaxHp - hp),
+    hpLostPercent: ((safeMaxHp - hp) / safeMaxHp) * 100,
   };
 }
 
-// --- Simulation ---
+function simulateFastPathOnce(charStats, monsterStats, rng, startingHp) {
+  const charHpStart = normalizeStartingHp(charStats, startingHp);
+  const first = charGoesFirst(charStats, monsterStats, rng, charHpStart);
+  const charMaxHp = Math.max(1, Number(charStats?.max_hp || charStats?.hp || 1));
+  let charHp = charHpStart;
+  let monsterHp = Math.max(1, Number(monsterStats?.hp || 1));
 
-/**
- * Simulate a fight turn-by-turn. Returns predicted outcome.
- *
- * @param {object} charStats — character stats (from API, includes equipment)
- * @param {object} monsterStats — monster stats (from game data cache)
- * @param {object} [options]
- * @param {Array<{code: string, effects: Array}>} [options.utilities] — equipped utility items
- * @param {{code: string, effects: Array}} [options.rune] — equipped rune item
- * @returns {{ win: boolean, turns: number, remainingHp: number, hpLostPercent: number }}
- */
-export function simulateCombat(charStats, monsterStats, options = {}) {
-  const monFx = parseMonsterEffects(monsterStats);
-  const utilFx = parseUtilityEffects(options);
-  const runeFx = parseRuneEffects(options);
-
-  if (!hasAnyEffect(monFx, utilFx, runeFx)) {
-    return simulateFastPath(charStats, monsterStats);
-  }
-
-  return simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx);
-}
-
-/** Fast path — no effects, constant damage per turn. */
-function simulateFastPath(charStats, monsterStats) {
-  const charDmg = calcTurnDamage(charStats, monsterStats);
-  const monsterDmg = calcTurnDamage(monsterStats, charStats);
-  const first = charGoesFirst(charStats, monsterStats);
-
-  let charHp = charStats.max_hp || charStats.hp;
-  let monsterHp = monsterStats.hp;
-  const maxHp = charHp;
+  const charNonCrit = calcBaseDamage(charStats, monsterStats, 0, 0);
+  const charCritDamage = Math.round(charNonCrit * 1.5);
+  const monNonCrit = calcBaseDamage(monsterStats, charStats, 0, 0);
+  const monCritDamage = Math.round(monNonCrit * 1.5);
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
-    const charTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
-
-    if (charTurn) {
-      monsterHp -= charDmg;
-      if (monsterHp <= 0) return makeResult(true, turn, charHp, maxHp);
+    const isCharTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
+    if (isCharTurn) {
+      monsterHp -= rollCrit(charStats, rng) ? charCritDamage : charNonCrit;
+      if (monsterHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp);
     } else {
-      charHp -= monsterDmg;
-      if (charHp <= 0) return makeResult(false, turn, 0, maxHp);
+      charHp -= rollCrit(monsterStats, rng) ? monCritDamage : monNonCrit;
+      if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
     }
   }
 
-  return makeResult(false, MAX_TURNS, charHp, maxHp);
+  return makeSingleFightResult(false, MAX_TURNS, charHp, charMaxHp);
 }
 
-/**
- * Full simulation with effects — alternating individual turns.
- * Each loop iteration = 1 entity attacks (matching the API's turn model).
- */
-function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
-  const charMaxHp = charStats.max_hp || charStats.hp;
-  const monMaxHp = monsterStats.hp;
-  let charHp = charMaxHp;
+function simulateWithEffectsOnce(charStats, monsterStats, rng, {
+  monFx,
+  utilFx,
+  runeFx,
+  startingHp,
+}) {
+  const charMaxHp = Math.max(1, Number(charStats?.max_hp || charStats?.hp || 1));
+  const monMaxHp = Math.max(1, Number(monsterStats?.hp || 1));
+  let charHp = normalizeStartingHp(charStats, startingHp);
   let monHp = monMaxHp;
-  const first = charGoesFirst(charStats, monsterStats);
+  const first = charGoesFirst(charStats, monsterStats, rng, charHp);
 
-  // Crit chances (for expected-value modeling of crit-triggered effects)
-  const charCrit = Math.min((charStats.critical_strike || 0) / 100, 1);
-  const monCrit = Math.min((monsterStats.critical_strike || 0) / 100, 1);
-
-  // --- Monster effects applied to player ---
-  const poisonDmg = Math.max(0, (monFx.poison || 0) - (utilFx.antipoison || 0));
+  const poisonDmg = Math.max(0, Number(monFx.poison || 0) - Number(utilFx.antipoison || 0));
   let playerBurnDmg = monFx.burn ? Math.round(sumAttack(monsterStats) * monFx.burn / 100) : 0;
-  const corruptedPct = monFx.corrupted || 0;
+  const corruptedPct = Number(monFx.corrupted || 0);
   let corruptedStacks = 0;
-  const berserkerPct = monFx.berserker_rage || 0;
+  const berserkerPct = Number(monFx.berserker_rage || 0);
   let berserkerActive = false;
-  const barrierMax = monFx.barrier || 0;
-  let barrierHp = barrierMax; // barrier starts at fight start
-  // Protective bubble: +x% res to random element each turn. Model as avg +x/4% to all.
-  const bubbleRes = monFx.protective_bubble ? monFx.protective_bubble / 4 : 0;
+  const barrierMax = Number(monFx.barrier || 0);
+  let barrierHp = barrierMax;
+  const bubbleRes = monFx.protective_bubble ? Number(monFx.protective_bubble) / 4 : 0;
 
-  // --- Player rune effects applied to monster ---
   let monBurnDmg = runeFx.burn ? Math.round(sumAttack(charStats) * runeFx.burn / 100) : 0;
 
-  // --- Player utility ---
-  const restoreHp = utilFx.restore || 0;
+  const restoreHp = Number(utilFx.restore || 0);
   let restoreUsed = false;
 
-  // --- Expected-value frenzy damage bonuses ---
-  const charFrenzyAvg = (runeFx.frenzy || 0) * charCrit;
-  const monFrenzyAvg = (monFx.frenzy || 0) * monCrit;
-
-  // Per-entity turn counters for periodic effects
   let charTurnCount = 0;
   let monTurnCount = 0;
 
@@ -222,58 +367,54 @@ function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
     if (isCharTurn) {
       charTurnCount++;
 
-      // --- Character's turn effects (before attack) ---
-
-      // Poison tick (every char turn)
       if (poisonDmg > 0) {
         charHp -= poisonDmg;
-        if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
       }
 
-      // Monster burn → player DoT (decays 10% each tick, integer floor — API-verified)
       if (playerBurnDmg > 0) {
         charHp -= playerBurnDmg;
         playerBurnDmg = Math.floor(playerBurnDmg * 0.9);
-        if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
       }
 
-      // Player rune burn → monster DoT (bypasses barrier)
       if (monBurnDmg > 0) {
         monHp -= monBurnDmg;
         monBurnDmg = Math.floor(monBurnDmg * 0.9);
-        // Don't check monster death — char attack follows
       }
 
-      // Player rune healing (every 3 of char's turns)
       if (runeFx.healing && charTurnCount % 3 === 0) {
-        charHp = Math.min(charMaxHp, charHp + Math.round(charMaxHp * runeFx.healing / 100));
+        charHp = Math.min(charMaxHp, charHp + Math.round(charMaxHp * Number(runeFx.healing) / 100));
       }
 
-      // --- Character attacks ---
-      const charDmg = calcDamage(charStats, monsterStats, -bubbleRes, charFrenzyAvg);
-      let dmg = charDmg;
+      const didCrit = rollCrit(charStats, rng);
+      const dmgBonus = didCrit ? Number(runeFx.frenzy || 0) : 0;
+      let { damage } = calcRandomDamage(charStats, monsterStats, rng, {
+        resReduction: -bubbleRes,
+        dmgBonus,
+        crit: didCrit,
+      });
+
       if (barrierHp > 0) {
-        const absorbed = Math.min(dmg, barrierHp);
+        const absorbed = Math.min(damage, barrierHp);
         barrierHp -= absorbed;
-        dmg -= absorbed;
+        damage -= absorbed;
       }
-      monHp -= dmg;
+
+      monHp -= damage;
 
       if (corruptedPct > 0) corruptedStacks++;
 
-      // Player lifesteal (expected value: heal on crit)
-      if (runeFx.lifesteal && charCrit > 0) {
-        charHp = Math.min(charMaxHp, charHp + Math.round(charCrit * runeFx.lifesteal / 100 * sumAttack(charStats)));
+      if (runeFx.lifesteal && didCrit) {
+        charHp = Math.min(charMaxHp, charHp + Math.round(Number(runeFx.lifesteal) / 100 * sumAttack(charStats)));
       }
 
-      // Check berserker rage trigger
       if (berserkerPct > 0 && !berserkerActive && monHp > 0 && monHp < monMaxHp * 0.25) {
         berserkerActive = true;
       }
 
-      if (monHp <= 0) return makeResult(true, turn, charHp, charMaxHp);
+      if (monHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp);
 
-      // Restore utility: one-shot heal when HP drops below 50%
       if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
         charHp = Math.min(charMaxHp, charHp + restoreHp);
         restoreUsed = true;
@@ -281,46 +422,40 @@ function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
     } else {
       monTurnCount++;
 
-      // --- Monster's turn effects (before attack) ---
-
-      // Reconstitution: monster full heals at a specific monster-turn count
-      if (monFx.reconstitution && monTurnCount === monFx.reconstitution) {
+      if (monFx.reconstitution && monTurnCount === Number(monFx.reconstitution)) {
         monHp = monMaxHp;
       }
 
-      // Monster healing (every 3 of monster's turns)
       if (monFx.healing && monTurnCount % 3 === 0) {
-        monHp = Math.min(monMaxHp, monHp + Math.round(monMaxHp * monFx.healing / 100));
+        monHp = Math.min(monMaxHp, monHp + Math.round(monMaxHp * Number(monFx.healing) / 100));
       }
 
-      // Barrier refresh (every 5 of monster's turns)
       if (barrierMax > 0 && monTurnCount % 5 === 0) {
         barrierHp = barrierMax;
       }
 
-      // Void drain (every 4 of monster's turns)
       if (monFx.void_drain && monTurnCount % 4 === 0) {
-        const drained = Math.round(charHp * monFx.void_drain / 100);
+        const drained = Math.round(charHp * Number(monFx.void_drain) / 100);
         charHp -= drained;
         monHp = Math.min(monMaxHp, monHp + drained);
-        if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
       }
 
-      // Protective bubble rotation happens each monster turn (modeled as avg)
+      const didCrit = rollCrit(monsterStats, rng);
+      const dmgBonus = (berserkerActive ? berserkerPct : 0) + (didCrit ? Number(monFx.frenzy || 0) : 0);
+      const { damage } = calcRandomDamage(monsterStats, charStats, rng, {
+        resReduction: corruptedPct * corruptedStacks,
+        dmgBonus,
+        crit: didCrit,
+      });
+      charHp -= damage;
 
-      // --- Monster attacks ---
-      const monDmgBonus = (berserkerActive ? berserkerPct : 0) + monFrenzyAvg;
-      const monDmg = calcDamage(monsterStats, charStats, corruptedPct * corruptedStacks, monDmgBonus);
-      charHp -= monDmg;
-
-      // Monster lifesteal (expected value)
-      if (monFx.lifesteal && monCrit > 0) {
-        monHp = Math.min(monMaxHp, monHp + Math.round(monCrit * monFx.lifesteal / 100 * sumAttack(monsterStats)));
+      if (monFx.lifesteal && didCrit) {
+        monHp = Math.min(monMaxHp, monHp + Math.round(Number(monFx.lifesteal) / 100 * sumAttack(monsterStats)));
       }
 
-      if (charHp <= 0) return makeResult(false, turn, 0, charMaxHp);
+      if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
 
-      // Restore utility: one-shot heal when HP drops below 50%
       if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
         charHp = Math.min(charMaxHp, charHp + restoreHp);
         restoreUsed = true;
@@ -328,33 +463,218 @@ function simulateWithEffects(charStats, monsterStats, monFx, utilFx, runeFx) {
     }
   }
 
-  return makeResult(false, MAX_TURNS, charHp, charMaxHp);
+  return makeSingleFightResult(false, MAX_TURNS, charHp, charMaxHp);
 }
 
-// --- High-level helpers ---
+export function simulateCombatOnce(charStats, monsterStats, options = {}) {
+  const rng = typeof options.rng === 'function'
+    ? options.rng
+    : createSeededRng(toFiniteNumber(options.seed, 1));
 
-// Track which monsters we've already logged simulation results for (per character)
-// to avoid spamming logs on every canRun() check.
-const loggedSims = new Map(); // "charName:monsterCode" → last result string
+  const monFx = parseMonsterEffects(monsterStats);
+  const utilFx = parseUtilityEffects(options);
+  const runeFx = parseRuneEffects(options);
 
-/**
- * Check whether a character can reliably beat a monster.
- * "Reliably" = simulation predicts a win with ≥10% HP remaining.
- *
- * @param {import('../context.mjs').CharacterContext} ctx
- * @param {string} monsterCode
- * @returns {boolean}
- */
-export function canBeatMonster(ctx, monsterCode) {
+  if (!hasAnyEffect(monFx, utilFx, runeFx)) {
+    return simulateFastPathOnce(charStats, monsterStats, rng, options.startingHp);
+  }
+
+  return simulateWithEffectsOnce(charStats, monsterStats, rng, {
+    monFx,
+    utilFx,
+    runeFx,
+    startingHp: options.startingHp,
+  });
+}
+
+function aggregateSimResult(results, iterations, threshold) {
+  return materializeAggregateResult(buildAggregateBaseResult(results, iterations), threshold);
+}
+
+export function isBetterCombatResult(a, b) {
+  if (!b) return true;
+  if (!a) return false;
+  const aCanWin = typeof a.canWin === 'boolean' ? a.canWin : Boolean(a.win);
+  const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
+  if (aCanWin && !bCanWin) return true;
+  if (!aCanWin && bCanWin) return false;
+  const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
+  const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  if (aWinRate !== bWinRate) {
+    return aWinRate > bWinRate;
+  }
+
+  const aRequiredHp = Number.isFinite(a.requiredHp) ? a.requiredHp : Number.POSITIVE_INFINITY;
+  const bRequiredHp = Number.isFinite(b.requiredHp) ? b.requiredHp : Number.POSITIVE_INFINITY;
+  if (aRequiredHp !== bRequiredHp) return aRequiredHp < bRequiredHp;
+  if (Number(a.avgTurns || a.turns || 0) !== Number(b.avgTurns || b.turns || 0)) {
+    return Number(a.avgTurns || a.turns || 0) < Number(b.avgTurns || b.turns || 0);
+  }
+
+  return Number(a.avgRemainingHp || a.remainingHp || 0) > Number(b.avgRemainingHp || b.remainingHp || 0);
+}
+
+export function isCombatResultTie(a, b) {
+  if (!a || !b) return false;
+  const aRequiredHp = Number.isFinite(a.requiredHp) ? a.requiredHp : Number.POSITIVE_INFINITY;
+  const bRequiredHp = Number.isFinite(b.requiredHp) ? b.requiredHp : Number.POSITIVE_INFINITY;
+  const aCanWin = typeof a.canWin === 'boolean' ? a.canWin : Boolean(a.win);
+  const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
+  const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
+  const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  return aCanWin === bCanWin
+    && aWinRate === bWinRate
+    && aRequiredHp === bRequiredHp
+    && Number(a.avgTurns || a.turns || 0) === Number(b.avgTurns || b.turns || 0)
+    && Number(a.avgRemainingHp || a.remainingHp || 0) === Number(b.avgRemainingHp || b.remainingHp || 0);
+}
+
+export function simulateCombat(charStats, monsterStats, options = {}) {
+  const iterations = resolveIterations(options.iterations);
+  const threshold = resolveThreshold(options.threshold);
+  const cacheKey = typeof options.rng === 'function'
+    ? null
+    : buildSimulationSignature(charStats, monsterStats, options, iterations);
+
+  if (cacheKey) {
+    const cached = getCachedAggregateResult(cacheKey, threshold);
+    if (cached) return cached;
+  }
+
+  const rng = typeof options.rng === 'function'
+    ? options.rng
+    : createSeededRng(toFiniteNumber(
+      options.seed,
+      buildDefaultSeed(charStats, monsterStats, options, iterations, threshold),
+    ));
+
+  const perFightOptions = {
+    ...options,
+    threshold,
+  };
+  const results = [];
+  for (let iteration = 0; iteration < iterations; iteration++) {
+    results.push(simulateCombatOnce(charStats, monsterStats, {
+      ...perFightOptions,
+      rng,
+    }));
+  }
+
+  const baseResult = buildAggregateBaseResult(results, iterations);
+  if (cacheKey) {
+    setCachedAggregateResult(cacheKey, baseResult);
+  }
+  return materializeAggregateResult(baseResult, threshold);
+}
+
+export function buildEquippedCombatOptions(ctx) {
+  const char = typeof ctx?.get === 'function' ? ctx.get() : ctx;
+  if (!char) return {};
+
+  const options = {};
+  const utilities = [];
+
+  for (const slot of ['utility1', 'utility2']) {
+    const code = char[`${slot}_slot`] || null;
+    if (!code) continue;
+    if (Number(char[`${slot}_slot_quantity`] || 0) <= 0) continue;
+    const item = gameData.getItem(code);
+    if (item?.effects?.length) {
+      utilities.push({ code: item.code, effects: item.effects });
+    }
+  }
+
+  if (utilities.length > 0) options.utilities = utilities;
+
+  const runeCode = char.rune_slot || null;
+  if (runeCode) {
+    const rune = gameData.getItem(runeCode);
+    if (rune?.effects?.length) {
+      options.rune = { code: rune.code, effects: rune.effects };
+    }
+  }
+
+  return options;
+}
+
+export const buildEquippedSimOptions = buildEquippedCombatOptions;
+
+export function findRequiredHpForFight(charStats, monsterStats, options = {}) {
+  const maxHp = Math.max(1, Number(charStats?.max_hp || charStats?.hp || 1));
+  const threshold = resolveThreshold(options.threshold);
+  const iterations = resolveIterations(options.iterations);
+  const cache = new Map();
+
+  const probe = (startingHp) => {
+    const hp = clamp(Math.floor(startingHp), 1, maxHp);
+    if (!cache.has(hp)) {
+      cache.set(hp, simulateCombat(charStats, monsterStats, {
+        ...options,
+        iterations,
+        threshold,
+        startingHp: hp,
+      }));
+    }
+    return cache.get(hp);
+  };
+
+  const fullHpResult = probe(maxHp);
+  if (!fullHpResult.canWin) {
+    return {
+      requiredHp: null,
+      threshold,
+      iterations,
+      fullHpResult,
+    };
+  }
+
+  let low = 1;
+  let high = maxHp;
+  let best = maxHp;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const result = probe(mid);
+    if (result.canWin) {
+      best = mid;
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+
+  return {
+    requiredHp: best,
+    threshold,
+    iterations,
+    fullHpResult,
+    result: probe(best),
+  };
+}
+
+export function isCombatResultViable(result) {
+  if (typeof result?.canWin === 'boolean') return result.canWin;
+  if (Number.isFinite(Number(result?.winRate))) {
+    return Number(result.winRate) >= getCombatWinRateThreshold();
+  }
+  return Boolean(result?.win) && Number(result?.hpLostPercent ?? 100) <= 90;
+}
+
+const loggedSims = new Map();
+
+export function canBeatMonster(ctx, monsterCode, options = {}) {
   const monster = gameData.getMonster(monsterCode);
   if (!monster) return false;
 
   const charStats = ctx.get();
-  const result = simulateCombat(charStats, monster);
+  const simOptions = {
+    ...buildEquippedCombatOptions(ctx),
+    ...options,
+  };
+  const result = simulateCombat(charStats, monster, simOptions);
 
-  // Log once per monster (or when result changes)
   const key = `${ctx.name}:${monsterCode}`;
-  const summary = `${result.win ? 'WIN' : 'LOSS'} ${result.turns}t ${Math.round(result.remainingHp)}hp`;
+  const summary = `${result.canWin ? 'GO' : 'SKIP'} ${Math.round(result.winRate)}% ${Math.round(result.avgTurns)}t ${Math.round(result.avgRemainingHp)}hp`;
   if (loggedSims.get(key) !== summary) {
     loggedSims.set(key, summary);
     const charDmg = calcTurnDamage(charStats, monster);
@@ -362,27 +682,16 @@ export function canBeatMonster(ctx, monsterCode) {
     log.info(`[${ctx.name}] Sim vs ${monsterCode}: ${summary} (char ${charDmg}/t, mob ${monsterDmg}/t)`);
   }
 
-  return result.win && result.hpLostPercent <= 90; // win with ≥10% HP remaining
+  return result.canWin;
 }
 
-/**
- * Calculate the minimum HP needed to survive a fight against a monster.
- * Since combat is deterministic, damage taken is constant regardless of starting HP.
- *
- * @param {import('../context.mjs').CharacterContext} ctx
- * @param {string} monsterCode
- * @returns {number|null} — minimum HP needed, or null if the monster can't be beaten at full HP
- */
-export function hpNeededForFight(ctx, monsterCode) {
+export function hpNeededForFight(ctx, monsterCode, options = {}) {
   const monster = gameData.getMonster(monsterCode);
   if (!monster) return null;
 
-  const charStats = ctx.get();
-  const result = simulateCombat(charStats, monster);
-
-  if (!result.win) return null;
-
-  const damageTaken = charStats.max_hp - result.remainingHp;
-  const critBuffer = Math.ceil(charStats.max_hp * 0.10); // 10% HP buffer for crit hits
-  return damageTaken + critBuffer;
+  const result = findRequiredHpForFight(ctx.get(), monster, {
+    ...buildEquippedCombatOptions(ctx),
+    ...options,
+  });
+  return result.requiredHp;
 }

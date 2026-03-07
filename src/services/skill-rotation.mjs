@@ -5,6 +5,7 @@
  */
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
+import { isCombatResultViable } from './combat-simulator.mjs';
 import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
 import { selectBestAchievement } from '../routines/skill-rotation/achievements.mjs';
@@ -506,7 +507,7 @@ export class SkillRotation {
           simCache.set(monsterCode, result);
         }
         const simResult = simCache.get(monsterCode);
-        if (!simResult || !simResult.simResult.win || simResult.simResult.hpLostPercent > 90) {
+        if (!isCombatResultViable(simResult?.simResult)) {
           viable = false;
           this._queueFightOrder(step, candidate.recipe, ctx);
           log.info(`[${ctx.name}] Rotation: ${candidate.recipe.code} needs ${step.itemCode} from ${monsterCode} — can't win fight, skipping`);

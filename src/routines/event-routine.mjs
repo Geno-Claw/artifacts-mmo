@@ -38,7 +38,6 @@ export class EventRoutine extends BaseRoutine {
     minTimeRemainingMs = 120_000,
     maxMonsterType = 'elite',
     cooldownMs = 60_000,
-    minWinrate = 90,
     ...rest
   } = {}) {
     super({ name: TAG, priority, loop: true, urgent: true, type: rest.type });
@@ -49,7 +48,6 @@ export class EventRoutine extends BaseRoutine {
     this.minTimeRemainingMs = minTimeRemainingMs;
     this.maxMonsterType = maxMonsterType;
     this.cooldownMs = cooldownMs;
-    this.minWinrate = minWinrate;
 
     /** @type {{ code, type, monsterCode?, resourceCode?, map } | null} */
     this._targetEvent = null;
@@ -71,7 +69,6 @@ export class EventRoutine extends BaseRoutine {
     if (cfg.minTimeRemainingMs !== undefined) this.minTimeRemainingMs = cfg.minTimeRemainingMs;
     if (cfg.maxMonsterType !== undefined) this.maxMonsterType = cfg.maxMonsterType;
     if (cfg.cooldownMs !== undefined) this.cooldownMs = cfg.cooldownMs;
-    if (cfg.minWinrate !== undefined) this.minWinrate = cfg.minWinrate;
   }
 
   canRun(ctx) {
@@ -166,12 +163,10 @@ export class EventRoutine extends BaseRoutine {
       }
 
       // Simulate fight BEFORE equipping gear (avoid wasteful gear swaps)
-      const sim = await canCharacterBeatEvent(ctx, monsterCode, {
-        minWinrate: this.minWinrate,
-      });
+      const sim = await canCharacterBeatEvent(ctx, monsterCode);
       log.info(`[${ctx.name}] ${TAG}: ${monsterCode} simulation: ${sim.winrate}% winrate (${sim.source}) → ${sim.canWin ? 'GO' : 'SKIP'}`);
       if (!sim.canWin) {
-        log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — winrate ${sim.winrate}% < ${this.minWinrate}% threshold`);
+        log.info(`[${ctx.name}] ${TAG}: skipping ${monsterCode} — winrate ${sim.winrate}% < ${sim.threshold}% threshold`);
         this._setSimCooldown(target.code);
         this._clearTarget();
         return false;

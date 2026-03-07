@@ -4,6 +4,16 @@
  */
 import assert from 'node:assert/strict';
 import { buildFakeCharacter, canCharacterBeatEvent, clearCache, _simCache } from '../src/services/event-simulation.mjs';
+import {
+  _resetForTests as resetCombatConfigForTests,
+  loadCombatConfig,
+} from '../src/services/combat-config.mjs';
+
+const EQUIPMENT_SLOTS = [
+  'weapon', 'shield', 'helmet', 'body_armor', 'leg_armor', 'boots',
+  'ring1', 'ring2', 'amulet', 'artifact1', 'artifact2', 'artifact3',
+  'utility1', 'utility2', 'rune',
+];
 
 // --- Fake CharacterContext ---
 
@@ -35,6 +45,12 @@ function makeCtx(overrides = {}) {
     get() { return char; },
     skillLevel(skill) { return char[`${skill}_level`] || 0; },
   };
+}
+
+function cacheKeyForTest(ctx, monsterCode) {
+  const char = ctx.get();
+  const equipCodes = EQUIPMENT_SLOTS.map(slot => char[`${slot}_slot`] || '').join(':');
+  return `${ctx.name}:${monsterCode}:${char.level}:${equipCodes}`;
 }
 
 // --- Tests ---
@@ -100,6 +116,37 @@ function test_clearCache_byCharacter() {
   console.log('  PASS: clearCache by character name');
 }
 
+async function test_cachedResultsUseCurrentThreshold() {
+  const ctx = makeCtx();
+  const key = cacheKeyForTest(ctx, 'demon');
+  _simCache.set(key, {
+    summary: {
+      winrate: 85,
+      avgTurns: 7,
+      source: 'api',
+    },
+    cachedAt: Date.now(),
+  });
+
+  loadCombatConfig({ combat: { winRateThreshold: 90 } });
+  const strictResult = await canCharacterBeatEvent(ctx, 'demon');
+  assert.equal(strictResult.canWin, false);
+  assert.equal(strictResult.threshold, 90);
+  assert.equal(strictResult.winrate, 85);
+
+  loadCombatConfig({ combat: { winRateThreshold: 80 } });
+  const relaxedResult = await canCharacterBeatEvent(ctx, 'demon');
+  assert.equal(relaxedResult.canWin, true);
+  assert.equal(relaxedResult.threshold, 80);
+  assert.equal(relaxedResult.winrate, 85);
+  assert.equal(relaxedResult.avgTurns, 7);
+  assert.equal(relaxedResult.source, 'api');
+
+  clearCache();
+  resetCombatConfigForTests();
+  console.log('  PASS: cached results re-evaluate against current threshold');
+}
+
 // --- Run ---
 
 console.log('Event Simulation Tests:');
@@ -107,4 +154,5 @@ test_buildFakeCharacter_basic();
 test_buildFakeCharacter_empty();
 test_clearCache_all();
 test_clearCache_byCharacter();
+await test_cachedResultsUseCurrentThreshold();
 console.log('All event simulation tests passed!');

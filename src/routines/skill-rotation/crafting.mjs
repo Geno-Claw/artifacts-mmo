@@ -6,6 +6,7 @@ import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, gatherOnce, fightOnce, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
+import { isCombatResultViable } from '../../services/combat-simulator.mjs';
 import { getFightReadiness } from '../../services/food-manager.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { depositBankItems } from '../../services/bank-ops.mjs';
@@ -284,7 +285,7 @@ export async function executeCrafting(ctx, routine) {
         await routine.rotation.forceRotate(ctx);
         return true;
       }
-      if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
+      if (!isCombatResultViable(simResult)) {
         await routine._handleUnwinnableCraftFight(ctx, {
           monsterCode,
           itemCode: step.itemCode,
@@ -654,12 +655,12 @@ export function equipForCraftFight(ctx, monsterCode) {
 }
 
 export async function handleUnwinnableCraftFight(ctx, routine, { monsterCode, itemCode, recipeCode, claimMode, simResult } = {}) {
-  const hpLost = Number.isFinite(simResult?.hpLostPercent)
-    ? `${Math.round(simResult.hpLostPercent)}%`
+  const winRate = Number.isFinite(simResult?.winRate)
+    ? `${simResult.winRate.toFixed(1)}%`
     : 'n/a';
-  const simOutcome = simResult?.win ? 'win' : 'loss';
+  const simOutcome = isCombatResultViable(simResult) ? 'viable' : 'blocked';
 
-  craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: skipping ${recipeCode || 'recipe'} fight step ${monsterCode} -> ${itemCode || 'drop'} (sim ${simOutcome}, hpLost ${hpLost})`, {
+  craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: skipping ${recipeCode || 'recipe'} fight step ${monsterCode} -> ${itemCode || 'drop'} (sim ${simOutcome}, winRate ${winRate})`, {
     event: 'craft.fight.skipped',
     reasonCode: 'unwinnable_combat',
     context: { character: ctx.name },
@@ -669,7 +670,8 @@ export async function handleUnwinnableCraftFight(ctx, routine, { monsterCode, it
       monsterCode,
       itemCode: itemCode || null,
       simOutcome,
-      hpLost,
+      winRate: simResult?.winRate ?? null,
+      requiredHp: simResult?.requiredHp ?? null,
       claimMode,
     },
   });

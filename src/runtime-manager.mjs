@@ -39,6 +39,7 @@ import {
 } from './services/event-manager.mjs';
 import { loadNpcCatalogs } from './services/game-data.mjs';
 import { loadNpcBuyList } from './services/npc-buy-config.mjs';
+import { loadCombatConfig } from './services/combat-config.mjs';
 import { normalizeConfig, hashCanonicalJson, saveConfigAtomically } from './services/config-store.mjs';
 import { runWithLogContext } from './log-context.mjs';
 import { extractAccountLogDetail } from './action-log.mjs';
@@ -52,32 +53,8 @@ function extractCharacterNameFromMessage(message) {
 
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
-const DEFAULT_COMBAT_WIN_RATE_THRESHOLD = 90;
 const ORDER_BOARD_ROLLOUT_MARKER = './report/.order-board-v2-rollout';
 const CONFIG_WATCH_DEBOUNCE_MS = 1_000;
-
-function getGlobalCombatWinRateThreshold(config) {
-  const value = Number(config?.combat?.winRateThreshold);
-  if (!Number.isFinite(value)) return DEFAULT_COMBAT_WIN_RATE_THRESHOLD;
-  return Math.min(100, Math.max(0, Math.floor(value)));
-}
-
-export function applyGlobalCombatConfigToCharacterConfig(charCfg, config) {
-  if (!charCfg || typeof charCfg !== 'object') return charCfg;
-
-  const threshold = getGlobalCombatWinRateThreshold(config);
-  const routines = Array.isArray(charCfg.routines)
-    ? charCfg.routines.map((routine) => {
-      if (!routine || typeof routine !== 'object' || routine.type !== 'event') return routine;
-      return { ...routine, minWinrate: threshold };
-    })
-    : charCfg.routines;
-
-  return {
-    ...charCfg,
-    routines,
-  };
-}
 
 function withTimeout(promise, timeoutMs) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -334,24 +311,23 @@ export class RuntimeManager {
     };
   }
 
-  async _createScheduler(charCfg, config = null) {
-    const mergedCfg = applyGlobalCombatConfigToCharacterConfig(charCfg, config);
-    const ctx = new CharacterContext(mergedCfg.name, mergedCfg.settings || {});
-    const routines = buildRoutines(mergedCfg.routines);
+  async _createScheduler(charCfg) {
+    const ctx = new CharacterContext(charCfg.name, charCfg.settings || {});
+    const routines = buildRoutines(charCfg.routines);
 
     try {
       await ctx.refresh();
     } catch (err) {
       if (err.code === 404 || err.code === 498) {
-        const skin = mergedCfg.skin || 'men1';
-        runtimeLog.info(`[${mergedCfg.name}] Character not found - creating with skin "${skin}"`, {
+        const skin = charCfg.skin || 'men1';
+        runtimeLog.info(`[${charCfg.name}] Character not found - creating with skin "${skin}"`, {
           event: 'runtime.character.auto_create',
           context: {
-            character: mergedCfg.name,
+            character: charCfg.name,
           },
           data: { skin },
         });
-        await createCharacter(mergedCfg.name, skin);
+        await createCharacter(charCfg.name, skin);
         await ctx.refresh();
       } else {
         throw err;
@@ -575,12 +551,13 @@ export class RuntimeManager {
       await loadNpcCatalogs(npcCodes);
 
       loadNpcBuyList(config);
+      loadCombatConfig(config);
 
       for (const charCfg of config.characters) {
         const { scheduler, ctx } = await runWithLogContext({
           runId: run.runId,
           character: charCfg.name,
-        }, async () => this._createScheduler(charCfg, config));
+        }, async () => this._createScheduler(charCfg));
         scheduler.setRunContext({ runId: run.runId });
         registerContext(ctx);
         run.schedulerEntries.push({
@@ -795,6 +772,7 @@ export class RuntimeManager {
     }
 
     loadNpcBuyList(config);
+    loadCombatConfig(config);
     setGatherResources(config.events?.gatherResources || []);
     run.config = config;
     run.characterConfigs = config.characters;
@@ -802,8 +780,7 @@ export class RuntimeManager {
     for (const entry of run.schedulerEntries) {
       const charCfg = config.characters.find(c => c.name === entry.name);
       if (charCfg) {
-        const mergedCfg = applyGlobalCombatConfigToCharacterConfig(charCfg, config);
-        entry.scheduler.setPendingConfig(mergedCfg.routines, mergedCfg.settings);
+        entry.scheduler.setPendingConfig(charCfg.routines, charCfg.settings);
       }
     }
     runtimeLog.info(`[Runtime] Config hot-reload queued for ${run.schedulerEntries.length} character(s)`, {

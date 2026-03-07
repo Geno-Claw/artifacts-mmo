@@ -89,7 +89,7 @@ async function testUnwinnableWhenSimulationLoses() {
   assert.equal(readiness.targetPct, null);
 }
 
-async function testUnwinnableWhenRequiredHpExceedsMaxHp() {
+async function testRestCanReachRequiredHpThreshold() {
   resetGameDataForTests();
   setMonsters([
     {
@@ -99,11 +99,27 @@ async function testUnwinnableWhenRequiredHpExceedsMaxHp() {
     },
   ]);
 
-  const readiness = await getFightReadiness(makeCtx({ hp: 50, maxHp: 100, attackFire: 50 }), 'boar');
-  assert.equal(readiness.status, 'unwinnable');
-  assert.equal(readiness.requiredHp, 101);
-  assert.equal(readiness.maxHp, 100);
-  assert.equal(await restBeforeFight(makeCtx({ hp: 50, maxHp: 100, attackFire: 50 }), 'boar'), false);
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        data: {
+          cooldown: { total_seconds: 0, remaining_seconds: 0 },
+          character: { hp: 100, max_hp: 100 },
+        },
+      });
+    },
+  });
+
+  const ctx = makeCtx({ hp: 50, maxHp: 100, attackFire: 50 });
+  await withMockFetch(fetchImpl, async () => {
+    const readiness = await getFightReadiness(ctx, 'boar');
+    assert.equal(readiness.status, 'ready');
+    assert.equal(readiness.requiredHp, 92);
+    assert.equal(readiness.maxHp, 100);
+    assert.equal(await restBeforeFight(makeCtx({ hp: 50, maxHp: 100, attackFire: 50 }), 'boar'), true);
+  });
 }
 
 async function testReadyWhenCurrentHpIsEnough() {
@@ -152,7 +168,7 @@ async function testNeedsRestWhenRestFailsButFightIsReachable() {
     await withMockFetch(fetchImpl, async () => {
       const readiness = await getFightReadiness(ctx, 'wolf');
       assert.equal(readiness.status, 'needs_rest');
-      assert.equal(readiness.requiredHp, 90);
+      assert.equal(readiness.requiredHp, 81);
       assert.equal(await restBeforeFight(ctx, 'wolf'), false);
     });
   });
@@ -161,7 +177,7 @@ async function testNeedsRestWhenRestFailsButFightIsReachable() {
 async function run() {
   try {
     await testUnwinnableWhenSimulationLoses();
-    await testUnwinnableWhenRequiredHpExceedsMaxHp();
+    await testRestCanReachRequiredHpThreshold();
     await testReadyWhenCurrentHpIsEnough();
     await testNeedsRestWhenRestFailsButFightIsReachable();
     console.log('food-manager tests passed');
