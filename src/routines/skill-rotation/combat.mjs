@@ -68,9 +68,11 @@ export async function executeCombat(ctx, routine) {
   }
   await prepareCombatPotions(ctx, monsterCode);
 
-  // Withdraw food from bank for all remaining fights (once per combat goal)
-  if (!claim && !routine._foodWithdrawn) {
-    const remaining = routine.rotation.goalTarget - routine.rotation.goalProgress;
+  // Withdraw food from bank for remaining fights (once per combat goal/claim)
+  if (!routine._foodWithdrawn) {
+    const remaining = claim
+      ? (claim.remainingQty || 20)
+      : (routine.rotation.goalTarget - routine.rotation.goalProgress);
     await withdrawFoodForFights(ctx, monsterCode, remaining);
     routine._foodWithdrawn = true;
   }
