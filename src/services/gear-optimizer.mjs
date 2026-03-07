@@ -471,11 +471,11 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
         seed: slotSeed,
       }),
     ));
-    const emptyWinsDefensive = isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult));
-    // Never strip gear when both options lose — optimizing "die faster" is pointless,
-    // and the item may have non-combat benefits (XP, prospecting, etc.)
-    const bothLose = bestResult && !bestResult.winRate && !emptyResult?.winRate;
-    if (emptyWinsDefensive && !bothLose) {
+    // Only strip gear if empty has a strictly higher win rate.
+    // Secondary metrics (turns, remaining HP) should never cause an unequip —
+    // the item may have non-combat benefits (XP, prospecting, etc.) and the
+    // API action + cooldown cost of unequipping outweighs marginal sim differences.
+    if (emptyResult?.winRate > (bestResult?.winRate ?? 0)) {
       bestItem = null;
     }
 
@@ -536,11 +536,11 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
         seed: slotSeed,
       }),
     ));
-    const emptyWins = isBetterCombatResult(emptyResult, bestResult) || (slot === 'rune' && isCombatResultTie(emptyResult, bestResult));
-    // Never strip gear when both options lose — optimizing "die faster" is pointless,
-    // and the item may have non-combat benefits (XP, prospecting, etc.)
-    const bothLoseAcc = bestResult && !bestResult.winRate && !emptyResult?.winRate;
-    if (emptyWins && !bothLoseAcc) {
+    // Only strip gear if empty has a strictly higher win rate.
+    // Secondary metrics (turns, remaining HP) should never cause an unequip —
+    // the item may have non-combat benefits (XP, prospecting, etc.) and the
+    // API action + cooldown cost of unequipping outweighs marginal sim differences.
+    if (emptyResult?.winRate > (bestResult?.winRate ?? 0)) {
       bestItem = null;
     }
 

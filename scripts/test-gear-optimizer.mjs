@@ -513,7 +513,7 @@ async function testOptimizeForMonsterPlanningIncludesVendorRune() {
   assert.equal(candidates[0].source, 'npc_buy');
 }
 
-async function testOptimizeForMonsterPrefersEmptyRuneOnTie() {
+async function testOptimizeForMonsterKeepsNeutralRune() {
   _resetDepsForTests();
 
   const auraRune = makeItem('healing_aura_rune', { level: 20, effects: [{ code: 'healing_aura', value: 10 }] });
@@ -536,7 +536,9 @@ async function testOptimizeForMonsterPrefersEmptyRuneOnTie() {
 
   const result = await optimizeForMonster(ctx, 'test_monster');
   assert.ok(result, 'optimizeForMonster should return a result');
-  assert.equal(result.loadout.get('rune'), null, 'unsupported solo rune effects should not beat an empty rune slot on a tie');
+  // Rune with no combat impact should be kept — don't waste an action
+  // unequipping when it may have non-combat benefits and doesn't hurt the fight.
+  assert.equal(result.loadout.get('rune'), 'healing_aura_rune', 'rune with no combat impact should be kept rather than stripped');
 }
 
 async function testFindBestCombatTargetSkipsBosses() {
@@ -578,7 +580,7 @@ async function run() {
     await testOptimizeForGatheringIncludesArtifactProspecting();
     await testOptimizeForGatheringDoesNotDuplicateArtifactCopies();
     await testOptimizeForMonsterPlanningIncludesVendorRune();
-    await testOptimizeForMonsterPrefersEmptyRuneOnTie();
+    await testOptimizeForMonsterKeepsNeutralRune();
     await testFindBestCombatTargetSkipsBosses();
     console.log('test-gear-optimizer: PASS');
   } finally {
