@@ -65,9 +65,9 @@ async function testMinimalEventRoutine() {
   assert.equal(r.minTimeRemainingMs, 120000);
   assert.equal(r.maxMonsterType, 'elite');
   assert.equal(r.cooldownMs, 60000);
-  assert.equal(r.minWinrate, 80);
+  assert.equal(Object.hasOwn(r, 'minWinrate'), false);
 
-  log('minimal event routine gets all defaults');
+  log('minimal event routine gets all defaults without per-routine minWinrate');
 }
 
 async function testMinimalSkillRotation() {
@@ -272,15 +272,21 @@ async function testTopLevelDefaults() {
 
   const { config } = await normalizeConfig(input);
 
+  assert.ok(config.combat, 'combat should be created');
+  assert.equal(config.combat.winRateThreshold, 90);
+
   // events should be created with gatherResources default
   assert.ok(config.events, 'events should be created');
   assert.deepEqual(config.events.gatherResources, []);
 
-  log('top-level events defaults created when missing');
+  log('top-level combat and events defaults created when missing');
 }
 
 async function testUserOverridesPreserved() {
   const input = {
+    combat: {
+      winRateThreshold: 75,
+    },
     characters: [
       {
         name: 'T',
@@ -301,6 +307,8 @@ async function testUserOverridesPreserved() {
   };
 
   const { config } = await normalizeConfig(input);
+  assert.equal(config.combat.winRateThreshold, 75, 'user combat winRateThreshold preserved');
+
   const rest = config.characters[0].routines[0];
   assert.equal(rest.triggerPct, 20, 'user triggerPct preserved');
   assert.equal(rest.targetPct, 90, 'user targetPct preserved');

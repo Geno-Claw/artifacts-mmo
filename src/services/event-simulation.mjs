@@ -12,7 +12,7 @@ import { canBeatMonster } from './combat-simulator.mjs';
 const TAG = '[EventSim]';
 
 const DEFAULT_ITERATIONS = 10;
-const DEFAULT_MIN_WINRATE = 80;
+const DEFAULT_MIN_WINRATE = 90;
 
 /** Cache: "charName:monsterCode:level:equipHash" → { canWin, winrate, avgTurns, cachedAt } */
 const simCache = new Map();

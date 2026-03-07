@@ -38,7 +38,7 @@ export class EventRoutine extends BaseRoutine {
     minTimeRemainingMs = 120_000,
     maxMonsterType = 'elite',
     cooldownMs = 60_000,
-    minWinrate = 80,
+    minWinrate = 90,
     ...rest
   } = {}) {
     super({ name: TAG, priority, loop: true, urgent: true, type: rest.type });

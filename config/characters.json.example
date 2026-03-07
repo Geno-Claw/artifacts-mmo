@@ -1,5 +1,8 @@
 {
   "$schema": "./characters.schema.json",
+  "combat": {
+    "winRateThreshold": 90
+  },
   "npcBuyList": {
     "_any": [
       {

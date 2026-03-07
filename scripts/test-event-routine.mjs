@@ -90,7 +90,7 @@ function test_default_config() {
   assert.equal(routine.minTimeRemainingMs, 120_000);
   assert.equal(routine.maxMonsterType, 'elite');
   assert.equal(routine.cooldownMs, 60_000);
-  assert.equal(routine.minWinrate, 80);
+  assert.equal(routine.minWinrate, 90);
   console.log('  PASS: default config values');
 }
 

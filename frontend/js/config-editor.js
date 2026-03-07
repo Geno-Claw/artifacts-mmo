@@ -48,7 +48,6 @@ const CONFIG_EDITOR_FALLBACK_ROUTINES = Object.freeze([
       minTimeRemainingMs: 120000,
       maxMonsterType: 'elite',
       cooldownMs: 60000,
-      minWinrate: 80,
     },
   },
   {
@@ -525,6 +524,27 @@ function renderGlobalEventsSection(draft) {
   `;
 }
 
+function renderGlobalCombatSection(draft) {
+  const combat = isConfigEditorObject(draft?.combat) ? draft.combat : {};
+
+  return `
+    <section class="modal-section">
+      ${renderConfigSectionTitle('Combat', getConfigEditorDescription('combat'))}
+      <div class="config-editor-help">Shared combat viability settings used across all characters, including event-monster simulations.</div>
+      <div class="config-field-grid">
+        ${renderConfigSettingField(
+          'Combat Win Rate Threshold',
+          'data-config-scope="global-field" data-config-field="combat.winRateThreshold"',
+          getConfigEditorPathValue(combat, 'winRateThreshold', 90),
+          'number',
+          'min="0" max="100" step="1"',
+          getConfigEditorDescription('combat.winRateThreshold'),
+        )}
+      </div>
+    </section>
+  `;
+}
+
 function configEditorNpcCodes(draft) {
   const optionCodes = (Array.isArray(getConfigEditorOptions().npcEvents) ? getConfigEditorOptions().npcEvents : [])
     .map((entry) => safeText(entry?.code, ''))
@@ -637,6 +657,7 @@ function renderNpcBuySection(draft) {
 
 function renderConfigGlobalView(draft) {
   return `
+    ${renderGlobalCombatSection(draft)}
     ${renderGlobalEventsSection(draft)}
     ${renderNpcBuySection(draft)}
   `;
@@ -899,7 +920,6 @@ function renderConfigRoutineCard(character, routineMeta) {
           </select>
         </label>
         ${renderConfigSettingField('Cooldown Ms', fieldAttrs('cooldownMs'), getConfigEditorPathValue(routineConfig, 'cooldownMs', 60000), 'number', 'min="0" step="1000"', routineDesc('cooldownMs'))}
-        ${renderConfigSettingField('Min Winrate', fieldAttrs('minWinrate'), getConfigEditorPathValue(routineConfig, 'minWinrate', 80), 'number', 'min="0" max="100" step="1"', routineDesc('minWinrate'))}
       </div>
     `;
   } else if (routineMeta.type === 'completeTask') {
@@ -1287,6 +1307,19 @@ function handleConfigGlobalGatherResources(element) {
   });
 }
 
+function handleConfigGlobalField(element) {
+  const path = safeText(element?.dataset?.configField, '');
+  if (!path) return false;
+
+  return applyConfigEditorMutation((draft) => {
+    const currentValue = getConfigEditorPathValue(draft, path, 0);
+    const value = element.type === 'checkbox'
+      ? element.checked
+      : configEditorNumberValue(element, currentValue);
+    return setConfigEditorPathValue(draft, path, value);
+  });
+}
+
 function handleConfigNpcRowChange(element, updater) {
   const npcCode = safeText(element?.dataset?.configNpc, '');
   const index = Number(element?.dataset?.configIndex);
@@ -1380,6 +1413,11 @@ function handleConfigModalInput(event) {
   const globalResources = closestFromEventTarget(event, 'select[data-config-scope="global-gather-resources"]');
   if (globalResources && modalRefs.content.contains(globalResources)) {
     return handleConfigGlobalGatherResources(globalResources);
+  }
+
+  const globalField = closestFromEventTarget(event, '[data-config-scope="global-field"]');
+  if (globalField && modalRefs.content.contains(globalField)) {
+    return handleConfigGlobalField(globalField);
   }
 
   const settingField = closestFromEventTarget(event, '[data-config-scope="setting-field"]');

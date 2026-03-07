@@ -1132,6 +1132,21 @@ async function run() {
       'string',
       '/api/config/options should expose schema descriptions for structured fields',
     );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.combat,
+      'string',
+      '/api/config/options should expose top-level combat description',
+    );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.['combat.winRateThreshold'],
+      'string',
+      '/api/config/options should expose combat win rate threshold description',
+    );
+    assert.equal(
+      getConfigOptions.payload?.descriptions?.['characters[].routines.event.minWinrate'],
+      undefined,
+      '/api/config/options should not advertise removed event minWinrate field',
+    );
     assert.ok(
       getConfigOptions.payload.routines.some((entry) => entry?.type === 'skillRotation' && entry?.defaultConfig?.enabled === false),
       '/api/config/options should expose routine metadata with materialized defaults',

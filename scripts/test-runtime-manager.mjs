@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  applyGlobalCombatConfigToCharacterConfig,
   RuntimeOperationConflictError,
   createRuntimeManager,
 } from '../src/runtime-manager.mjs';
@@ -558,10 +559,37 @@ async function testActionEventsPopulateUiLogWithoutWebsocket() {
   }
 }
 
+function testApplyGlobalCombatConfigToCharacterConfig() {
+  const charCfg = {
+    name: 'Alpha',
+    routines: [
+      { type: 'rest', triggerPct: 40 },
+      { type: 'event', enabled: true, cooldownMs: 60_000 },
+    ],
+  };
+
+  const merged = applyGlobalCombatConfigToCharacterConfig(charCfg, {
+    combat: { winRateThreshold: 77 },
+  });
+
+  assert.equal(merged.routines[0].type, 'rest');
+  assert.equal(merged.routines[1].type, 'event');
+  assert.equal(merged.routines[1].minWinrate, 77, 'event routines should inherit the global combat threshold');
+  assert.equal(
+    Object.hasOwn(charCfg.routines[1], 'minWinrate'),
+    false,
+    'global combat injection should not mutate the original character config',
+  );
+
+  const fallback = applyGlobalCombatConfigToCharacterConfig(charCfg, {});
+  assert.equal(fallback.routines[1].minWinrate, 90, 'missing global combat config should fall back to 90');
+}
+
 async function run() {
   const manager = createRuntimeManager({ defaultStopTimeoutMs: 25 });
   const controls = installDeterministicRuntimeStubs(manager);
 
+  testApplyGlobalCombatConfigToCharacterConfig();
   await testLifecycleTransitions(manager, controls);
   await testOperationLockConflict(manager, controls);
   await testRolloutHardClearRunsOnce();

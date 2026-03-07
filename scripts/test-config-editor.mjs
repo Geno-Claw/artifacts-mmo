@@ -78,6 +78,9 @@ async function testPrepareConfigForSaveMaterializesManagedTemplate() {
 
 function testConfigEditorRawRoundTripAndCharacterMapping(internals) {
   const rawText = JSON.stringify({
+    combat: {
+      winRateThreshold: 92,
+    },
     characters: [
       { name: 'Alpha', routines: [{ type: 'rest' }] },
       { name: 'Beta', routines: [{ type: 'skillRotation', enabled: true }] },
@@ -95,6 +98,7 @@ function testConfigEditorRawRoundTripAndCharacterMapping(internals) {
   const stringified = internals.stringifyConfigEditorDraft(parsed.value);
   const reparsed = internals.parseConfigEditorRawText(stringified);
   assert.equal(reparsed.ok, true, 'stringified draft should parse again');
+  assert.equal(reparsed.value.combat.winRateThreshold, 92, 'top-level combat block should survive raw round-trip');
   assert.equal(reparsed.value.characters[1].name, 'Beta');
 }
 
@@ -129,6 +133,30 @@ function testStructuredWritePreservesUnsupportedFields(internals) {
   );
 }
 
+function testStructuredWriteSupportsGlobalCombatThreshold(internals) {
+  const draft = {
+    combat: {
+      winRateThreshold: 90,
+    },
+    characters: [
+      {
+        name: 'Alpha',
+        routines: [{ type: 'event', enabled: true, monsterEvents: true }],
+      },
+    ],
+  };
+
+  const nextDraft = deepClone(draft);
+  internals.setConfigEditorPathValue(nextDraft, 'combat.winRateThreshold', 87);
+
+  assert.equal(nextDraft.combat.winRateThreshold, 87, 'structured write should update the global combat threshold');
+  assert.equal(
+    nextDraft.characters[0].routines[0].monsterEvents,
+    true,
+    'updating the global combat threshold should not disturb routine config',
+  );
+}
+
 function testRawParseFailure(internals) {
   const parsed = internals.parseConfigEditorRawText('{"characters": [');
   assert.equal(parsed.ok, false, 'raw parser should reject malformed JSON');
@@ -143,6 +171,7 @@ async function run() {
   await testPrepareConfigForSaveMaterializesManagedTemplate();
   testConfigEditorRawRoundTripAndCharacterMapping(internals);
   testStructuredWritePreservesUnsupportedFields(internals);
+  testStructuredWriteSupportsGlobalCombatThreshold(internals);
   testRawParseFailure(internals);
 
   console.log('test-config-editor: PASS');

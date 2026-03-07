@@ -6,6 +6,9 @@
     "characters"
   ],
   "properties": {
+    "combat": {
+      "$ref": "#/$defs/combatConfig"
+    },
     "events": {
       "$ref": "#/$defs/eventsConfig"
     },
@@ -112,6 +115,20 @@
     }
   },
   "$defs": {
+    "combatConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Global combat simulation settings shared across all characters",
+      "properties": {
+        "winRateThreshold": {
+          "type": "number",
+          "default": 90,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimum combat simulation win rate percentage required to consider a fight viable"
+        }
+      }
+    },
     "eventsConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -428,13 +445,6 @@
           "default": 60000,
           "minimum": 0,
           "description": "Per-event cooldown (ms) between participation attempts"
-        },
-        "minWinrate": {
-          "type": "number",
-          "default": 80,
-          "minimum": 0,
-          "maximum": 100,
-          "description": "Minimum simulation winrate to attempt an event monster"
         }
       }
     },

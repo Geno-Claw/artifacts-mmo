@@ -89,6 +89,8 @@ function statusFromError(err, fallback = 502) {
 }
 
 const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
+  combat: '#/$defs/combatConfig',
+  'combat.winRateThreshold': '#/$defs/combatConfig/properties/winRateThreshold',
   events: '#/$defs/eventsConfig',
   'events.gatherResources': '#/$defs/eventsConfig/properties/gatherResources',
   npcBuyList: '#/properties/npcBuyList',
@@ -129,7 +131,6 @@ const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
   'characters[].routines.event.minTimeRemainingMs': '#/$defs/eventRoutine/properties/minTimeRemainingMs',
   'characters[].routines.event.maxMonsterType': '#/$defs/eventRoutine/properties/maxMonsterType',
   'characters[].routines.event.cooldownMs': '#/$defs/eventRoutine/properties/cooldownMs',
-  'characters[].routines.event.minWinrate': '#/$defs/eventRoutine/properties/minWinrate',
   'characters[].routines.completeTask.priority': '#/$defs/completeTaskRoutine/properties/priority',
   'characters[].routines.skillRotation.enabled': '#/$defs/skillRotationRoutine/properties/enabled',
   'characters[].routines.skillRotation.priority': '#/$defs/skillRotationRoutine/properties/priority',
