@@ -6,8 +6,7 @@ import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, gatherOnce, fightOnce, parseFightResult, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
-import { restBeforeFight } from '../../services/food-manager.mjs';
-import { hpNeededForFight } from '../../services/combat-simulator.mjs';
+import { getFightReadiness } from '../../services/food-manager.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { depositBankItems } from '../../services/bank-ops.mjs';
 import { buyItemFromNpc, carriedCurrencyCount, topUpNpcCurrency } from '../../services/npc-purchase.mjs';
@@ -298,21 +297,16 @@ export async function executeCrafting(ctx, routine) {
 
       await prepareCombatPotions(ctx, monsterCode);
 
-      if (!(await restBeforeFight(ctx, monsterCode))) {
-        const minHp = hpNeededForFight(ctx, monsterCode);
-        if (minHp === null) {
-          craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: ${monsterCode} unbeatable for ${step.itemCode}, rotating`, {
-            event: 'craft.fight.unwinnable',
-            reasonCode: 'unwinnable_combat',
-            context: { character: ctx.name },
-            data: {
-              skill: routine.rotation.currentSkill,
-              recipeCode: recipe.code,
-              itemCode: step.itemCode,
-              monsterCode,
-            },
+      const readiness = await getFightReadiness(ctx, monsterCode);
+      if (readiness.status !== 'ready') {
+        if (readiness.status === 'unwinnable') {
+          await routine._handleUnwinnableCraftFight(ctx, {
+            monsterCode,
+            itemCode: step.itemCode,
+            recipeCode: recipe.code,
+            claimMode,
+            simResult,
           });
-          await routine.rotation.forceRotate(ctx);
           return true;
         }
         craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: insufficient HP for ${monsterCode}, yielding for rest`, {
@@ -324,11 +318,18 @@ export async function executeCrafting(ctx, routine) {
             recipeCode: recipe.code,
             itemCode: step.itemCode,
             monsterCode,
-            requiredHp: minHp,
+            requiredHp: readiness.requiredHp,
             currentHp: ctx.get().hp,
           },
         });
-        return true;
+        return routine._yield('yield_for_rest', {
+          skill: routine.rotation.currentSkill,
+          recipeCode: recipe.code,
+          itemCode: step.itemCode,
+          monsterCode,
+          requiredHp: readiness.requiredHp,
+          currentHp: ctx.get().hp,
+        });
       }
 
       await moveTo(ctx, monsterLoc.x, monsterLoc.y);

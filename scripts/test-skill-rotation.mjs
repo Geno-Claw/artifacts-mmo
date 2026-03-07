@@ -9,10 +9,12 @@ process.env.ARTIFACTS_TOKEN ||= 'test-token';
 const { CharacterContext } = await import('../src/context.mjs');
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
 const { SkillRotationRoutine } = await import('../src/routines/skill-rotation/index.mjs');
+const gameData = await import('../src/services/game-data.mjs');
 const orderBoard = await import('../src/services/order-board.mjs');
 const orderPriority = await import('../src/services/order-priority.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');
 const inventoryManager = await import('../src/services/inventory-manager.mjs');
+const { fulfillNpcBuyOrderClaim } = await import('../src/routines/skill-rotation/order-claims.mjs');
 
 const {
   _resetOrderBoardForTests: resetOrderBoardForTests,
@@ -38,6 +40,11 @@ const {
   _resetForTests: resetInventoryForTests,
 } = inventoryManager;
 
+const {
+  _setCachesForTests: setGameDataCachesForTests,
+  _resetForTests: resetGameDataForTests,
+} = gameData;
+
 function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
   return {
     name: 'Tester',
@@ -50,6 +57,84 @@ function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
       return itemCounts[code] || 0;
     },
   };
+}
+
+function makeCombatCtx({
+  hp = 100,
+  maxHp = 100,
+  attackFire = 50,
+  initiative = 10,
+  itemCounts = {},
+} = {}) {
+  let character = {
+    name: 'Tester',
+    hp,
+    max_hp: maxHp,
+    attack_fire: attackFire,
+    initiative,
+    inventory: [],
+  };
+
+  return {
+    name: 'Tester',
+    get() {
+      return character;
+    },
+    hpPercent() {
+      return Math.floor((character.hp / character.max_hp) * 100);
+    },
+    applyActionResult(result) {
+      if (result?.character && typeof result.character === 'object') {
+        character = { ...character, ...result.character };
+      }
+    },
+    itemCount(code) {
+      return itemCounts[code] || 0;
+    },
+    inventoryCount() {
+      return 1;
+    },
+    inventoryCapacity() {
+      return 20;
+    },
+    inventoryFull() {
+      return false;
+    },
+    skillLevel() {
+      return 10;
+    },
+    settings() {
+      return {
+        potions: {
+          combat: {
+            enabled: false,
+          },
+        },
+      };
+    },
+  };
+}
+
+async function withMonsterCache(monsters, testFn) {
+  resetGameDataForTests();
+  setGameDataCachesForTests({
+    monsters: monsters.map(monster => [monster.code, monster]),
+  });
+  try {
+    return await testFn();
+  } finally {
+    resetGameDataForTests();
+  }
+}
+
+async function withMockFetch(fetchImpl, testFn) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  try {
+    return await testFn();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 function makeGameDataStub(overrides = {}) {
@@ -1084,6 +1169,128 @@ async function testCraftFightStepSkipsCombatWhenSimUnwinnable() {
   assert.ok(handledArgs, 'unwinnable handler should be called');
   assert.equal(handledArgs.monsterCode, 'cow');
   assert.equal(handledArgs.itemCode, 'milk_bucket');
+}
+
+async function testCraftFightStepTreatsReadinessUnwinnableAsNonViable() {
+  await withMonsterCache([
+    {
+      code: 'boar',
+      hp: 100,
+      attack_fire: 91,
+    },
+  ], async () => {
+    const routine = new SkillRotationRoutine();
+    routine._ensureOrderClaim = async () => null;
+    routine.rotation = {
+      currentSkill: 'alchemy',
+      goalTarget: 10,
+      goalProgress: 0,
+      recipe: { code: 'stew', craft: { skill: 'alchemy', level: 1, items: [] } },
+      productionPlan: [{
+        type: 'fight',
+        itemCode: 'boar_meat',
+        quantity: 1,
+        monster: { code: 'boar', level: 8 },
+        monsterLoc: { x: 2, y: 2 },
+      }],
+      bankChecked: true,
+      forceRotate: async () => null,
+      blockCurrentRecipe: () => true,
+    };
+
+    let handledArgs = null;
+    routine._equipForCraftFight = async () => ({ simResult: { win: true, hpLostPercent: 10 }, ready: true });
+    routine._handleUnwinnableCraftFight = async (_ctx, args) => {
+      handledArgs = args;
+      return true;
+    };
+
+    const result = await routine._executeCrafting(makeCombatCtx({
+      hp: 50,
+      maxHp: 100,
+      attackFire: 50,
+    }));
+
+    assert.equal(result, true);
+    assert.ok(handledArgs, 'readiness-based unwinnable path should reuse craft fight handler');
+    assert.equal(handledArgs.monsterCode, 'boar');
+    assert.equal(handledArgs.itemCode, 'boar_meat');
+  });
+}
+
+async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
+  await withMonsterCache([
+    {
+      code: 'pig',
+      hp: 100,
+      attack_fire: 91,
+    },
+  ], async () => {
+    const claim = {
+      orderId: 'order-1',
+      charName: 'Tester',
+      itemCode: 'pig_skin',
+      sourceType: 'npc_buy',
+      sourceCode: 'pig_skin',
+      remainingQty: 1,
+    };
+
+    const routine = {
+      _syncActiveClaimFromBoard() {
+        return claim;
+      },
+      async _getBankItems() {
+        return new Map();
+      },
+      async _canClaimNpcBuyOrderNow() {
+        return {
+          ok: true,
+          plan: [{
+            type: 'fight',
+            itemCode: 'pig_skin',
+            quantity: 1,
+            monster: { code: 'pig', level: 5 },
+          }],
+        };
+      },
+      async _equipForCraftFight() {
+        return { simResult: { win: true, hpLostPercent: 10 }, ready: true };
+      },
+      async _blockAndReleaseClaim(_ctx, reason) {
+        blockedReason = reason;
+      },
+      _enqueueGatherOrderForDeficit() {},
+      _enqueueFightOrderForDeficit() {},
+    };
+
+    let blockedReason = null;
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          data: [{ x: -3, y: -3 }],
+        });
+      },
+    });
+
+    const result = await withMockFetch(fetchImpl, async () => fulfillNpcBuyOrderClaim(
+      makeCombatCtx({
+        hp: 50,
+        maxHp: 100,
+        attackFire: 50,
+        itemCounts: { pig_skin: 0 },
+      }),
+      routine,
+    ));
+
+    assert.deepEqual(result, {
+      attempted: false,
+      fulfilled: false,
+      reason: 'combat_not_viable:pig',
+    });
+    assert.equal(blockedReason, 'combat_not_viable:pig');
+  });
 }
 
 async function testHandleUnwinnableCraftFightBlocksRecipeAndRotates() {
@@ -2531,6 +2738,8 @@ async function run() {
   await testAcquireCombatClaimPrioritizesToolOrders();
   await testAcquireCraftClaimPrioritizesToolOrders();
   await testCraftFightStepSkipsCombatWhenSimUnwinnable();
+  await testCraftFightStepTreatsReadinessUnwinnableAsNonViable();
+  await testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable();
   await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
   await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
   await testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim();
@@ -2566,11 +2775,13 @@ async function run() {
   await testBuildCraftCandidateAcceptsWhenBankCoversMaterials();
   await testSkillRotationRoutineEnabledHotReload();
   resetOrderPriorityForTests();
+  resetGameDataForTests();
   console.log('skill-rotation tests passed');
 }
 
 run().catch((err) => {
   resetOrderPriorityForTests();
+  resetGameDataForTests();
   console.error(err);
   process.exit(1);
 });

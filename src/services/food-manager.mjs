@@ -199,19 +199,42 @@ export async function restUntil(ctx, hpPct = 80) {
 }
 
 /**
- * Rest inline if current HP is too low to survive fighting the given monster.
- * Returns true if ready to fight, false if the monster is unbeatable.
+ * Check whether a character is ready to fight a monster safely.
+ * Returns a structured result so callers can distinguish true unwinnable fights
+ * from temporary rest failures.
+ *
+ * @returns {Promise<{
+ *   status: 'ready' | 'needs_rest' | 'unwinnable',
+ *   requiredHp: number | null,
+ *   maxHp: number,
+ *   targetPct: number | null,
+ * }>}
  */
-export async function restBeforeFight(ctx, monsterCode) {
-  const minHp = hpNeededForFight(ctx, monsterCode);
-  if (minHp === null) return false;
-
+export async function getFightReadiness(ctx, monsterCode) {
   const c = ctx.get();
-  if (c.hp >= minHp) return true;
+  const minHp = hpNeededForFight(ctx, monsterCode);
+  const maxHp = c.max_hp;
+  if (minHp === null) {
+    return {
+      status: 'unwinnable',
+      requiredHp: null,
+      maxHp,
+      targetPct: null,
+    };
+  }
 
-  const targetPct = Math.ceil((minHp / c.max_hp) * 100);
+  const targetPct = Math.ceil((minHp / maxHp) * 100);
+  if (c.hp >= minHp) {
+    return {
+      status: 'ready',
+      requiredHp: minHp,
+      maxHp,
+      targetPct,
+    };
+  }
+
   if (targetPct > 100) {
-    foodLog.warn(`[${ctx.name}] Cannot fight ${monsterCode} — need ${minHp}hp but max is ${c.max_hp}hp (${targetPct}%)`, {
+    foodLog.warn(`[${ctx.name}] Cannot fight ${monsterCode} — need ${minHp}hp but max is ${maxHp}hp (${targetPct}%)`, {
       event: 'food.rest_before_fight.unwinnable',
       reasonCode: 'unwinnable_combat',
       context: {
@@ -220,11 +243,17 @@ export async function restBeforeFight(ctx, monsterCode) {
       data: {
         monsterCode,
         requiredHp: minHp,
-        maxHp: c.max_hp,
+        maxHp,
       },
     });
-    return false;
+    return {
+      status: 'unwinnable',
+      requiredHp: minHp,
+      maxHp,
+      targetPct,
+    };
   }
+
   foodLog.info(`[${ctx.name}] Need ${minHp}hp (${targetPct}%) to fight ${monsterCode}, have ${c.hp}hp`, {
     event: 'food.rest_before_fight.required',
     context: {
@@ -253,10 +282,31 @@ export async function restBeforeFight(ctx, monsterCode) {
           requiredHp: minHp,
         },
       });
-      return false;
+      return {
+        status: 'needs_rest',
+        requiredHp: minHp,
+        maxHp: fresh.max_hp,
+        targetPct,
+      };
     }
   }
-  return ctx.get().hp >= minHp;
+
+  const fresh = ctx.get();
+  return {
+    status: fresh.hp >= minHp ? 'ready' : 'needs_rest',
+    requiredHp: minHp,
+    maxHp: fresh.max_hp,
+    targetPct,
+  };
+}
+
+/**
+ * Backward-compatible boolean wrapper for older callers.
+ * New code should use getFightReadiness() directly.
+ */
+export async function restBeforeFight(ctx, monsterCode) {
+  const readiness = await getFightReadiness(ctx, monsterCode);
+  return readiness.status === 'ready';
 }
 
 /**

@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict';
 import { EventRoutine } from '../src/routines/event-routine.mjs';
 import { _activeEvents, _eventDefinitions, setGatherResources } from '../src/services/event-manager.mjs';
+import { _setCachesForTests as setGameDataCachesForTests, _resetForTests as resetGameDataForTests } from '../src/services/game-data.mjs';
 import * as npcEventLock from '../src/services/npc-event-lock.mjs';
 
 // --- Helpers ---
@@ -38,16 +39,30 @@ function makeCtx({
   inventoryFull = false,
   skills = {},
   itemCounts = {},
+  hp = 100,
+  maxHp = 100,
+  attackFire = 50,
+  initiative = 10,
 } = {}) {
   return {
     name,
-    get() { return { name, level }; },
+    get() {
+      return {
+        name,
+        level,
+        hp,
+        max_hp: maxHp,
+        attack_fire: attackFire,
+        initiative,
+      };
+    },
     inventoryFull() { return inventoryFull; },
     inventoryCount() { return inventoryFull ? 100 : 10; },
     inventoryCapacity() { return 100; },
     skillLevel(skill) { return skills[skill] || 0; },
     itemCount(code) { return itemCounts[code] || 0; },
     hpPercent() { return 100; },
+    isAt() { return true; },
     equippedItem(slot) { return null; },
     recordLoss() {},
     clearLosses() {},
@@ -582,39 +597,87 @@ function test_npcCostFormatting_nonGold() {
   console.log('  PASS: NPC currency formatting supports non-gold costs');
 }
 
+async function test_executeMonsterTreatsReadinessUnwinnableAsCooldown() {
+  resetGameDataForTests();
+  setGameDataCachesForTests({
+    monsters: [[
+      'boar',
+      {
+        code: 'boar',
+        hp: 100,
+        attack_fire: 91,
+      },
+    ]],
+  });
+
+  const routine = new EventRoutine();
+  const target = { code: 'boar_evt', type: 'monster', monsterCode: 'boar', map: { x: 1, y: 1 } };
+  routine._targetEvent = target;
+  routine._prepared = true;
+  setActiveEvent('boar_evt', 'monster');
+
+  const result = await routine._executeMonster(
+    makeCtx({
+      hp: 50,
+      maxHp: 100,
+      attackFire: 50,
+    }),
+    target,
+  );
+
+  assert.equal(result, false);
+  assert.equal(routine._targetEvent, null, 'unwinnable event target should be cleared');
+  assert.equal(routine._prepared, false, 'prepared state should reset when the target is cleared');
+  assert.ok(routine._eventCooldowns.boar_evt > 0, 'unwinnable event should set a cooldown');
+
+  clearEvents();
+  resetGameDataForTests();
+  console.log('  PASS: event monster unwinnable readiness cools down and clears target');
+}
+
 // --- Run ---
 
-console.log('Event Routine Tests:');
-test_urgent_flag();
-test_default_config();
-test_custom_config();
-test_updateConfig();
-test_canBePreempted();
-test_canRun_disabled();
-test_canRun_inventoryFull();
-test_canRun_noActiveEvents();
-test_canRun_npcEvent();
-test_canRun_monsterEvent_noGameData();
-test_canRun_monsterEvent_resolvesFromDefinition();
-test_canRun_resourceEvent_noGameData();
-test_canRun_eventExpiringSoon();
-test_canRun_eventOnCooldown();
-test_canRun_stickyTarget();
-test_canRun_clearsExpiredTarget();
-test_clearTarget();
-test_setCooldown();
-test_isOnCooldown();
-test_findBestEvent_gatherListFilter();
-test_findBestEvent_emptyGatherList();
-test_findBestEvent_gatherListNoMatch();
-test_inventoryFull_preservesTarget();
-test_npcLock_blocksOtherChars();
-test_npcLock_allowsHolder();
-test_clearTarget_releasesNpcLock();
-test_clearTarget_doesNotReleaseForNonNpc();
-test_canRun_expiryReleasesNpcLock();
-test_lockCharName_initialized();
-test_npcBuyError_478_handled();
-test_npcBuyError_441_marksSkipAndContinues();
-test_npcCostFormatting_nonGold();
-console.log('All event routine tests passed!');
+async function run() {
+  console.log('Event Routine Tests:');
+  test_urgent_flag();
+  test_default_config();
+  test_custom_config();
+  test_updateConfig();
+  test_canBePreempted();
+  test_canRun_disabled();
+  test_canRun_inventoryFull();
+  test_canRun_noActiveEvents();
+  test_canRun_npcEvent();
+  test_canRun_monsterEvent_noGameData();
+  test_canRun_monsterEvent_resolvesFromDefinition();
+  test_canRun_resourceEvent_noGameData();
+  test_canRun_eventExpiringSoon();
+  test_canRun_eventOnCooldown();
+  test_canRun_stickyTarget();
+  test_canRun_clearsExpiredTarget();
+  test_clearTarget();
+  test_setCooldown();
+  test_isOnCooldown();
+  test_findBestEvent_gatherListFilter();
+  test_findBestEvent_emptyGatherList();
+  test_findBestEvent_gatherListNoMatch();
+  test_inventoryFull_preservesTarget();
+  test_npcLock_blocksOtherChars();
+  test_npcLock_allowsHolder();
+  test_clearTarget_releasesNpcLock();
+  test_clearTarget_doesNotReleaseForNonNpc();
+  test_canRun_expiryReleasesNpcLock();
+  test_lockCharName_initialized();
+  test_npcBuyError_478_handled();
+  test_npcBuyError_441_marksSkipAndContinues();
+  test_npcCostFormatting_nonGold();
+  await test_executeMonsterTreatsReadinessUnwinnableAsCooldown();
+  console.log('All event routine tests passed!');
+}
+
+run().catch((err) => {
+  clearEvents();
+  resetGameDataForTests();
+  console.error(err);
+  process.exit(1);
+});

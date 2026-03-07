@@ -5,8 +5,7 @@ import * as api from '../../api.mjs';
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult } from '../../helpers.mjs';
-import { restBeforeFight, withdrawFoodForFights } from '../../services/food-manager.mjs';
-import { hpNeededForFight } from '../../services/combat-simulator.mjs';
+import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
@@ -136,15 +135,19 @@ export async function runNpcTaskFlow(ctx, routine) {
   }
 
   await moveTo(ctx, monsterLoc.x, monsterLoc.y);
-  if (!(await restBeforeFight(ctx, monster))) {
-    const minHp = hpNeededForFight(ctx, monster);
-    if (minHp === null) {
-      log.warn(`[${ctx.name}] NPC Task: ${monster} unbeatable, skipping`);
+  const readiness = await getFightReadiness(ctx, monster);
+  if (readiness.status !== 'ready') {
+    if (readiness.status === 'unwinnable') {
+      log.warn(`[${ctx.name}] NPC Task: ${monster} not safely fightable, skipping`);
       routine.rotation.goalProgress = routine.rotation.goalTarget;
       return true;
     }
     log.info(`[${ctx.name}] NPC Task: insufficient HP for ${monster}, yielding for rest`);
-    return true;
+    return routine._yield('yield_for_rest', {
+      monsterCode: monster,
+      requiredHp: readiness.requiredHp,
+      currentHp: ctx.get().hp,
+    });
   }
 
   const result = await fightOnce(ctx);

@@ -16,8 +16,7 @@ import * as eventManager from '../services/event-manager.mjs';
 import { canCharacterBeatEvent } from '../services/event-simulation.mjs';
 import { equipForCombat, equipForGathering } from '../services/gear-loadout.mjs';
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError } from '../helpers.mjs';
-import { restBeforeFight } from '../services/food-manager.mjs';
-import { hpNeededForFight } from '../services/combat-simulator.mjs';
+import { getFightReadiness } from '../services/food-manager.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
 import { getItemsForNpc } from '../services/npc-buy-config.mjs';
 import { getOrderBoardSnapshot } from '../services/order-board.mjs';
@@ -237,11 +236,10 @@ export class EventRoutine extends BaseRoutine {
     }
 
     // Rest / eat before fight
-    if (!(await restBeforeFight(ctx, monsterCode))) {
-      const minHp = hpNeededForFight(ctx, monsterCode);
-      if (minHp === null) {
-        log.warn(`[${ctx.name}] ${TAG}: ${monsterCode} unbeatable, giving up on event`);
-        ctx.recordLoss(monsterCode);
+    const readiness = await getFightReadiness(ctx, monsterCode);
+    if (readiness.status !== 'ready') {
+      if (readiness.status === 'unwinnable') {
+        log.warn(`[${ctx.name}] ${TAG}: ${monsterCode} not safely fightable, giving up on event`);
         this._setCooldown(target.code);
         this._clearTarget();
         return false;
@@ -250,6 +248,8 @@ export class EventRoutine extends BaseRoutine {
       return this._yield('yield_for_rest', {
         eventCode: target.code,
         monsterCode,
+        requiredHp: readiness.requiredHp,
+        currentHp: ctx.get().hp,
       });
     }
 

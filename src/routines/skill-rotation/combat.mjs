@@ -4,8 +4,7 @@
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult, NoPathError } from '../../helpers.mjs';
-import { restBeforeFight, withdrawFoodForFights } from '../../services/food-manager.mjs';
-import { hpNeededForFight } from '../../services/combat-simulator.mjs';
+import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
@@ -90,23 +89,24 @@ export async function executeCombat(ctx, routine) {
     }
     throw err;
   }
-  if (!(await restBeforeFight(ctx, monsterCode))) {
+  const readiness = await getFightReadiness(ctx, monsterCode);
+  if (readiness.status !== 'ready') {
     const context = claim ? 'order fight' : 'combat';
-    const minHp = hpNeededForFight(ctx, monsterCode);
-    if (minHp === null) {
-      logger.warn(`[${ctx.name}] ${context}: ${monsterCode} unbeatable, rotating`, {
+    if (readiness.status === 'unwinnable') {
+      const action = claim ? 'blocking claim' : 'rotating';
+      logger.warn(`[${ctx.name}] ${context}: ${monsterCode} not safely fightable, ${action}`, {
         event: 'combat.unwinnable',
         reasonCode: 'unwinnable_combat',
         data: {
           monsterCode,
           sourceType: claim?.sourceType || null,
+          requiredHp: readiness.requiredHp,
+          maxHp: readiness.maxHp,
         },
       });
-      ctx.recordLoss(monsterCode);
-      const losses = ctx.consecutiveLosses(monsterCode);
-      if (claim && losses >= routine.maxLosses) {
-        await routine._blockAndReleaseClaim(ctx, 'combat_losses');
-      } else if (!claim && losses >= routine.maxLosses) {
+      if (claim) {
+        await routine._blockAndReleaseClaim(ctx, `combat_not_viable:${monsterCode}`);
+      } else {
         await routine.rotation.forceRotate(ctx);
       }
       return true;
@@ -116,11 +116,17 @@ export async function executeCombat(ctx, routine) {
       reasonCode: 'yield_for_rest',
       data: {
         monsterCode,
-        requiredHp: minHp,
+        requiredHp: readiness.requiredHp,
         currentHp: ctx.get().hp,
+        sourceType: claim?.sourceType || null,
       },
     });
-    return true;
+    return routine._yield('yield_for_rest', {
+      monsterCode,
+      requiredHp: readiness.requiredHp,
+      currentHp: ctx.get().hp,
+      sourceType: claim?.sourceType || null,
+    });
   }
 
   const result = await fightOnce(ctx);

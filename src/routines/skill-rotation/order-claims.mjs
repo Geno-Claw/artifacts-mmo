@@ -15,8 +15,7 @@ import { depositBankItems, withdrawBankItems } from '../../services/bank-ops.mjs
 import { buyItemFromNpc, carriedCurrencyCount, bankCurrencyCount, topUpNpcCurrency } from '../../services/npc-purchase.mjs';
 import { sortOrdersForClaim } from '../../services/order-priority.mjs';
 import { moveTo, gatherOnce, fightOnce, parseFightResult, withdrawPlanFromBank, NoPathError } from '../../helpers.mjs';
-import { restBeforeFight } from '../../services/food-manager.mjs';
-import { hpNeededForFight } from '../../services/combat-simulator.mjs';
+import { getFightReadiness } from '../../services/food-manager.mjs';
 import { equipForGathering } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST } from './constants.mjs';
@@ -1124,9 +1123,9 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
       }
 
       await prepareCombatPotions(ctx, monsterCode);
-      if (!(await restBeforeFight(ctx, monsterCode))) {
-        const minHp = hpNeededForFight(ctx, monsterCode);
-        if (minHp === null) {
+      const readiness = await getFightReadiness(ctx, monsterCode);
+      if (readiness.status !== 'ready') {
+        if (readiness.status === 'unwinnable') {
           enqueuePlanDeficitOrders(routine, plan, claim, ctx, await routine._getBankItems(true));
           await routine._blockAndReleaseClaim(ctx, `combat_not_viable:${monsterCode}`);
           return { attempted: false, fulfilled: false, reason: `combat_not_viable:${monsterCode}` };

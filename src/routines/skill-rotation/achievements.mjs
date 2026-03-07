@@ -12,8 +12,7 @@ import * as gameData from '../../services/game-data.mjs';
 import { getCachedAccountDetails, getCachedAccountAchievements } from '../../services/account-cache.mjs';
 import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
-import { restBeforeFight, withdrawFoodForFights } from '../../services/food-manager.mjs';
-import { hpNeededForFight } from '../../services/combat-simulator.mjs';
+import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
 
@@ -129,22 +128,21 @@ async function executeFightObjective(ctx, routine, action) {
   }
 
   // Rest before fight
-  if (!(await restBeforeFight(ctx, monsterCode))) {
-    const minHp = hpNeededForFight(ctx, monsterCode);
-    if (minHp === null) {
-      achievementLog.warn(`[${ctx.name}] Achievement: ${monsterCode} unbeatable, rotating`, {
+  const readiness = await getFightReadiness(ctx, monsterCode);
+  if (readiness.status !== 'ready') {
+    if (readiness.status === 'unwinnable') {
+      achievementLog.warn(`[${ctx.name}] Achievement: ${monsterCode} not safely fightable, rotating`, {
         event: 'achievement.fight.unwinnable',
         reasonCode: 'unwinnable_combat',
         context: { character: ctx.name },
         data: {
           achievementCode: routine.rotation.achievement?.code || null,
           monsterCode,
+          requiredHp: readiness.requiredHp,
+          maxHp: readiness.maxHp,
         },
       });
-      ctx.recordLoss(monsterCode);
-      if (ctx.consecutiveLosses(monsterCode) >= routine.maxLosses) {
-        await routine.rotation.forceRotate(ctx);
-      }
+      await routine.rotation.forceRotate(ctx);
       return true;
     }
     achievementLog.info(`[${ctx.name}] Achievement: insufficient HP for ${monsterCode}, yielding for rest`, {
@@ -154,11 +152,16 @@ async function executeFightObjective(ctx, routine, action) {
       data: {
         achievementCode: routine.rotation.achievement?.code || null,
         monsterCode,
-        requiredHp: minHp,
+        requiredHp: readiness.requiredHp,
         currentHp: ctx.get().hp,
       },
     });
-    return true;
+    return routine._yield('yield_for_rest', {
+      achievementCode: routine.rotation.achievement?.code || null,
+      monsterCode,
+      requiredHp: readiness.requiredHp,
+      currentHp: ctx.get().hp,
+    });
   }
 
   // Fight
@@ -377,15 +380,21 @@ async function executeCraftObjective(ctx, routine, action) {
       }
 
       await prepareCombatPotions(ctx, monsterCode);
-      if (!(await restBeforeFight(ctx, monsterCode))) {
-        const minHp = hpNeededForFight(ctx, monsterCode);
-        if (minHp === null) {
-          log.warn(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} unbeatable for ${step.itemCode}, rotating`);
+      const readiness = await getFightReadiness(ctx, monsterCode);
+      if (readiness.status !== 'ready') {
+        if (readiness.status === 'unwinnable') {
+          log.warn(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} not safely fightable for ${step.itemCode}, rotating`);
           await routine.rotation.forceRotate(ctx);
           return true;
         }
         log.info(`[${ctx.name}] Achievement ${ach.code}: insufficient HP for ${monsterCode}, yielding for rest`);
-        return true;
+        return routine._yield('yield_for_rest', {
+          achievementCode: ach.code,
+          monsterCode,
+          itemCode: step.itemCode,
+          requiredHp: readiness.requiredHp,
+          currentHp: ctx.get().hp,
+        });
       }
 
       try {
