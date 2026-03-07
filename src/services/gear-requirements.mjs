@@ -13,7 +13,8 @@ import { toPositiveInt } from '../utils.mjs';
 const RESERVED_FREE_SLOTS = 10;
 const CARRY_SLOT_PRIORITY = [
   'weapon', 'shield', 'helmet', 'body_armor', 'leg_armor',
-  'boots', 'amulet', 'ring1', 'ring2', 'rune', 'bag',
+  'boots', 'amulet', 'ring1', 'ring2',
+  'artifact1', 'artifact2', 'artifact3', 'rune', 'bag',
 ];
 const UTILITY_SLOTS = ['utility1_slot', 'utility2_slot'];
 const TOOL_SKILLS = ['mining', 'woodcutting', 'fishing', 'alchemy'];
@@ -129,13 +130,13 @@ function computePotionRequirements(ctx, cfg, monsterCodes, deps) {
   return required;
 }
 
-function computeToolRequirements(level, deps) {
+function computeToolRequirements(ctx, deps) {
   const required = new Map();
-  const charLevel = toPositiveInt(level);
-  if (charLevel <= 0) return required;
+  const char = ctx?.get?.();
+  if (!char) return required;
 
   for (const skill of TOOL_SKILLS) {
-    const tool = deps.getBestToolForSkillAtLevelFn(skill, charLevel);
+    const tool = deps.getBestToolForSkillAtLevelFn(skill, char);
     if (!tool?.code) continue;
     incrementCount(required, tool.code, 1);
   }
@@ -196,7 +197,7 @@ export async function computeCharacterRequirements(name, ctx, cfg, deps) {
   const monsterCodes = allRecords.map(r => r.monsterCode);
   const potionRequired = computePotionRequirements(ctx, cfg, monsterCodes, deps);
   maxMergeCounts(required, potionRequired);
-  const toolRequired = computeToolRequirements(level, deps);
+  const toolRequired = computeToolRequirements(ctx, deps);
   maxMergeCounts(required, toolRequired);
 
   const selected = new Map();

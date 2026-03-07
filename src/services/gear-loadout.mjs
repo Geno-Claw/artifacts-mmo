@@ -248,6 +248,13 @@ export function clearGearCache(charName) {
 const _gatheringGearCache = new Map();
 const GATHER_NO_TOOL_RECHECK_MS = 30_000;
 
+function getGatherSkillLevel(ctx, skill) {
+  const level = typeof ctx?.skillLevel === 'function'
+    ? ctx.skillLevel(skill)
+    : ctx?.get?.()?.[`${skill}_level`];
+  return Number(level) || 0;
+}
+
 function currentGatherLoadout(ctx) {
   const loadout = new Map();
   const char = ctx.get();
@@ -268,10 +275,11 @@ function currentGatherLoadout(ctx) {
  */
 export async function equipForGathering(ctx, skill) {
   const cacheKey = `${ctx.name}:${skill}`;
+  const gatherSkillLevel = getGatherSkillLevel(ctx, skill);
 
   // Check cache — skip if same skill, same level, same gear
   const cached = _gatheringGearCache.get(cacheKey);
-  if (cached && cached.level === ctx.get().level) {
+  if (cached && cached.level === ctx.get().level && cached.skillLevel === gatherSkillLevel) {
     if (cached.missingTool === true) {
       const nextCheckAtMs = Number(cached.nextCheckAtMs) || 0;
       if (Date.now() < nextCheckAtMs) {
@@ -301,6 +309,7 @@ export async function equipForGathering(ctx, skill) {
     _gatheringGearCache.set(cacheKey, {
       loadout: currentGatherLoadout(ctx),
       level: ctx.get().level,
+      skillLevel: gatherSkillLevel,
       missingTool: true,
       missingToolCode: order?.toolCode || null,
       nextCheckAtMs: Date.now() + GATHER_NO_TOOL_RECHECK_MS,
@@ -321,12 +330,12 @@ export async function equipForGathering(ctx, skill) {
   });
 
   if (!changed) {
-    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level });
+    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level, skillLevel: gatherSkillLevel });
     return { changed: false };
   }
 
   if (!swapsFailed) {
-    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level, missingTool: false });
+    _gatheringGearCache.set(cacheKey, { loadout, level: ctx.get().level, skillLevel: gatherSkillLevel, missingTool: false });
   } else {
     _gatheringGearCache.delete(cacheKey);
   }

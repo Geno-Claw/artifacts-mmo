@@ -8,6 +8,7 @@ import {
   RuntimeOperationConflictError,
   createRuntimeManager,
 } from '../src/runtime-manager.mjs';
+import { fight } from '../src/api.mjs';
 import {
   _resetOrderBoardForTests,
   claimOrder,
@@ -23,6 +24,10 @@ import {
   refreshGearState,
   registerContext,
 } from '../src/services/gear-state.mjs';
+import {
+  _resetUiStateForTests,
+  getUiSnapshot,
+} from '../src/services/ui-state.mjs';
 
 const VALID_LIFECYCLE_STATES = new Set(['stopped', 'starting', 'running', 'stopping', 'error']);
 
@@ -91,6 +96,10 @@ function assertOperation(status, expectedName, label = 'runtime status') {
 
 function mapLoadout(slots = {}) {
   return new Map(Object.entries(slots).filter(([, code]) => !!code));
+}
+
+function getUiCharacter(name) {
+  return getUiSnapshot().characters.find(char => char.name === name) || null;
 }
 
 function makeGearCtx(name = 'Alpha', level = 10) {
@@ -486,6 +495,69 @@ async function testCleanupFlushesGearStateAndReleasesClaims() {
   });
 }
 
+async function testActionEventsPopulateUiLogWithoutWebsocket() {
+  _resetUiStateForTests();
+
+  const manager = createRuntimeManager();
+  const originalWsUrl = process.env.WEBSOCKET_URL;
+  delete process.env.WEBSOCKET_URL;
+  const run = manager._buildRunContext('./config/characters.json', {
+    characters: [{ name: 'Alpha', routines: [] }],
+  });
+
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        data: {
+          cooldown: {
+            total_seconds: 5,
+            remaining_seconds: 5,
+          },
+          fight: {
+            result: 'win',
+            opponent: 'mushmush',
+            turns: 2,
+            logs: [],
+            characters: [{
+              character_name: 'Alpha',
+              xp: 7,
+              gold: 3,
+              drops: [{ code: 'mushroom', quantity: 1 }],
+              final_hp: 24,
+            }],
+          },
+          characters: [{ name: 'Alpha' }],
+        },
+      });
+    },
+  });
+
+  try {
+    await fight('Alpha');
+
+    const char = getUiCharacter('Alpha');
+    assert.ok(char, 'UI snapshot should include Alpha');
+    assert.equal(char.gameLogLatestType, 'fight', 'action success should populate game log type');
+    assert.equal(char.gameLogLatest, 'Won vs mushmush +7xp +3g mushroomx1');
+    assert.equal(char.gameLogLatestDetail?.monster, 'mushmush');
+    assert.equal(char.cooldown.action, 'fight', 'action success should update cooldown action');
+    assert.equal(typeof char.cooldown.requestId, 'string');
+    assert.equal(char.cooldown.requestId.length > 0, true, 'cooldown should keep request correlation id');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWsUrl === undefined) delete process.env.WEBSOCKET_URL;
+    else process.env.WEBSOCKET_URL = originalWsUrl;
+    run.unsubscribeActionEvents?.();
+    run.unsubscribeLogEvents?.();
+    run.unsubscribeAccountLog?.();
+    _resetUiStateForTests();
+  }
+}
+
 async function run() {
   const manager = createRuntimeManager({ defaultStopTimeoutMs: 25 });
   const controls = installDeterministicRuntimeStubs(manager);
@@ -494,6 +566,7 @@ async function run() {
   await testOperationLockConflict(manager, controls);
   await testRolloutHardClearRunsOnce();
   await testCleanupFlushesGearStateAndReleasesClaims();
+  await testActionEventsPopulateUiLogWithoutWebsocket();
 
   console.log('test-runtime-manager: PASS');
 }

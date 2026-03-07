@@ -101,9 +101,27 @@ async function testToolNeedsAndTargetsRespectMixedLevels() {
   });
 
   const levels = {
-    Low: 5,
-    Mid: 12,
-    High: 25,
+    Low: {
+      level: 25,
+      mining_level: 5,
+      woodcutting_level: 1,
+      fishing_level: 1,
+      alchemy_level: 5,
+    },
+    Mid: {
+      level: 25,
+      mining_level: 12,
+      woodcutting_level: 15,
+      fishing_level: 12,
+      alchemy_level: 5,
+    },
+    High: {
+      level: 25,
+      mining_level: 25,
+      woodcutting_level: 15,
+      fishing_level: 12,
+      alchemy_level: 20,
+    },
   };
 
   const bestMidMining = getBestToolForSkillAtLevel('mining', 12);
@@ -113,8 +131,8 @@ async function testToolNeedsAndTargetsRespectMixedLevels() {
   assert.equal(needs.get('stone_pick'), 1);
   assert.equal(needs.get('iron_pick'), 1);
   assert.equal(needs.get('steel_pick'), 1);
-  assert.equal(needs.get('wood_axe'), 2);
-  assert.equal(needs.get('iron_axe'), 1);
+  assert.equal(needs.get('wood_axe'), 1);
+  assert.equal(needs.get('iron_axe'), 2);
   assert.equal(needs.get('basic_rod'), 1);
   assert.equal(needs.get('pro_rod'), 2);
   assert.equal(needs.get('apprentice_mortar'), 2);
@@ -132,6 +150,48 @@ async function testToolNeedsAndTargetsRespectMixedLevels() {
   assert.equal(targets.get('pro_rod'), 5, 'latest fishing tier should keep at least five');
   assert.equal(targets.get('master_mortar'), 5, 'latest alchemy tier should keep at least five');
   assert.equal(targets.get('stone_pick'), 1, 'lower tier still kept when needed by low-level chars');
+}
+
+async function testEnsureMissingGatherToolOrderUsesGatherSkillLevel() {
+  _resetForTests();
+
+  const tools = [
+    makeTool('basic_rod', 'fishing', 1),
+    makeTool('steel_fishing_rod', 'fishing', 20),
+  ];
+  const resources = new Map([
+    ['basic_rod', { code: 'shrimp_spot', skill: 'fishing', level: 1 }],
+    ['steel_fishing_rod', { code: 'trout_spot', skill: 'fishing', level: 20 }],
+  ]);
+  installGameDataDeps({ tools, resources });
+
+  const createdOrders = [];
+  _setDepsForTests({
+    getCharacterToolProfilesSnapshotFn: () => ({
+      Fisher: { level: 30, fishing_level: 7, mining_level: 0, woodcutting_level: 0, alchemy_level: 0 },
+    }),
+    getOrderBoardSnapshotFn: () => ({ orders: [] }),
+    createOrMergeOrderFn: (payload) => {
+      createdOrders.push(payload);
+      return { id: 'order-rod' };
+    },
+  });
+
+  const ctx = {
+    name: 'Fisher',
+    get() {
+      return { level: 30, fishing_level: 7 };
+    },
+    skillLevel(skill) {
+      return skill === 'fishing' ? 7 : 0;
+    },
+  };
+
+  const result = ensureMissingGatherToolOrder(ctx, 'fishing');
+  assert.equal(result.queued, true, 'missing fishing tool should queue an order');
+  assert.equal(result.toolCode, 'basic_rod', 'order should respect fishing skill instead of overall level');
+  assert.equal(createdOrders.length, 1, 'one order should be created');
+  assert.equal(createdOrders[0].itemCode, 'basic_rod', 'queued order should be for the skill-appropriate tool');
 }
 
 async function testResolveItemOrderSourcePriority() {
@@ -202,9 +262,9 @@ async function testEnsureMissingGatherToolOrderAvoidsDuplicateOverOrdering() {
   const createdOrders = [];
 
   _setDepsForTests({
-    getCharacterLevelsSnapshotFn: () => ({
-      Low: 5,
-      Mid: 12,
+    getCharacterToolProfilesSnapshotFn: () => ({
+      Low: { level: 12, mining_level: 5, woodcutting_level: 0, fishing_level: 0, alchemy_level: 0 },
+      Mid: { level: 12, mining_level: 12, woodcutting_level: 0, fishing_level: 0, alchemy_level: 0 },
     }),
     globalCountFn: () => 1,
     getOrderBoardSnapshotFn: () => ({
@@ -225,7 +285,10 @@ async function testEnsureMissingGatherToolOrderAvoidsDuplicateOverOrdering() {
   const ctx = {
     name: 'Mid',
     get() {
-      return { level: 12 };
+      return { level: 12, mining_level: 12 };
+    },
+    skillLevel(skill) {
+      return skill === 'mining' ? 12 : 0;
     },
   };
 
@@ -248,6 +311,7 @@ async function testEnsureMissingGatherToolOrderAvoidsDuplicateOverOrdering() {
 async function run() {
   await testToolNeedsAndTargetsRespectMixedLevels();
   await testResolveItemOrderSourcePriority();
+  await testEnsureMissingGatherToolOrderUsesGatherSkillLevel();
   await testEnsureMissingGatherToolOrderAvoidsDuplicateOverOrdering();
   _resetForTests();
   console.log('test-tool-policy: PASS');

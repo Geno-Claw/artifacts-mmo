@@ -259,6 +259,9 @@ const SLOT_TO_TYPE = {
   ring1:      [{ type: 'ring' }],
   ring2:      [{ type: 'ring' }],
   amulet:     [{ type: 'amulet' }],
+  artifact1:  [{ type: 'artifact' }],
+  artifact2:  [{ type: 'artifact' }],
+  artifact3:  [{ type: 'artifact' }],
   bag:        [{ type: 'bag' }],
   rune:       [{ type: 'rune' }],
 };
@@ -279,7 +282,8 @@ export function getEquipmentForSlot(slot, charLevel) {
 
 export const EQUIPMENT_SLOTS = [
   'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet', 'bag', 'rune',
+  'leg_armor', 'boots', 'ring1', 'ring2', 'amulet',
+  'artifact1', 'artifact2', 'artifact3', 'bag', 'rune',
 ];
 
 // --- Bank items ---
@@ -458,7 +462,7 @@ export function getNpcBuyPrice(npcCode, itemCode) {
 
 const EQUIPMENT_TYPES = new Set([
   'weapon', 'shield', 'helmet', 'body_armor',
-  'leg_armor', 'boots', 'ring', 'amulet', 'bag', 'rune',
+  'leg_armor', 'boots', 'ring', 'amulet', 'artifact', 'bag', 'rune',
 ]);
 
 export function isEquipmentType(item) {

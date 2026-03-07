@@ -36,6 +36,7 @@ const {
 
 const {
   getBankItems,
+  applyBankGoldDelta,
   _setApiClientForTests: setInventoryApiForTests,
   _resetForTests: resetInventoryForTests,
 } = inventoryManager;
@@ -1293,6 +1294,176 @@ async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
   });
 }
 
+async function testNpcBuyGoldClaimBuysAffordableQuantityAndBlocksWhenBudgetExhausted() {
+  await withTempOrderBoard(async () => {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+    applyBankGoldDelta(250, 'deposit');
+
+    const state = {
+      name: 'Buyer',
+      x: 0,
+      y: 0,
+      gold: 0,
+      bankGold: 250,
+      bank: new Map(),
+      inventory: new Map(),
+      purchases: [],
+      deposits: [],
+    };
+
+    const fakeApi = {
+      async getMaps(params = {}) {
+        if (params.content_type === 'bank') {
+          return [{ x: 4, y: 1, name: 'bank', access: { conditions: [] } }];
+        }
+        return [];
+      },
+      async getBankItems({ page } = {}) {
+        if ((Number(page) || 1) > 1) return [];
+        return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+      },
+      async move(x, y) {
+        state.x = x;
+        state.y = y;
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+      async waitForCooldown() {},
+      async withdrawGold(quantity) {
+        const qty = Math.max(0, Number(quantity) || 0);
+        if ((state.bankGold || 0) < qty) throw new Error('not enough gold');
+        state.bankGold -= qty;
+        state.gold += qty;
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+      async withdrawBank(items) {
+        for (const row of items || []) {
+          const code = `${row?.code || ''}`.trim();
+          const qty = Math.max(0, Number(row?.quantity) || 0);
+          if (!code || qty <= 0) continue;
+          const have = state.bank.get(code) || 0;
+          if (have < qty) throw new Error(`not enough ${code}`);
+          if (have === qty) state.bank.delete(code);
+          else state.bank.set(code, have - qty);
+          state.inventory.set(code, (state.inventory.get(code) || 0) + qty);
+        }
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+      async depositBank(items) {
+        for (const row of items || []) {
+          const code = `${row?.code || ''}`.trim();
+          const qty = Math.max(0, Number(row?.quantity) || 0);
+          if (!code || qty <= 0) continue;
+          const have = state.inventory.get(code) || 0;
+          if (have < qty) throw new Error(`not enough inventory ${code}`);
+          if (have === qty) state.inventory.delete(code);
+          else state.inventory.set(code, have - qty);
+          state.bank.set(code, (state.bank.get(code) || 0) + qty);
+          state.deposits.push({ code, quantity: qty });
+        }
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+    };
+
+    setInventoryApiForTests(fakeApi);
+    setBankOpsApiForTests(fakeApi);
+
+    try {
+      await getBankItems(true);
+
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+          createOrders: true,
+          leaseMs: 120_000,
+          blockedRetryMs: 600_000,
+        },
+      });
+      routine._getBankItems = async () => new Map(state.bank);
+      routine._getCraftClaimItem = (order) => ({
+        code: order?.itemCode || 'npc_item',
+        level: Number(order?.sourceLevel) || 1,
+      });
+      routine._resolveNpcBuyPlan = (itemCode, quantity = 1) => [{
+        type: 'npc_trade',
+        itemCode,
+        npcCode: 'rune_vendor',
+        currency: 'gold',
+        buyPrice: 100,
+        quantity,
+      }];
+      routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
+      routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 10 } });
+
+      const ctx = makeMutableCtx(state);
+      const order = createOrMergeOrder({
+        requesterName: 'ReqA',
+        recipeCode: 'partial-healing-rune',
+        itemCode: 'healing_rune',
+        sourceType: 'npc_buy',
+        sourceCode: 'rune_vendor',
+        sourceLevel: 20,
+        quantity: 3,
+      });
+      assert.ok(order, 'expected npc_buy order to be created');
+
+      const claim = routine._claimOrderForChar(ctx, order);
+      assert.ok(claim, 'expected npc_buy order to be claimed');
+
+      await withMockFetch(makeNpcBuyFetch(state, { healing_rune: 100 }), async () => {
+        const first = await fulfillNpcBuyOrderClaim(ctx, routine);
+        assert.deepEqual(first, { attempted: true, fulfilled: false });
+        assert.deepEqual(state.purchases, [{
+          itemCode: 'healing_rune',
+          quantity: 2,
+          unitPrice: 100,
+          totalCost: 200,
+        }], 'first pass should buy only the currently affordable quantity');
+        assert.deepEqual(state.deposits, [{ code: 'healing_rune', quantity: 2 }], 'partial progress should deposit immediately');
+        assert.equal(state.gold, 0, 'purchased gold should be spent');
+        assert.equal(state.bankGold, 50, 'bank gold should track the remaining budget');
+
+        const afterFirst = getOrderBoardSnapshot().orders.find((row) => row.id === order.id);
+        assert.ok(afterFirst, 'order should remain on the board after partial progress');
+        assert.equal(afterFirst.remainingQty, 1, 'partial deposit should reduce remaining quantity');
+        assert.equal(afterFirst.claim?.charName, 'Buyer', 'claim should remain active while more work remains');
+
+        const second = await fulfillNpcBuyOrderClaim(ctx, routine);
+        assert.deepEqual(second, {
+          attempted: false,
+          fulfilled: false,
+          reason: 'insufficient_npc_budget:gold',
+        });
+
+        const afterSecond = getOrderBoardSnapshot().orders.find((row) => row.id === order.id);
+        assert.ok(afterSecond, 'order should still be present after budget exhaustion');
+        assert.equal(afterSecond.remainingQty, 1, 'budget exhaustion should not lose remaining demand');
+        assert.equal(afterSecond.claim, null, 'active claim should be released when budget is exhausted');
+        assert.ok(
+          Number(afterSecond.blockedByChar?.Buyer) > 0,
+          'zero-affordable gold should block the order for the character after release',
+        );
+      });
+    } finally {
+      resetInventoryForTests();
+      resetBankOpsForTests();
+    }
+  });
+}
+
 async function testHandleUnwinnableCraftFightBlocksRecipeAndRotates() {
   const routine = new SkillRotationRoutine();
   let blockCalls = 0;
@@ -2074,12 +2245,15 @@ async function testCraftingWithdrawHonorsReserveMaxUnits() {
 }
 
 function makeMutableCtx(state) {
+  const losses = state.losses || (state.losses = new Map());
+
   return {
     name: state.name || 'Tester',
     get() {
       return {
         x: state.x || 0,
         y: state.y || 0,
+        gold: state.gold || 0,
         inventory: [...state.inventory.entries()].map(([code, quantity]) => ({ code, quantity })),
       };
     },
@@ -2097,6 +2271,9 @@ function makeMutableCtx(state) {
     itemCount(code) {
       return state.inventory.get(code) || 0;
     },
+    hasItem(code, quantity = 1) {
+      return (state.inventory.get(code) || 0) >= Math.max(1, Number(quantity) || 1);
+    },
     inventoryCount() {
       let total = 0;
       for (const qty of state.inventory.values()) total += qty;
@@ -2109,11 +2286,116 @@ function makeMutableCtx(state) {
       const used = [...state.inventory.entries()].filter(([, qty]) => qty > 0).length;
       return Math.max(0, 20 - used);
     },
+    inventoryFull() {
+      return this.inventoryCount() >= this.inventoryCapacity() || this.inventoryEmptySlots() <= 0;
+    },
     taskCoins() {
       return state.inventory.get('tasks_coin') || 0;
     },
     async refresh() {},
-    applyActionResult() {},
+    applyActionResult(result) {
+      const character = result?.character;
+      if (!character || typeof character !== 'object') return;
+      if (Number.isFinite(character.x)) state.x = character.x;
+      if (Number.isFinite(character.y)) state.y = character.y;
+      if (Number.isFinite(character.gold)) state.gold = character.gold;
+      if (Array.isArray(character.inventory)) {
+        state.inventory = new Map(
+          character.inventory
+            .filter((row) => row?.code && Number(row.quantity) > 0)
+            .map((row) => [row.code, Number(row.quantity)]),
+        );
+      }
+    },
+    clearLosses(monsterCode) {
+      losses.delete(monsterCode);
+    },
+    recordLoss(monsterCode) {
+      losses.set(monsterCode, (losses.get(monsterCode) || 0) + 1);
+    },
+    consecutiveLosses(monsterCode) {
+      return losses.get(monsterCode) || 0;
+    },
+  };
+}
+
+function makeJsonResponse(data, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify({ data });
+    },
+  };
+}
+
+function makeJsonErrorResponse(message, status = 400, code = status) {
+  return {
+    ok: false,
+    status,
+    async text() {
+      return JSON.stringify({ error: { code, message } });
+    },
+  };
+}
+
+function snapshotCharacter(state) {
+  return {
+    name: state.name || 'Tester',
+    x: state.x || 0,
+    y: state.y || 0,
+    gold: state.gold || 0,
+    inventory: [...state.inventory.entries()]
+      .filter(([, quantity]) => quantity > 0)
+      .map(([code, quantity]) => ({ code, quantity })),
+  };
+}
+
+function makeNpcBuyFetch(state, pricesByCode = {}) {
+  return async (url, opts = {}) => {
+    const requestUrl = new URL(url);
+    const method = `${opts.method || 'GET'}`.toUpperCase();
+    const body = opts.body ? JSON.parse(opts.body) : {};
+
+    if (method === 'GET' && requestUrl.pathname === '/maps') {
+      const contentType = requestUrl.searchParams.get('content_type');
+      const contentCode = requestUrl.searchParams.get('content_code');
+      if (contentType === 'npc' && contentCode === 'rune_vendor') {
+        return makeJsonResponse([{ x: 6, y: 1 }]);
+      }
+      return makeJsonResponse([]);
+    }
+
+    if (method === 'POST' && requestUrl.pathname === `/my/${state.name}/action/move`) {
+      state.x = Number(body.x) || 0;
+      state.y = Number(body.y) || 0;
+      return makeJsonResponse({
+        character: snapshotCharacter(state),
+        cooldown: { total_seconds: 0 },
+      });
+    }
+
+    if (method === 'POST' && requestUrl.pathname === `/my/${state.name}/action/npc/buy`) {
+      const itemCode = `${body.code || ''}`.trim();
+      const quantity = Math.max(0, Number(body.quantity) || 0);
+      const unitPrice = Number(pricesByCode[itemCode]) || 0;
+      const totalCost = unitPrice * quantity;
+      if (!itemCode || quantity <= 0) {
+        return makeJsonErrorResponse('invalid npc buy request', 400);
+      }
+      if ((state.gold || 0) < totalCost) {
+        return makeJsonErrorResponse('not enough gold', 478);
+      }
+      state.gold -= totalCost;
+      state.inventory.set(itemCode, (state.inventory.get(itemCode) || 0) + quantity);
+      state.purchases.push({ itemCode, quantity, unitPrice, totalCost });
+      return makeJsonResponse({
+        character: snapshotCharacter(state),
+        cooldown: { total_seconds: 0 },
+      });
+    }
+
+    return makeJsonErrorResponse(`unhandled test fetch: ${method} ${requestUrl.pathname}`, 404);
   };
 }
 
@@ -2740,6 +3022,7 @@ async function run() {
   await testCraftFightStepSkipsCombatWhenSimUnwinnable();
   await testCraftFightStepTreatsReadinessUnwinnableAsNonViable();
   await testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable();
+  await testNpcBuyGoldClaimBuysAffordableQuantityAndBlocksWhenBudgetExhausted();
   await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
   await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
   await testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim();

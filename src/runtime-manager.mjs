@@ -41,73 +41,13 @@ import { loadNpcCatalogs } from './services/game-data.mjs';
 import { loadNpcBuyList } from './services/npc-buy-config.mjs';
 import { normalizeConfig, hashCanonicalJson, saveConfigAtomically } from './services/config-store.mjs';
 import { runWithLogContext } from './log-context.mjs';
+import { extractAccountLogDetail } from './action-log.mjs';
 
 const runtimeLog = log.createLogger({ scope: 'runtime' });
 
 function extractCharacterNameFromMessage(message) {
   const match = `${message || ''}`.match(/^\[([^\]]+)\]/);
   return match ? match[1] : '';
-}
-
-/**
- * Extract a lightweight detail object from account_log content per action type.
- * Strips the full character snapshot — only keeps fields useful for display.
- */
-function extractLogDetail(type, content) {
-  if (!content) return null;
-  switch (type) {
-    case 'fight': {
-      const f = content.fight;
-      if (!f) return null;
-      const ch = f.characters?.[0] || {};
-      return {
-        result: f.result,
-        monster: f.monster?.name || f.monster_name || null,
-        xp: ch.xp || 0,
-        gold: ch.gold || 0,
-        drops: ch.drops || [],
-        turns: f.turns || [],
-      };
-    }
-    case 'gathering': {
-      const g = content.gathering;
-      return {
-        resource: g?.resource?.code || null,
-        skill: g?.skill || null,
-        xp: g?.xp || 0,
-        drops: content.drops || [],
-      };
-    }
-    case 'crafting':
-      return {
-        item: content.item?.code || null,
-        quantity: content.quantity || 0,
-        skill: content.skill || null,
-        xp: content.xp_gained || 0,
-      };
-    case 'movement':
-      return {
-        map: content.map?.name || null,
-        x: content.map?.x ?? null,
-        y: content.map?.y ?? null,
-        path: content.path || [],
-      };
-    case 'use':
-      return { item: content.item?.code || null, quantity: content.quantity || 0 };
-    case 'rest':
-      return { hpRestored: content.hp_restored || 0 };
-    case 'deposit_item':
-    case 'withdraw_item':
-      return { items: (content.items || []).map(i => ({ code: i.code, qty: i.quantity })) };
-    case 'deposit_gold':
-    case 'withdraw_gold':
-      return { gold: content.gold || 0 };
-    case 'equip':
-    case 'unequip':
-      return { item: content.item?.code || null, slot: content.slot || null };
-    default:
-      return null;
-  }
 }
 
 const DEFAULT_CONFIG_PATH = './config/characters.json';
@@ -327,6 +267,15 @@ export class RuntimeManager {
         observedAt: entry.observedAt,
         requestId: entry.requestId || null,
       });
+
+      if (entry.status === 'success' && entry.result?.summary) {
+        recordGameLog(entry.name, {
+          line: entry.result.summary,
+          type: entry.result.type || null,
+          at: entry.observedAt,
+          detail: entry.result.detail ?? null,
+        });
+      }
     });
 
     // Game account log via WebSocket — drives the card LOG display.
@@ -338,7 +287,10 @@ export class RuntimeManager {
           line: data.description || `${data.type || 'action'}`,
           type: data.type || null,
           at: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
-          detail: extractLogDetail(data.type, data.content),
+          detail: extractAccountLogDetail(data.type, data.content, {
+            characterName: data.character,
+            description: data.description,
+          }),
         });
       });
     }

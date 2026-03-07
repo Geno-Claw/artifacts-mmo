@@ -77,6 +77,7 @@ function installAnalyzeDeps({
     getClaimedTotalFn: (code) => claimedByCode.get(code) || 0,
     globalCountFn: (code) => globalByCode.get(code) || 0,
     bankCountFn: (code) => bankByCode.get(code) || 0,
+    getCharacterToolProfilesSnapshotFn: () => levelsByChar,
     getCharacterLevelsSnapshotFn: () => levelsByChar,
     getTrackedCharacterNamesFn: () => trackedCharNames,
     computeToolNeedsByCodeFn: () => needsByCode,

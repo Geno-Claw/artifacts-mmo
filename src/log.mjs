@@ -13,7 +13,8 @@
  * - logger.child(extraContext)
  *
  * Environment:
- * - LOG_LEVEL=debug|info|warn|error|stat (default: info)
+ * - LOG_LEVEL=debug|info|warn|error|stat (default console level: info)
+ * - LOG_JSONL_LEVEL=debug|info|warn|error|stat (default file level: debug)
  * - LOG_OUTPUT=console,jsonl (default: console,jsonl)
  * - LOG_DIR=./report/logs (default)
  * - LOG_DEBUG_SCOPES=scheduler,api,... (optional; filters debug logs)
@@ -24,7 +25,8 @@ import { appendFile } from 'node:fs/promises';
 import { join as pathJoin } from 'node:path';
 import { getLogContext } from './log-context.mjs';
 
-const LOG_LEVEL = `${process.env.LOG_LEVEL || 'info'}`.trim().toLowerCase();
+const CONSOLE_LOG_LEVEL = `${process.env.LOG_LEVEL || 'info'}`.trim().toLowerCase();
+const JSONL_LOG_LEVEL = `${process.env.LOG_JSONL_LEVEL || 'debug'}`.trim().toLowerCase();
 const LEVELS = Object.freeze({
   debug: 0,
   info: 1,
@@ -32,7 +34,8 @@ const LEVELS = Object.freeze({
   warn: 2,
   error: 3,
 });
-const activeLevel = LEVELS[LOG_LEVEL] ?? LEVELS.info;
+const consoleLevel = LEVELS[CONSOLE_LOG_LEVEL] ?? LEVELS.info;
+const jsonlLevel = LEVELS[JSONL_LOG_LEVEL] ?? LEVELS.debug;
 
 const LOG_OUTPUT = `${process.env.LOG_OUTPUT || 'console,jsonl'}`.trim();
 const LOG_DIR = `${process.env.LOG_DIR || './report/logs'}`.trim() || './report/logs';
@@ -221,9 +224,9 @@ function normalizeMeta(meta) {
   return out;
 }
 
-function shouldEmit(level, scope) {
+function shouldEmit(level, scope, minLevel) {
   const levelRank = LEVELS[level] ?? LEVELS.info;
-  if (levelRank < activeLevel) return false;
+  if (levelRank < minLevel) return false;
 
   if (level === 'debug' && debugScopes.size > 0) {
     const scopeText = `${scope || ''}`.trim();
@@ -315,7 +318,10 @@ function publish(entry) {
 function emitEntry(entry) {
   const renderedMessage = formatEntryMessage(entry);
   const line = formatConsoleLine(entry.level, renderedMessage, entry.atMs);
-  if (outputSet.has('console')) {
+  const consoleAllowed = outputSet.has('console') && shouldEmit(entry.level, entry.scope, consoleLevel);
+  const jsonlAllowed = outputSet.has('jsonl') && shouldEmit(entry.level, entry.scope, jsonlLevel);
+
+  if (consoleAllowed) {
     if (entry.level === 'warn') {
       console.warn(line);
     } else if (entry.level === 'error') {
@@ -325,8 +331,12 @@ function emitEntry(entry) {
     }
   }
 
-  writeJsonl(entry);
-  publish(entry);
+  if (jsonlAllowed) {
+    writeJsonl(entry);
+  }
+  if (consoleAllowed) {
+    publish(entry);
+  }
 }
 
 function coerceMessage(message) {
@@ -353,8 +363,9 @@ function createEntry(level, message, meta, baseContext = {}) {
   delete contextSource.scope;
 
   const mergedContext = sanitizeValue(contextSource);
-
-  if (!shouldEmit(level, scope)) return null;
+  const shouldEmitToConsole = outputSet.has('console') && shouldEmit(level, scope, consoleLevel);
+  const shouldEmitToJsonl = outputSet.has('jsonl') && shouldEmit(level, scope, jsonlLevel);
+  if (!shouldEmitToConsole && !shouldEmitToJsonl) return null;
 
   const atMs = Date.now();
   const iso = new Date(atMs).toISOString();

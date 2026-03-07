@@ -17,6 +17,7 @@ const {
   equippedCount,
   getBankItems,
   getCharacterLevelsSnapshot,
+  getCharacterToolProfilesSnapshot,
   globalCount,
   initialize,
   invalidateBank,
@@ -86,6 +87,14 @@ async function run() {
       {},
       'unknown levels should not be tracked',
     );
+    assert.deepEqual(
+      getCharacterToolProfilesSnapshot(),
+      {
+        A: { level: 0, mining_level: 0, woodcutting_level: 0, fishing_level: 0, alchemy_level: 0 },
+        B: { level: 0, mining_level: 0, woodcutting_level: 0, fishing_level: 0, alchemy_level: 0 },
+      },
+      'tool profiles should be tracked even before levels are known',
+    );
     assert.ok(
       events.some(entry => entry.scope === 'service.inventory-manager' && entry.event === 'inventory.initialized'),
       'initialize should emit structured inventory.initialized log',
@@ -138,11 +147,25 @@ async function run() {
   // Character map rebuild should replace old values, not merge.
   updateCharacter('A', makeChar('A', {
     inventory: [{ code: 'wooden_shield', quantity: 4 }],
-    slots: { shield_slot: null, ring1_slot: null, ring2_slot: 'copper_ring', level: 12 },
+    slots: {
+      shield_slot: null,
+      ring1_slot: null,
+      ring2_slot: 'copper_ring',
+      level: 12,
+      mining_level: 4,
+      woodcutting_level: 5,
+      fishing_level: 6,
+      alchemy_level: 7,
+    },
   }));
   assert.equal(inventoryCount('wooden_shield'), 6, 'inventory rebuild replaced char A data');
   assert.equal(equippedCount('wooden_shield'), 1, 'equipment rebuild replaced char A slots');
   assert.equal(getCharacterLevelsSnapshot().A, 12, 'character level snapshot should refresh with updateCharacter');
+  assert.deepEqual(
+    getCharacterToolProfilesSnapshot().A,
+    { level: 12, mining_level: 4, woodcutting_level: 5, fishing_level: 6, alchemy_level: 7 },
+    'tool profile snapshot should refresh with updateCharacter',
+  );
 
   // Bank deltas should update immediately and clamp at zero.
     applyBankDelta([{ code: 'wooden_shield', quantity: 2 }], 'withdraw', { reason: 'test withdraw', charName: 'A' });

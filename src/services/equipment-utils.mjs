@@ -55,6 +55,7 @@ export function categoryFromItem(item) {
   if (type === 'boots') return 'boots';
   if (type === 'ring') return 'ring';
   if (type === 'amulet') return 'amulet';
+  if (type === 'artifact') return 'artifact';
   if (type === 'bag') return 'bag';
   if (type === 'rune') return 'rune';
   if (type === 'utility') return 'utility';

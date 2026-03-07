@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import * as log from './log.mjs';
+import { describeActionResult } from './action-log.mjs';
 
 const API = process.env.ARTIFACTS_API || 'https://api.artifactsmmo.com';
 const TOKEN = process.env.ARTIFACTS_TOKEN;
@@ -217,11 +218,38 @@ async function request(method, path, body = null) {
       }
 
       const cooldown = json.data?.cooldown || null;
+      const actionResult = actionInfo
+        ? describeActionResult(actionInfo.action, json.data, {
+          characterName: actionInfo.name,
+          requestBody: body,
+        })
+        : null;
       actionEvent('success', {
         attempt: attemptNo,
         durationMs,
         cooldown,
+        result: actionResult,
       });
+      if (actionInfo && actionResult) {
+        apiLog.info(`Action ${actionInfo.action} completed`, {
+          event: 'api.action.result',
+          context: {
+            requestId,
+            action: actionInfo.action,
+          },
+          detail: actionResult.summary,
+          data: {
+            method,
+            path,
+            attempt: attemptNo,
+            durationMs,
+            status: res.status,
+            type: actionResult.type,
+            detail: actionResult.detail,
+            cooldownSeconds: cooldown?.total_seconds ?? cooldown?.remaining_seconds ?? 0,
+          },
+        });
+      }
       apiLog.debug(`${method} ${path} success`, {
         event: 'api.request.success',
         context: {

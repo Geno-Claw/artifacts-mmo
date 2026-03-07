@@ -6,7 +6,7 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { bankCount, globalCount, getCharacterLevelsSnapshot } from './inventory-manager.mjs';
+import { bankCount, globalCount, getCharacterToolProfilesSnapshot } from './inventory-manager.mjs';
 import { getClaimedTotal, getTrackedCharacterNames } from './gear-state.mjs';
 import {
   depositBankItems,
@@ -31,7 +31,8 @@ let _deps = {
   getClaimedTotalFn: getClaimedTotal,
   globalCountFn: globalCount,
   bankCountFn: bankCount,
-  getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+  getCharacterToolProfilesSnapshotFn: getCharacterToolProfilesSnapshot,
+  getCharacterLevelsSnapshotFn: getCharacterToolProfilesSnapshot,
   getTrackedCharacterNamesFn: getTrackedCharacterNames,
   computeToolNeedsByCodeFn: computeToolNeedsByCode,
   computeLatestToolBySkillFn: computeLatestToolBySkill,
@@ -43,14 +44,14 @@ let _deps = {
   waitForCooldownFn: (result) => api.waitForCooldown(result),
 };
 
-function getLevelForCharacter(levelsByChar, name) {
+function hasProfileForCharacter(toolProfilesByChar, name) {
   const charName = `${name || ''}`.trim();
-  if (!charName) return 0;
-  if (levelsByChar instanceof Map) return toPositiveInt(levelsByChar.get(charName));
-  if (levelsByChar && typeof levelsByChar === 'object') {
-    return toPositiveInt(levelsByChar[charName]);
+  if (!charName) return false;
+  if (toolProfilesByChar instanceof Map) return toolProfilesByChar.has(charName);
+  if (toolProfilesByChar && typeof toolProfilesByChar === 'object') {
+    return Object.prototype.hasOwnProperty.call(toolProfilesByChar, charName);
   }
-  return 0;
+  return false;
 }
 
 function summarizeMissingCharacters(names = [], limit = 5) {
@@ -78,22 +79,24 @@ export function analyzeRecycleCandidates(ctx, bankItems) {
 
   const candidates = [];
   const neverSellSet = new Set(sellRules.neverSell || []);
-  const levelsByChar = _deps.getCharacterLevelsSnapshotFn();
+  const levelsByChar = typeof _deps.getCharacterToolProfilesSnapshotFn === 'function'
+    ? _deps.getCharacterToolProfilesSnapshotFn()
+    : _deps.getCharacterLevelsSnapshotFn?.() || {};
   const trackedNames = _deps.getTrackedCharacterNamesFn();
   const normalizedTracked = Array.isArray(trackedNames)
     ? trackedNames.map(name => `${name || ''}`.trim()).filter(Boolean)
     : [];
   const missingLevelNames = [];
   for (const name of normalizedTracked) {
-    if (getLevelForCharacter(levelsByChar, name) > 0) continue;
+    if (hasProfileForCharacter(levelsByChar, name)) continue;
     missingLevelNames.push(name);
   }
   const toolSnapshotComplete = normalizedTracked.length > 0 && missingLevelNames.length === 0;
   if (!toolSnapshotComplete) {
     const detail = normalizedTracked.length <= 0
       ? 'no tracked characters'
-      : `missing ${missingLevelNames.length}/${normalizedTracked.length} level(s): ${summarizeMissingCharacters(missingLevelNames)}`;
-    log.warn(`[${ctx.name}] Recycle: skipping tool recycle (incomplete level snapshot: ${detail})`);
+      : `missing ${missingLevelNames.length}/${normalizedTracked.length} tool profile(s): ${summarizeMissingCharacters(missingLevelNames)}`;
+    log.warn(`[${ctx.name}] Recycle: skipping tool recycle (incomplete tool snapshot: ${detail})`);
   }
 
   const needsByCode = toolSnapshotComplete ? _deps.computeToolNeedsByCodeFn(levelsByChar) : new Map();
@@ -303,7 +306,8 @@ export function _resetForTests() {
     getClaimedTotalFn: getClaimedTotal,
     globalCountFn: globalCount,
     bankCountFn: bankCount,
-    getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+    getCharacterToolProfilesSnapshotFn: getCharacterToolProfilesSnapshot,
+    getCharacterLevelsSnapshotFn: getCharacterToolProfilesSnapshot,
     getTrackedCharacterNamesFn: getTrackedCharacterNames,
     computeToolNeedsByCodeFn: computeToolNeedsByCode,
     computeLatestToolBySkillFn: computeLatestToolBySkill,

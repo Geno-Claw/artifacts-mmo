@@ -18,9 +18,18 @@ import { EQUIPMENT_SLOTS } from './game-data.mjs';
 import { bankCount } from './inventory-manager.mjs';
 import { TOOL_EFFECT_BY_SKILL } from './tool-policy.mjs';
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 
 const DEFENSIVE_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots'];
-const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2', 'rune'];
+const ARTIFACT_SLOTS = ['artifact1', 'artifact2', 'artifact3'];
+const ACCESSORY_SLOTS = ['amulet', 'ring1', 'ring2', ...ARTIFACT_SLOTS, 'rune'];
+const MULTI_SLOT_FAMILIES = [
+  ['ring1', 'ring2'],
+  ARTIFACT_SLOTS,
+];
+const MULTI_SLOT_FAMILY_BY_SLOT = new Map(
+  MULTI_SLOT_FAMILIES.flatMap(family => family.map(slot => [slot, family])),
+);
 
 /**
  * Extract combat sim options that stay fixed during gear optimization.
@@ -165,6 +174,12 @@ function chooseBestBagCandidate(candidates = []) {
   return best;
 }
 
+function loadoutCode(loadout, slot) {
+  const value = loadout?.get(slot) ?? null;
+  if (!value) return null;
+  return typeof value === 'string' ? value : (value.code || null);
+}
+
 // --- Candidate collection ---
 
 /**
@@ -262,30 +277,46 @@ function isPreferredItemOnTie(candidate, currentBest) {
   return aCode.localeCompare(bCode) < 0;
 }
 
-// --- Ring deduplication ---
+// --- Duplicate-slot families ---
 
 /**
- * For ring2: remove the ring1 item from candidates unless 2+ copies
- * exist across equipped + inventory + bank.
+ * Remove candidates that would exceed the number of owned copies within
+ * duplicate-capable slot families (rings, artifacts).
  */
-function deduplicateRingCandidates(candidates, ring1Item, ctx, bankItems, opts = {}) {
+function filterDuplicateFamilyCandidates(candidates, slot, loadout, ctx, bankItems, opts = {}) {
+  const familySlots = MULTI_SLOT_FAMILY_BY_SLOT.get(slot);
+  if (!familySlots) return candidates;
+
+  const slotIndex = familySlots.indexOf(slot);
+  if (slotIndex <= 0) return candidates;
+
+  const priorSlots = familySlots.slice(0, slotIndex);
   const includeCraftableUnavailable = opts.includeCraftableUnavailable === true;
-  if (!ring1Item) return candidates;
 
   return candidates.filter(({ item, source }) => {
-    if (item.code !== ring1Item.code) return true;
+    const priorUses = priorSlots.reduce((count, priorSlot) => (
+      loadoutCode(loadout, priorSlot) === item.code ? count + 1 : count
+    ), 0);
+    if (priorUses <= 0) return true;
 
-    // Planning mode can assume missing craftable duplicates can be crafted.
     if (includeCraftableUnavailable && source === 'craftable') return true;
 
-    // Count total copies across all sources
     const c = ctx.get();
-    const equippedCount = [c.ring1_slot, c.ring2_slot]
+    const equippedCount = familySlots
+      .map(familySlot => c[`${familySlot}_slot`] || null)
       .filter(code => code === item.code).length;
     const inInventory = ctx.itemCount(item.code);
     const inBank = Math.max(_deps.bankCountFn(item.code), bankItems?.get(item.code) || 0);
-    return (equippedCount + inInventory + inBank) >= 2;
+    return (equippedCount + inInventory + inBank) >= (priorUses + 1);
   });
+}
+
+function resetMultiSlotFamilyBaseline(loadout) {
+  for (const family of MULTI_SLOT_FAMILIES) {
+    for (const slot of family) {
+      loadout.set(slot, null);
+    }
+  }
 }
 
 // --- Main optimizer ---
@@ -365,14 +396,20 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
     loadout.set(slot, bestItem);
   }
 
+  // Evaluate duplicate-capable accessory families from a clean baseline so we
+  // do not temporarily count impossible extra copies from future slots.
+  resetMultiSlotFamilyBaseline(loadout);
+
   // --- Phase 3: Accessories (maximize survivability, full sim) ---
   for (const slot of ACCESSORY_SLOTS) {
-    let candidates = getCandidatesForSlot(ctx, slot, bankItems, candidateOpts);
-
-    // Ring dedup: exclude ring1's choice from ring2 candidates
-    if (slot === 'ring2') {
-      candidates = deduplicateRingCandidates(candidates, loadout.get('ring1'), ctx, bankItems, candidateOpts);
-    }
+    const candidates = filterDuplicateFamilyCandidates(
+      getCandidatesForSlot(ctx, slot, bankItems, candidateOpts),
+      slot,
+      loadout,
+      ctx,
+      bankItems,
+      candidateOpts,
+    );
 
     let bestResult = null;
     let bestItem = loadout.get(slot);
@@ -491,9 +528,10 @@ export async function findBestCombatTarget(ctx) {
 }
 
 // --- Gathering gear optimizer ---
-
-
-const NON_WEAPON_SLOTS = ['shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'ring1', 'ring2', 'amulet', 'rune'];
+const GATHERING_NON_WEAPON_SLOTS = [
+  'shield', 'helmet', 'body_armor', 'leg_armor', 'boots',
+  'ring1', 'ring2', 'amulet', ...ARTIFACT_SLOTS, 'rune',
+];
 
 /**
  * Get the prospecting effect value from an item.
@@ -521,9 +559,17 @@ function findBestTool(ctx, skill, bankItems) {
   const effectName = TOOL_EFFECT_BY_SKILL[skill];
   if (!effectName) return null;
 
-  const charLevel = ctx.get().level;
-  const tools = _deps.findItemsFn({ type: 'weapon', subtype: 'tool', maxLevel: charLevel })
-    .filter(item => item.effects?.some(e => (e.name || e.code) === effectName));
+  const char = ctx.get();
+  const skillLevel = toPositiveInt(
+    (typeof ctx.skillLevel === 'function' ? ctx.skillLevel(skill) : null)
+    ?? char?.[`${skill}_level`]
+    ?? char?.level,
+  );
+  const tools = _deps.findItemsFn({ type: 'weapon', subtype: 'tool', maxLevel: skillLevel })
+    .filter(item =>
+      item.effects?.some(e => (e.name || e.code) === effectName)
+      && canUseItem(item, char),
+    );
 
   if (tools.length === 0) return null;
 
@@ -564,8 +610,14 @@ export async function optimizeForGathering(ctx, skill) {
   loadout.set('weapon', toolResult.item.code);
 
   // For each non-weapon slot, pick the item with highest prospecting
-  for (const slot of NON_WEAPON_SLOTS) {
-    const candidates = getCandidatesForSlot(ctx, slot, bankItems);
+  for (const slot of GATHERING_NON_WEAPON_SLOTS) {
+    const candidates = filterDuplicateFamilyCandidates(
+      getCandidatesForSlot(ctx, slot, bankItems),
+      slot,
+      loadout,
+      ctx,
+      bankItems,
+    );
     const currentCode = ctx.get()[`${slot}_slot`] || null;
 
     let bestProspecting = 0;
@@ -574,8 +626,17 @@ export async function optimizeForGathering(ctx, skill) {
     // Check current item's prospecting first
     if (currentCode) {
       const currentItem = _deps.getItemFn(currentCode);
-      bestProspecting = getProspecting(currentItem);
-      bestCode = currentCode;
+      const currentAllowed = filterDuplicateFamilyCandidates(
+        currentItem ? [{ item: currentItem, source: 'equipped' }] : [],
+        slot,
+        loadout,
+        ctx,
+        bankItems,
+      ).length > 0;
+      if (currentAllowed) {
+        bestProspecting = getProspecting(currentItem);
+        bestCode = currentCode;
+      }
     }
 
     for (const { item } of candidates) {
@@ -587,20 +648,7 @@ export async function optimizeForGathering(ctx, skill) {
     }
 
     // If no prospecting improvement, keep current gear
-    loadout.set(slot, bestCode || currentCode);
-  }
-
-  // Ring deduplication: if both rings chose same item, check we have 2 copies
-  const ring1Code = loadout.get('ring1');
-  const ring2Code = loadout.get('ring2');
-  if (ring1Code && ring1Code === ring2Code) {
-    const char = ctx.get();
-    const equippedCount = [char.ring1_slot, char.ring2_slot].filter(c => c === ring1Code).length;
-    const inInventory = ctx.itemCount(ring1Code);
-    const inBank = Math.max(_deps.bankCountFn(ring1Code), bankItems.get(ring1Code) || 0);
-    if (equippedCount + inInventory + inBank < 2) {
-      loadout.set('ring2', char.ring2_slot || null);
-    }
+    loadout.set(slot, bestCode);
   }
 
   const bagCandidates = getCandidatesForSlot(ctx, 'bag', bankItems);

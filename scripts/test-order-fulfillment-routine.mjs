@@ -11,6 +11,7 @@ const {
   _resetOrderBoardForTests: resetOrderBoardForTests,
   claimOrder,
   createOrMergeOrder,
+  getOrderBoardSnapshot,
   initializeOrderBoard,
 } = await import('../src/services/order-board.mjs');
 const {
@@ -83,6 +84,23 @@ function makeRoutine(overrides = {}) {
   });
   routine._getBankItems = async () => new Map();
   return routine;
+}
+
+function installGoldNpcBuyStubs(routine, pricesByItem = {}) {
+  routine._getCraftClaimItem = (order) => ({
+    code: order?.itemCode || 'npc_item',
+    level: Number(order?.sourceLevel) || 1,
+  });
+  routine._resolveNpcBuyPlan = (itemCode, quantity = 1) => [{
+    type: 'npc_trade',
+    itemCode,
+    npcCode: 'rune_vendor',
+    currency: 'gold',
+    buyPrice: Number(pricesByItem[itemCode]) || 100,
+    quantity,
+  }];
+  routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
+  routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 10 } });
 }
 
 async function testGatherPriority() {
@@ -329,6 +347,46 @@ async function testNpcBuyClaimViabilityUsesBankGoldWithoutLevelGate() {
   assert.equal(viability.reason, '');
 }
 
+async function testNpcBuyClaimViabilityUsesAffordableGoldQuantity() {
+  resetInventoryManagerForTests();
+  applyBankGoldDelta(150, 'deposit');
+
+  const ctx = makeCtx({
+    name: 'Buyer',
+    gold: 0,
+  });
+
+  const routine = {
+    _getCraftClaimItem: () => ({ code: 'healing_rune', level: 20 }),
+    _resolveNpcBuyPlan: (_itemCode, quantity = 1) => [{
+      type: 'npc_trade',
+      itemCode: 'healing_rune',
+      npcCode: 'rune_vendor',
+      currency: 'gold',
+      buyPrice: 100,
+      quantity,
+    }],
+    _canFulfillCraftClaimPlanWithBank: () => ({ ok: true, deficits: [] }),
+    _simulateClaimFight: async () => ({ simResult: { win: true, hpLostPercent: 10 } }),
+  };
+  const order = {
+    itemCode: 'healing_rune',
+    sourceType: 'npc_buy',
+    sourceCode: 'rune_vendor',
+    sourceLevel: 20,
+    remainingQty: 3,
+  };
+
+  const viability = await canClaimNpcBuyOrderNow(ctx, routine, order, new Map(), new Map());
+  assert.equal(viability.ok, true, 'partial bank gold should keep the npc_buy order claimable');
+  assert.equal(viability.reason, '');
+  assert.equal(viability.plan[0]?.quantity, 1, 'viability plan should shrink to the affordable quantity');
+  assert.equal(viability.budget?.currency, 'gold');
+  assert.equal(viability.budget?.currencyHave, 150);
+  assert.equal(viability.budget?.remainingQty, 3);
+  assert.equal(viability.budget?.affordableQty, 1);
+}
+
 async function testNpcBuyClaimViabilityAllowsResolvableItemCurrency() {
   resetInventoryManagerForTests();
 
@@ -409,6 +467,114 @@ async function testCraftClaimViabilityUsesBankGoldForNpcTradeSteps() {
 
   const viability = await canClaimCraftOrderNow(ctx, routine, order, 'gearcrafting', new Map(), new Map());
   assert.equal(viability.ok, true, 'gold-backed npc_trade recipe steps should count bank gold during claim viability');
+}
+
+async function testNpcBuyClaimBlocksWhenZeroGoldUnitsAreAffordable() {
+  await withTempOrderBoard(async () => {
+    resetInventoryManagerForTests();
+    applyBankGoldDelta(50, 'deposit');
+
+    const ctx = makeCtx({
+      name: 'Buyer',
+      gold: 0,
+    });
+    const routine = makeRoutine();
+    installGoldNpcBuyStubs(routine, { healing_rune: 100 });
+
+    const events = [];
+    const unsubscribe = subscribeLogEvents((entry) => {
+      events.push(entry);
+    });
+
+    try {
+      const order = createOrMergeOrder({
+        requesterName: 'ReqA',
+        recipeCode: 'budget-soft-retry',
+        itemCode: 'healing_rune',
+        sourceType: 'npc_buy',
+        sourceCode: 'rune_vendor',
+        sourceLevel: 20,
+        quantity: 2,
+      });
+      assert.ok(order, 'expected npc_buy order to be created');
+
+      const claim = await routine._acquireNpcBuyOrderClaim(ctx);
+      assert.equal(claim, null, 'no claim should be acquired when zero units are affordable');
+
+      const snapshot = getOrderBoardSnapshot();
+      const fresh = snapshot.orders.find((row) => row.id === order.id);
+      assert.ok(fresh, 'expected order to remain on the board');
+      assert.ok(
+        Number(fresh.blockedByChar?.Buyer) > 0,
+        'zero-affordable gold orders should be character-blocked to avoid immediate reacquire loops',
+      );
+      assert.equal(fresh.claim, null, 'budget-short orders should remain unclaimed');
+
+      const deferred = events.find((entry) =>
+        entry.scope === 'routine.skill-rotation.order-claims'
+        && entry.event === 'order_claim.deferred'
+        && entry.reasonCode === 'insufficient_npc_budget:gold'
+        && entry.data?.orderId === order.id
+      );
+      assert.ok(deferred, 'budget deferrals should emit a structured deferred log');
+      assert.equal(deferred.data?.currencyHave, 50);
+      assert.equal(deferred.data?.unitPrice, 100);
+      assert.equal(deferred.data?.remainingQty, 2);
+      assert.equal(deferred.data?.affordableQty, 0);
+
+      const blocked = events.find((entry) =>
+        entry.scope === 'routine.skill-rotation.order-claims'
+        && entry.event === 'order_claim.skipped'
+        && entry.reasonCode === 'insufficient_npc_budget:gold'
+        && entry.data?.orderId === order.id
+      );
+      assert.ok(blocked, 'zero-affordable gold orders should emit the existing blocked/skip log after the defer log');
+    } finally {
+      unsubscribe();
+    }
+  });
+}
+
+async function testNpcBuyClaimPrefersCheapestAffordableGoldOrder() {
+  await withTempOrderBoard(async () => {
+    resetInventoryManagerForTests();
+    applyBankGoldDelta(250, 'deposit');
+
+    const ctx = makeCtx({
+      name: 'Buyer',
+      gold: 0,
+    });
+    const routine = makeRoutine();
+    installGoldNpcBuyStubs(routine, {
+      burn_rune: 200,
+      healing_rune: 100,
+    });
+
+    const expensive = createOrMergeOrder({
+      requesterName: 'ReqExpensive',
+      recipeCode: 'expensive-rune',
+      itemCode: 'burn_rune',
+      sourceType: 'npc_buy',
+      sourceCode: 'rune_vendor',
+      sourceLevel: 20,
+      quantity: 1,
+    });
+    const cheap = createOrMergeOrder({
+      requesterName: 'ReqCheap',
+      recipeCode: 'cheap-rune',
+      itemCode: 'healing_rune',
+      sourceType: 'npc_buy',
+      sourceCode: 'rune_vendor',
+      sourceLevel: 20,
+      quantity: 1,
+    });
+
+    const claim = await routine._acquireNpcBuyOrderClaim(ctx);
+    assert.ok(claim, 'expected an affordable gold-backed npc_buy order to be claimed');
+    assert.equal(claim.orderId, cheap.id, 'cheapest affordable gold-backed npc_buy order should win');
+    assert.equal(claim.itemCode, 'healing_rune');
+    assert.notEqual(claim.orderId, expensive.id, 'older but more expensive gold-backed orders should not win');
+  });
 }
 
 async function testWithdrawPlanFromBankSkipsGoldSteps() {
@@ -558,8 +724,11 @@ async function run() {
   await testNpcBuyPriorityWhenNoGatherOrFight();
   await testNpcBuyClaimDispatch();
   await testNpcBuyClaimViabilityUsesBankGoldWithoutLevelGate();
+  await testNpcBuyClaimViabilityUsesAffordableGoldQuantity();
   await testNpcBuyClaimViabilityAllowsResolvableItemCurrency();
   await testCraftClaimViabilityUsesBankGoldForNpcTradeSteps();
+  await testNpcBuyClaimBlocksWhenZeroGoldUnitsAreAffordable();
+  await testNpcBuyClaimPrefersCheapestAffordableGoldOrder();
   await testWithdrawPlanFromBankSkipsGoldSteps();
   await testCraftExpansionThrottle();
   await testTaskExchangePath();

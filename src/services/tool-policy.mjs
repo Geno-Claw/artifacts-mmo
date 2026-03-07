@@ -1,8 +1,9 @@
 import * as log from '../log.mjs';
 import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
+import { canUseItem } from './item-conditions.mjs';
 import { createOrMergeOrder, getOrderBoardSnapshot } from './order-board.mjs';
-import { globalCount, getCharacterLevelsSnapshot } from './inventory-manager.mjs';
+import { globalCount, getCharacterToolProfilesSnapshot } from './inventory-manager.mjs';
 
 const TOOL_SKILLS = Object.freeze(['mining', 'woodcutting', 'fishing', 'alchemy']);
 export const TOOL_EFFECT_BY_SKILL = Object.freeze({
@@ -19,7 +20,8 @@ function createDefaultDeps() {
     createOrMergeOrderFn: createOrMergeOrder,
     getOrderBoardSnapshotFn: getOrderBoardSnapshot,
     globalCountFn: globalCount,
-    getCharacterLevelsSnapshotFn: getCharacterLevelsSnapshot,
+    getCharacterToolProfilesSnapshotFn: getCharacterToolProfilesSnapshot,
+    getCharacterLevelsSnapshotFn: getCharacterToolProfilesSnapshot,
   };
 }
 
@@ -32,34 +34,83 @@ function isToolForSkill(item, skill) {
   return item.effects.some(e => (e?.name || e?.code) === effectName);
 }
 
-function toLevelsMap(levelsByChar = {}) {
+function normalizeToolProfile(rawProfile = {}, fallbackLevel = 0) {
+  const profile = {};
+  const defaultLevel = toPositiveInt(fallbackLevel);
+  const profileLevel = toPositiveInt(rawProfile?.level);
+  profile.level = profileLevel > 0 ? profileLevel : defaultLevel;
+
+  for (const skill of TOOL_SKILLS) {
+    const skillLevel = toPositiveInt(
+      rawProfile?.[`${skill}_level`]
+      ?? rawProfile?.[skill]
+      ?? defaultLevel,
+    );
+    profile[`${skill}_level`] = skillLevel;
+  }
+
+  return profile;
+}
+
+function toToolProfilesMap(levelsByChar = {}) {
   const out = new Map();
   if (levelsByChar instanceof Map) {
-    for (const [name, rawLevel] of levelsByChar.entries()) {
+    for (const [name, rawProfile] of levelsByChar.entries()) {
       const charName = `${name || ''}`.trim();
-      const level = toPositiveInt(rawLevel);
-      if (!charName || level <= 0) continue;
-      out.set(charName, level);
+      if (!charName) continue;
+      if (typeof rawProfile === 'number') {
+        const level = toPositiveInt(rawProfile);
+        if (level <= 0) continue;
+        out.set(charName, normalizeToolProfile({}, level));
+        continue;
+      }
+      if (!rawProfile || typeof rawProfile !== 'object') continue;
+      out.set(charName, normalizeToolProfile(rawProfile));
     }
     return out;
   }
 
   if (!levelsByChar || typeof levelsByChar !== 'object') return out;
-  for (const [name, rawLevel] of Object.entries(levelsByChar)) {
+  for (const [name, rawProfile] of Object.entries(levelsByChar)) {
     const charName = `${name || ''}`.trim();
-    const level = toPositiveInt(rawLevel);
-    if (!charName || level <= 0) continue;
-    out.set(charName, level);
+    if (!charName) continue;
+    if (typeof rawProfile === 'number') {
+      const level = toPositiveInt(rawProfile);
+      if (level <= 0) continue;
+      out.set(charName, normalizeToolProfile({}, level));
+      continue;
+    }
+    if (!rawProfile || typeof rawProfile !== 'object') continue;
+    out.set(charName, normalizeToolProfile(rawProfile));
   }
   return out;
 }
 
-function mergeLevelsWithContext(levelsByChar, ctx, levelOverride = null) {
-  const merged = toLevelsMap(levelsByChar);
+function readContextToolProfile(ctx) {
+  if (!ctx || typeof ctx.get !== 'function') return normalizeToolProfile({});
+  try {
+    return normalizeToolProfile(ctx.get());
+  } catch {
+    return normalizeToolProfile({});
+  }
+}
+
+function getSnapshotForToolProfiles() {
+  if (typeof _deps.getCharacterToolProfilesSnapshotFn === 'function') {
+    return _deps.getCharacterToolProfilesSnapshotFn();
+  }
+  if (typeof _deps.getCharacterLevelsSnapshotFn === 'function') {
+    return _deps.getCharacterLevelsSnapshotFn();
+  }
+  return {};
+}
+
+function mergeToolProfilesWithContext(levelsByChar, ctx, profileOverride = null) {
+  const merged = toToolProfilesMap(levelsByChar);
   const ctxName = `${ctx?.name || ''}`.trim();
   if (!ctxName) return merged;
-  const ctxLevel = toPositiveInt(levelOverride);
-  if (ctxLevel > 0) merged.set(ctxName, ctxLevel);
+  const profile = normalizeToolProfile(profileOverride || readContextToolProfile(ctx));
+  merged.set(ctxName, profile);
   return merged;
 }
 
@@ -103,11 +154,22 @@ function findOpenOrder(snapshot, sourceType, sourceCode, itemCode) {
 
 export function getBestToolForSkillAtLevel(skill, level) {
   if (!TOOL_SKILLS.includes(skill)) return null;
-  const maxLevel = toPositiveInt(level);
+  let maxLevel = 0;
+  let character = null;
+
+  if (level && typeof level === 'object') {
+    const profile = normalizeToolProfile(level, toPositiveInt(level?.level));
+    maxLevel = toPositiveInt(profile[`${skill}_level`]);
+    character = profile;
+  } else {
+    maxLevel = toPositiveInt(level);
+    character = normalizeToolProfile({}, maxLevel);
+  }
+
   if (maxLevel <= 0) return null;
 
   const allTools = _deps.gameDataSvc.findItems({ type: 'weapon', subtype: 'tool', maxLevel }) || [];
-  const matching = allTools.filter(item => isToolForSkill(item, skill));
+  const matching = allTools.filter(item => isToolForSkill(item, skill) && canUseItem(item, character));
   if (matching.length === 0) return null;
 
   matching.sort(compareToolTier);
@@ -115,12 +177,12 @@ export function getBestToolForSkillAtLevel(skill, level) {
 }
 
 export function computeToolNeedsByCode(levelsByChar) {
-  const levels = toLevelsMap(levelsByChar);
+  const levels = toToolProfilesMap(levelsByChar);
   const needs = new Map();
 
-  for (const [, level] of levels.entries()) {
+  for (const [, profile] of levels.entries()) {
     for (const skill of TOOL_SKILLS) {
-      const tool = getBestToolForSkillAtLevel(skill, level);
+      const tool = getBestToolForSkillAtLevel(skill, profile);
       if (!tool?.code) continue;
       needs.set(tool.code, (needs.get(tool.code) || 0) + 1);
 
@@ -129,7 +191,7 @@ export function computeToolNeedsByCode(levelsByChar) {
       const bestOwned = _deps.globalCountFn(tool.code);
       if (bestOwned <= 0) {
         const allTools = _deps.gameDataSvc.findItems({ type: 'weapon', subtype: 'tool', maxLevel: tool.level - 1 }) || [];
-        const fallbacks = allTools.filter(t => isToolForSkill(t, skill));
+        const fallbacks = allTools.filter(t => isToolForSkill(t, skill) && canUseItem(t, profile));
         fallbacks.sort(compareToolTier);
         const fallbackTool = fallbacks[0];
         if (fallbackTool?.code && fallbackTool.code !== tool.code) {
@@ -143,12 +205,12 @@ export function computeToolNeedsByCode(levelsByChar) {
 }
 
 export function computeLatestToolBySkill(levelsByChar) {
-  const levels = toLevelsMap(levelsByChar);
+  const levels = toToolProfilesMap(levelsByChar);
   const latestBySkill = new Map();
 
-  for (const [, level] of levels.entries()) {
+  for (const [, profile] of levels.entries()) {
     for (const skill of TOOL_SKILLS) {
-      const tool = getBestToolForSkillAtLevel(skill, level);
+      const tool = getBestToolForSkillAtLevel(skill, profile);
       if (!tool?.code) continue;
 
       const current = latestBySkill.get(skill);
@@ -231,17 +293,13 @@ export function ensureMissingGatherToolOrder(ctx, skill) {
     return { queued: false, reason: 'invalid_input' };
   }
 
-  let charLevel = 0;
-  try {
-    charLevel = toPositiveInt(ctx.get()?.level);
-  } catch {
-    charLevel = 0;
-  }
-  if (charLevel <= 0) {
-    return { queued: false, reason: 'missing_character_level' };
+  const charProfile = readContextToolProfile(ctx);
+  const skillLevel = toPositiveInt(charProfile?.[`${skill}_level`]);
+  if (skillLevel <= 0) {
+    return { queued: false, reason: 'missing_skill_level' };
   }
 
-  const tool = getBestToolForSkillAtLevel(skill, charLevel);
+  const tool = getBestToolForSkillAtLevel(skill, charProfile);
   if (!tool?.code) {
     return { queued: false, reason: 'no_equippable_tool_defined' };
   }
@@ -252,8 +310,8 @@ export function ensureMissingGatherToolOrder(ctx, skill) {
     return { queued: false, reason: 'missing_order_source', toolCode: tool.code };
   }
 
-  const snapshotLevels = _deps.getCharacterLevelsSnapshotFn();
-  const levelsByChar = mergeLevelsWithContext(snapshotLevels, ctx, charLevel);
+  const snapshotLevels = getSnapshotForToolProfiles();
+  const levelsByChar = mergeToolProfilesWithContext(snapshotLevels, ctx, charProfile);
   const targetsByCode = computeToolTargetsByCode(levelsByChar);
   const targetQty = targetsByCode.get(tool.code) || 0;
   if (targetQty <= 0) {

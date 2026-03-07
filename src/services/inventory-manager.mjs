@@ -7,6 +7,7 @@ import * as log from '../log.mjs';
 
 const BANK_CACHE_TTL = 60_000; // 1 minute
 const DEFAULT_RESERVATION_TTL = 30_000;
+const TOOL_SKILLS = Object.freeze(['mining', 'woodcutting', 'fishing', 'alchemy']);
 const inventoryLog = log.createLogger({ scope: 'service.inventory-manager' });
 
 function loggerFor(charName = '') {
@@ -20,6 +21,7 @@ let bank = new Map();             // code -> quantity
 let charInventory = new Map();    // charName -> Map<code, quantity>
 let charEquipment = new Map();    // charName -> Map<code, quantity>
 let charLevels = new Map();       // charName -> level
+let charToolProfiles = new Map(); // charName -> { level, mining_level, woodcutting_level, fishing_level, alchemy_level }
 let reservations = new Map();     // reservationId -> { code, qty, charName, expiresAt }
 let reservationSeq = 0;
 
@@ -53,6 +55,36 @@ function toEquipmentMap(charData = {}) {
 
 function mapToObject(map) {
   return Object.fromEntries([...map.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function cloneToolProfile(profile = {}) {
+  const level = Number(profile?.level);
+  const out = {
+    level: Number.isFinite(level) && level > 0 ? Math.floor(level) : 0,
+  };
+  for (const skill of TOOL_SKILLS) {
+    const raw = Number(profile?.[`${skill}_level`]);
+    out[`${skill}_level`] = Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 0;
+  }
+  return out;
+}
+
+function buildToolProfile(charData = {}) {
+  const profile = {
+    level: Number(charData?.level),
+  };
+  for (const skill of TOOL_SKILLS) {
+    profile[`${skill}_level`] = Number(charData?.[`${skill}_level`]);
+  }
+  return cloneToolProfile(profile);
+}
+
+function toolProfileMapToObject(map) {
+  const out = {};
+  for (const [name, profile] of map.entries()) {
+    out[name] = cloneToolProfile(profile);
+  }
+  return out;
 }
 
 function nestedMapToObject(nested) {
@@ -115,6 +147,7 @@ export function updateCharacter(name, charData) {
   } else {
     charLevels.delete(name);
   }
+  charToolProfiles.set(name, buildToolProfile(charData));
 }
 
 export function invalidateBank(reason = '') {
@@ -338,6 +371,10 @@ export function getCharacterLevelsSnapshot() {
   return out;
 }
 
+export function getCharacterToolProfilesSnapshot() {
+  return toolProfileMapToObject(charToolProfiles);
+}
+
 export function charHasEquipped(name, code) {
   return (charEquipment.get(name)?.get(code) || 0) > 0;
 }
@@ -429,6 +466,7 @@ export function snapshot() {
     charInventory: nestedMapToObject(charInventory),
     charEquipment: nestedMapToObject(charEquipment),
     charLevels: mapToObject(charLevels),
+    charToolProfiles: toolProfileMapToObject(charToolProfiles),
     reservations: reservationRows,
   };
 }
@@ -443,6 +481,7 @@ export function _resetForTests() {
   charInventory = new Map();
   charEquipment = new Map();
   charLevels = new Map();
+  charToolProfiles = new Map();
   reservations = new Map();
   reservationSeq = 0;
   lastBankFetch = 0;

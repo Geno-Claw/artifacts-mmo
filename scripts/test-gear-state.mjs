@@ -33,10 +33,15 @@ function makeCtx({
   inventory = [],
   equipped = {},
   utility = {},
+  skills = {},
 } = {}) {
   const char = {
     name,
     level,
+    mining_level: Number(skills.mining ?? 0),
+    woodcutting_level: Number(skills.woodcutting ?? 0),
+    fishing_level: Number(skills.fishing ?? 0),
+    alchemy_level: Number(skills.alchemy ?? 0),
     weapon_slot: equipped.weapon || 'none',
     shield_slot: equipped.shield || 'none',
     helmet_slot: equipped.helmet || 'none',
@@ -46,6 +51,9 @@ function makeCtx({
     ring1_slot: equipped.ring1 || 'none',
     ring2_slot: equipped.ring2 || 'none',
     amulet_slot: equipped.amulet || 'none',
+    artifact1_slot: equipped.artifact1 || 'none',
+    artifact2_slot: equipped.artifact2 || 'none',
+    artifact3_slot: equipped.artifact3 || 'none',
     rune_slot: equipped.rune || 'none',
     bag_slot: equipped.bag || 'none',
     utility1_slot: utility.utility1 || '',
@@ -64,6 +72,9 @@ function makeCtx({
     },
     setLevel(nextLevel) {
       char.level = Number(nextLevel) || 0;
+    },
+    skillLevel(skill) {
+      return Number(char[`${skill}_level`]) || 0;
     },
     inventoryCapacity() {
       return capacity;
@@ -258,6 +269,70 @@ async function testBagIncludedInOwnedDeficitRequests(basePath) {
   await flushGearState();
 }
 
+async function testArtifactIncludedInOwnedDeficitRequests(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'Archivist',
+    level: 20,
+    capacity: 30,
+  });
+
+  const itemsByCode = new Map([
+    ['novice_guide', { code: 'novice_guide', type: 'artifact', level: 10 }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'golem', level: 20 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        artifact1: 'novice_guide',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 10,
+        turns: 3,
+        remainingHp: 90,
+      },
+    }),
+    getBankRevisionFn: () => 5,
+    getBestToolForSkillAtLevelFn: () => null,
+    globalCountFn: (code) => (code === 'novice_guide' ? 1 : 0),
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-artifact-deficit.json'),
+    characters: [{
+      name: 'Archivist',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Archivist');
+  assert.ok(state, 'character state should exist');
+  assertOwnedMirrorsAvailable(state, 'Archivist');
+  assert.equal(state.required.novice_guide, 1, 'required should include artifact slot items');
+  assert.equal(state.assigned.novice_guide, 1, 'assigned should include owned artifact slot items');
+  assert.equal(state.available.novice_guide, 1, 'available should include owned artifact slot items');
+
+  const deficits = getOwnedDeficitRequests(ctx);
+  assert.deepEqual(
+    deficits.find(row => row.code === 'novice_guide'),
+    { code: 'novice_guide', quantity: 1 },
+    'deficits should request owned artifact items when they are not carried',
+  );
+
+  await flushGearState();
+}
+
 async function testTrimToFitReservesTenSlots(basePath) {
   _resetGearStateForTests();
 
@@ -318,6 +393,70 @@ async function testTrimToFitReservesTenSlots(basePath) {
   );
   assert.equal(state.required.body_1, 1, 'required keeps pre-trim requirements');
   assert.equal(state.required.legs_1, 1, 'required keeps pre-trim requirements');
+
+  await flushGearState();
+}
+
+async function testArtifactFallbackKeepsEquippedGuideWhenUpgradeMissing(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({
+    name: 'Collector',
+    level: 25,
+    capacity: 30,
+    equipped: {
+      artifact2: 'novice_guide',
+    },
+  });
+
+  const itemsByCode = new Map([
+    ['novice_guide', { code: 'novice_guide', type: 'artifact', level: 10 }],
+    ['adept_codex', { code: 'adept_codex', type: 'artifact', level: 25 }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'wyvern', level: 25 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        artifact1: 'adept_codex',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 12,
+        turns: 4,
+        remainingHp: 105,
+      },
+    }),
+    getBankRevisionFn: () => 6,
+    getBestToolForSkillAtLevelFn: () => null,
+    globalCountFn: (code) => (code === 'novice_guide' ? 1 : 0),
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-artifact-fallback.json'),
+    characters: [{
+      name: 'Collector',
+      settings: {},
+      routines: [{ type: 'skillRotation', orderBoard: { enabled: false } }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Collector');
+  assert.ok(state, 'character state should exist');
+  assertOwnedMirrorsAvailable(state, 'Collector');
+  assert.equal(state.desired.adept_codex, 1, 'desired should track a missing artifact upgrade');
+  assert.equal(state.available.novice_guide, 1, 'fallback claims should preserve equipped artifact gear by category');
+  assert.equal(getClaimedTotal('novice_guide'), 1, 'claimed totals should include equipped artifact fallback gear');
+
+  const keepByCode = getOwnedKeepByCodeForInventory(ctx);
+  assert.equal(keepByCode.novice_guide, undefined, 'equipped artifact fallback gear should not also require an inventory keep claim');
 
   await flushGearState();
 }
@@ -1285,7 +1424,9 @@ async function run() {
   try {
     await testRequiredMultiplicityDesiredAndPotionCarryAccounting(tempDir);
     await testBagIncludedInOwnedDeficitRequests(tempDir);
+    await testArtifactIncludedInOwnedDeficitRequests(tempDir);
     await testTrimToFitReservesTenSlots(tempDir);
+    await testArtifactFallbackKeepsEquippedGuideWhenUpgradeMissing(tempDir);
     await testScarcityAssignmentUsesCharacterOrder(tempDir);
     await testCraftableDisplacementKeepsFallbackAvailable(tempDir);
     await testTransitionCompletionDropsFallbackClaim(tempDir);

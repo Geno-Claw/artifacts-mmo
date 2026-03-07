@@ -21,6 +21,7 @@ import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { TASK_COIN_CODE, TASK_EXCHANGE_COST } from './constants.mjs';
 
 const claimLog = log.createLogger({ scope: 'routine.skill-rotation.order-claims' });
+const NPC_BUDGET_REASON_PREFIX = 'insufficient_npc_budget:';
 
 export async function clearActiveOrderClaim(ctx, routine, { reason = 'clear_claim' } = {}) {
   const active = routine._activeOrderClaim;
@@ -223,11 +224,109 @@ function currencyCountWithBank(ctx, bankItems, currency) {
   return carriedCurrencyCount(ctx, currency) + bankCurrencyCount(currency, bankItems);
 }
 
+function isNpcBudgetReason(reason = '') {
+  return `${reason || ''}`.startsWith(NPC_BUDGET_REASON_PREFIX);
+}
+
+function formatNpcCurrencyAmount(currency, quantity) {
+  const amount = Math.max(0, Number(quantity) || 0);
+  if (currency === 'gold') return `${amount}g`;
+  return `${amount} ${currency || 'currency'}`;
+}
+
 function resolveNpcBuyPlanForOrder(routine, order, quantity = null) {
   const qty = quantity == null
     ? Math.max(1, Number(order?.remainingQty) || 1)
     : Math.max(1, Number(quantity) || 1);
   return routine._resolveNpcBuyPlan(order?.itemCode, qty);
+}
+
+function buildNpcBuyBudgetSnapshot(ctx, order, finalStep, bankItems) {
+  if (finalStep?.type !== 'npc_trade') return null;
+
+  const currency = `${finalStep.currency || ''}`.trim();
+  const unitPrice = Math.max(0, Number(finalStep.buyPrice) || 0);
+  const remainingQty = Math.max(1, Number(order?.remainingQty) || Number(finalStep.quantity) || 1);
+  const requestedQty = Math.max(1, Number(finalStep.quantity) || remainingQty);
+  const currencyHave = currencyCountWithBank(ctx, bankItems, currency);
+  const affordableQty = unitPrice > 0
+    ? Math.max(0, Math.min(requestedQty, Math.floor(currencyHave / unitPrice)))
+    : requestedQty;
+
+  return {
+    currency,
+    unitPrice,
+    currencyHave,
+    remainingQty,
+    requestedQty,
+    affordableQty,
+  };
+}
+
+function applyNpcBuyBudgetPlan(ctx, routine, order, plan, bankItems) {
+  const finalStep = plan?.[plan.length - 1];
+  const budget = buildNpcBuyBudgetSnapshot(ctx, order, finalStep, bankItems);
+  if (!budget || budget.currency !== 'gold') {
+    return { ok: true, plan, budget };
+  }
+
+  if (budget.affordableQty <= 0) {
+    return {
+      ok: false,
+      reason: `${NPC_BUDGET_REASON_PREFIX}${budget.currency}`,
+      plan,
+      budget,
+    };
+  }
+
+  if (budget.affordableQty >= budget.requestedQty) {
+    return { ok: true, plan, budget };
+  }
+
+  const partialPlan = resolveNpcBuyPlanForOrder(routine, order, budget.affordableQty);
+  if (!partialPlan || partialPlan.length === 0) {
+    return {
+      ok: false,
+      reason: 'unresolvable_npc_buy_plan',
+      plan,
+      budget,
+    };
+  }
+
+  return { ok: true, plan: partialPlan, budget };
+}
+
+function logNpcBuyBudgetDeferred(ctx, order, reason, budget, { active = false } = {}) {
+  const orderId = order?.id || order?.orderId || null;
+  const itemCode = order?.itemCode || null;
+  const sourceType = order?.sourceType || 'npc_buy';
+  const sourceCode = order?.sourceCode || null;
+  const remainingQty = budget?.remainingQty ?? Math.max(0, Number(order?.remainingQty) || 0);
+  const affordableQty = budget?.affordableQty ?? 0;
+  const currency = budget?.currency || 'gold';
+  const haveText = formatNpcCurrencyAmount(currency, budget?.currencyHave ?? 0);
+  const unitText = formatNpcCurrencyAmount(currency, budget?.unitPrice ?? 0);
+  const prefix = active ? 'NPC-buy order deferred' : 'Order claim deferred';
+
+  claimLog.info(
+    `[${ctx.name}] ${prefix} (${reason}): ${itemCode} via ${sourceType}:${sourceCode} [have ${haveText}, unit ${unitText}, remaining ${remainingQty}, affordable ${affordableQty}]`,
+    {
+      event: 'order_claim.deferred',
+      reasonCode: reason,
+      context: { character: ctx.name },
+      data: {
+        orderId,
+        itemCode,
+        sourceType,
+        sourceCode,
+        currency,
+        currencyHave: budget?.currencyHave ?? null,
+        unitPrice: budget?.unitPrice ?? null,
+        remainingQty,
+        affordableQty,
+      },
+    },
+  );
 }
 
 function enqueuePlanDeficitOrders(routine, plan, order, ctx, bankItems) {
@@ -340,7 +439,7 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
     return { ok: false, reason: 'invalid_npc_buy_order' };
   }
 
-  const plan = resolveNpcBuyPlanForOrder(routine, order);
+  let plan = resolveNpcBuyPlanForOrder(routine, order);
   if (!plan || plan.length === 0) {
     return { ok: false, reason: 'unresolvable_npc_buy_plan' };
   }
@@ -354,9 +453,27 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
   }
 
   const bankItems = bank instanceof Map ? bank : new Map();
+  const budgetPlan = applyNpcBuyBudgetPlan(ctx, routine, order, plan, bankItems);
+  if (!budgetPlan.ok) {
+    return {
+      ok: false,
+      reason: budgetPlan.reason,
+      plan: budgetPlan.plan,
+      budget: budgetPlan.budget,
+    };
+  }
+  plan = budgetPlan.plan;
+  const budget = budgetPlan.budget;
+
   const planCheck = routine._canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems);
   if (!planCheck.ok) {
-    return { ok: false, reason: 'insufficient_gather_skill', deficits: planCheck.deficits, plan };
+    return {
+      ok: false,
+      reason: 'insufficient_gather_skill',
+      deficits: planCheck.deficits,
+      plan,
+      budget,
+    };
   }
 
   for (const step of plan) {
@@ -364,7 +481,7 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
     if (step.itemCode === 'gold') continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
     if (have < step.quantity) {
-      return { ok: false, reason: `missing_bank_dependency:${step.itemCode}`, plan };
+      return { ok: false, reason: `missing_bank_dependency:${step.itemCode}`, plan, budget };
     }
   }
 
@@ -380,7 +497,7 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
       && (candidate.type === 'gather' || candidate.type === 'fight' || candidate.type === 'bank' || candidate.type === 'npc_trade')
     );
     if (!currencySource) {
-      return { ok: false, reason: `missing_npc_currency:${step.currency}`, plan };
+      return { ok: false, reason: `missing_npc_currency:${step.currency}`, plan, budget };
     }
   }
 
@@ -389,10 +506,10 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
 
     const monsterCode = step.monster?.code;
     if (!monsterCode) {
-      return { ok: false, reason: `invalid_fight_step:${step.itemCode || 'unknown'}`, plan };
+      return { ok: false, reason: `invalid_fight_step:${step.itemCode || 'unknown'}`, plan, budget };
     }
     if (step.monster?.type === 'boss') {
-      return { ok: false, reason: `combat_not_viable:${monsterCode}`, plan };
+      return { ok: false, reason: `combat_not_viable:${monsterCode}`, plan, budget };
     }
 
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
@@ -405,11 +522,11 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
     const sim = simCache.get(monsterCode);
     const simResult = sim?.simResult;
     if (!simResult || !simResult.win || simResult.hpLostPercent > 90) {
-      return { ok: false, reason: `combat_not_viable:${monsterCode}`, plan };
+      return { ok: false, reason: `combat_not_viable:${monsterCode}`, plan, budget };
     }
   }
 
-  return { ok: true, reason: '', plan };
+  return { ok: true, reason: '', plan, budget };
 }
 
 async function maybeResolveTaskRewardCraftDependency(ctx, routine, order, orderCraftSkill, viability, bank, simCache) {
@@ -502,6 +619,14 @@ function handleUnviableNpcBuyOrder(routine, order, ctx, viability, bank) {
   const bankItems = bank instanceof Map ? bank : new Map();
   const plan = viability.plan || resolveNpcBuyPlanForOrder(routine, order);
   const blockTarget = order?.id ? order : routine._resolveOrderById(order?.orderId);
+
+  if (isNpcBudgetReason(viability.reason)) {
+    logNpcBuyBudgetDeferred(ctx, blockTarget || order, viability.reason, viability.budget);
+    if (blockTarget) {
+      routine._blockUnclaimableOrderForChar(blockTarget, ctx, viability.reason);
+    }
+    return;
+  }
 
   if (viability.reason === 'insufficient_gather_skill' || viability.reason?.startsWith('missing_npc_currency:') || viability.reason?.startsWith('combat_not_viable:')) {
     enqueuePlanDeficitOrders(routine, plan, order, ctx, bankItems);
@@ -630,15 +755,44 @@ export async function acquireNpcBuyOrderClaim(ctx, routine) {
 
   let bank = await routine._getBankItems();
   const simCache = new Map();
+  const goldCandidates = [];
+  const otherCandidates = [];
 
-  for (const order of orders) {
+  for (let sortIndex = 0; sortIndex < orders.length; sortIndex++) {
+    const order = orders[sortIndex];
     const viability = await routine._canClaimNpcBuyOrderNow(ctx, order, bank, simCache);
     if (!viability.ok) {
       handleUnviableNpcBuyOrder(routine, order, ctx, viability, bank);
       continue;
     }
 
-    const active = routine._claimOrderForChar(ctx, order);
+    const candidate = {
+      order,
+      sortIndex,
+      unitPrice: viability.budget?.unitPrice ?? Number.POSITIVE_INFINITY,
+    };
+    if (viability.budget?.currency === 'gold' && viability.budget.affordableQty > 0) {
+      goldCandidates.push(candidate);
+      continue;
+    }
+    otherCandidates.push(candidate);
+  }
+
+  const firstNonGoldIndex = otherCandidates[0]?.sortIndex ?? Number.POSITIVE_INFINITY;
+  const compareGoldCandidates = (a, b) => {
+    const unitPriceDelta = a.unitPrice - b.unitPrice;
+    if (unitPriceDelta !== 0) return unitPriceDelta;
+    return a.sortIndex - b.sortIndex;
+  };
+
+  const claimQueue = [
+    ...goldCandidates.filter((candidate) => candidate.sortIndex < firstNonGoldIndex).sort(compareGoldCandidates),
+    ...otherCandidates,
+    ...goldCandidates.filter((candidate) => candidate.sortIndex >= firstNonGoldIndex).sort(compareGoldCandidates),
+  ];
+
+  for (const candidate of claimQueue) {
+    const active = routine._claimOrderForChar(ctx, candidate.order);
     if (active) return active;
   }
 
@@ -1005,14 +1159,24 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
   const itemCode = claim.itemCode;
   const bankItems = await routine._getBankItems(true);
   const bankQty = bankItems.get(itemCode) || 0;
+  if (!Number.isFinite(claim.bankCreditRemaining)) {
+    claim.bankCreditRemaining = bankQty;
+    routine._activeOrderClaim = claim;
+  }
+  const bankCreditRemaining = Math.max(0, Number(claim.bankCreditRemaining) || 0);
+  const availableBankCredit = Math.min(bankQty, bankCreditRemaining);
   const invQty = ctx.itemCount(itemCode);
-  if (bankQty > 0 && claim.remainingQty > invQty) {
-    const withdrawQty = Math.min(claim.remainingQty - invQty, bankQty);
+  if (availableBankCredit > 0 && claim.remainingQty > invQty) {
+    const withdrawQty = Math.min(claim.remainingQty - invQty, availableBankCredit);
     await withdrawBankItems(ctx, [{ code: itemCode, quantity: withdrawQty }], {
       reason: `npc_buy order credit: ${itemCode}`,
       mode: 'partial',
       retryStaleOnce: true,
     });
+    routine._activeOrderClaim = {
+      ...routine._activeOrderClaim,
+      bankCreditRemaining: Math.max(0, bankCreditRemaining - withdrawQty),
+    };
     const toDeposit = ctx.itemCount(itemCode);
     if (toDeposit > 0) {
       await depositBankItems(ctx, [{ code: itemCode, quantity: toDeposit }], {
@@ -1036,6 +1200,11 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
   const simCache = new Map();
   const viability = await routine._canClaimNpcBuyOrderNow(ctx, claim, await routine._getBankItems(true), simCache);
   if (!viability.ok) {
+    if (isNpcBudgetReason(viability.reason)) {
+      logNpcBuyBudgetDeferred(ctx, claim, viability.reason, viability.budget, { active: true });
+      await routine._blockAndReleaseClaim(ctx, viability.reason);
+      return { attempted: false, fulfilled: false, reason: viability.reason };
+    }
     handleUnviableNpcBuyOrder(routine, claim, ctx, viability, await routine._getBankItems(true));
     return { attempted: false, fulfilled: false, reason: viability.reason };
   }
@@ -1204,6 +1373,13 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
         });
       }
       if (carriedCurrencyCount(ctx, step.currency) < currencyNeeded) {
+        if (step.currency === 'gold') {
+          const budget = buildNpcBuyBudgetSnapshot(ctx, claim, step, await routine._getBankItems(true));
+          const reason = `${NPC_BUDGET_REASON_PREFIX}gold`;
+          logNpcBuyBudgetDeferred(ctx, claim, reason, budget, { active: true });
+          await routine._blockAndReleaseClaim(ctx, reason);
+          return { attempted: topUp.attempted, fulfilled: false, reason };
+        }
         handleUnviableNpcBuyOrder(routine, claim, ctx, {
           ok: false,
           reason: `missing_npc_currency:${step.currency}`,
