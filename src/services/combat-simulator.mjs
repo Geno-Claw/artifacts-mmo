@@ -192,8 +192,16 @@ function rollCrit(stats, rng) {
   return rng() < critChance(stats);
 }
 
-function calcBaseDamage(attacker, defender, resReduction = 0, dmgBonus = 0) {
-  let totalDmg = 0;
+function elementAdjustment(adjustment, element) {
+  if (adjustment && typeof adjustment === 'object') {
+    return Number(adjustment[element] || 0);
+  }
+  return Number(adjustment || 0);
+}
+
+function calcDamageProfile(attacker, defender, resReduction = 0, dmgBonus = 0) {
+  let baseDamage = 0;
+  let critDamage = 0;
 
   for (const element of ELEMENTS) {
     const base = Number(attacker?.[`attack_${element}`] || 0);
@@ -202,21 +210,28 @@ function calcBaseDamage(attacker, defender, resReduction = 0, dmgBonus = 0) {
     const dmgPct = Number(attacker?.[`dmg_${element}`] || 0) + Number(attacker?.dmg || 0) + dmgBonus;
     const boosted = base + Math.round(base * dmgPct / 100);
 
-    const resPct = Number(defender?.[`res_${element}`] || 0) - resReduction;
+    const resPct = Number(defender?.[`res_${element}`] || 0) - elementAdjustment(resReduction, element);
     const reduction = Math.round(boosted * resPct / 100);
+    const damage = Math.max(0, boosted - reduction);
 
-    totalDmg += Math.max(0, boosted - reduction);
+    baseDamage += damage;
+    critDamage += Math.round(damage * 1.5);
   }
 
-  return totalDmg;
+  return { baseDamage, critDamage };
+}
+
+function calcBaseDamage(attacker, defender, resReduction = 0, dmgBonus = 0) {
+  return calcDamageProfile(attacker, defender, resReduction, dmgBonus).baseDamage;
 }
 
 /**
  * Deterministic expected-value helper retained for logs and heuristics.
  */
 export function calcTurnDamage(attacker, defender) {
-  const base = calcBaseDamage(attacker, defender, 0, 0);
-  return Math.round(base * (1 + critChance(attacker) * 0.5));
+  const profile = calcDamageProfile(attacker, defender, 0, 0);
+  const critRate = critChance(attacker);
+  return Math.round(profile.baseDamage + (profile.critDamage - profile.baseDamage) * critRate);
 }
 
 function calcRandomDamage(attacker, defender, rng, {
@@ -225,9 +240,11 @@ function calcRandomDamage(attacker, defender, rng, {
   crit = null,
 } = {}) {
   const didCrit = typeof crit === 'boolean' ? crit : rollCrit(attacker, rng);
-  const base = calcBaseDamage(attacker, defender, resReduction, dmgBonus);
+  const profile = calcDamageProfile(attacker, defender, resReduction, dmgBonus);
   return {
-    damage: didCrit ? Math.round(base * 1.5) : base,
+    damage: didCrit ? profile.critDamage : profile.baseDamage,
+    baseDamage: profile.baseDamage,
+    critDamage: profile.critDamage,
     crit: didCrit,
   };
 }
@@ -238,6 +255,21 @@ function sumAttack(stats) {
     sum += Number(stats?.[`attack_${element}`] || 0);
   }
   return sum;
+}
+
+function createElementMap(initialValue = 0) {
+  return Object.fromEntries(ELEMENTS.map((element) => [element, initialValue]));
+}
+
+function attackElements(stats) {
+  return ELEMENTS.filter((element) => Number(stats?.[`attack_${element}`] || 0) > 0);
+}
+
+function chooseBubbleElement(previousElement, rng) {
+  const candidates = previousElement
+    ? ELEMENTS.filter((element) => element !== previousElement)
+    : ELEMENTS;
+  return candidates[Math.floor(rng() * candidates.length)] || candidates[0] || null;
 }
 
 function parseEffects(effectsArray, allowedEffects = null) {
@@ -312,18 +344,16 @@ function simulateFastPathOnce(charStats, monsterStats, rng, startingHp) {
   let charHp = charHpStart;
   let monsterHp = Math.max(1, Number(monsterStats?.hp || 1));
 
-  const charNonCrit = calcBaseDamage(charStats, monsterStats, 0, 0);
-  const charCritDamage = Math.round(charNonCrit * 1.5);
-  const monNonCrit = calcBaseDamage(monsterStats, charStats, 0, 0);
-  const monCritDamage = Math.round(monNonCrit * 1.5);
+  const charProfile = calcDamageProfile(charStats, monsterStats, 0, 0);
+  const monProfile = calcDamageProfile(monsterStats, charStats, 0, 0);
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     const isCharTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
     if (isCharTurn) {
-      monsterHp -= rollCrit(charStats, rng) ? charCritDamage : charNonCrit;
+      monsterHp -= rollCrit(charStats, rng) ? charProfile.critDamage : charProfile.baseDamage;
       if (monsterHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp);
     } else {
-      charHp -= rollCrit(monsterStats, rng) ? monCritDamage : monNonCrit;
+      charHp -= rollCrit(monsterStats, rng) ? monProfile.critDamage : monProfile.baseDamage;
       if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
     }
   }
@@ -346,12 +376,13 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
   const poisonDmg = Math.max(0, Number(monFx.poison || 0) - Number(utilFx.antipoison || 0));
   let playerBurnDmg = monFx.burn ? Math.round(sumAttack(monsterStats) * monFx.burn / 100) : 0;
   const corruptedPct = Number(monFx.corrupted || 0);
-  let corruptedStacks = 0;
+  const corruptedReduction = createElementMap(0);
   const berserkerPct = Number(monFx.berserker_rage || 0);
   let berserkerActive = false;
   const barrierMax = Number(monFx.barrier || 0);
   let barrierHp = barrierMax;
-  const bubbleRes = monFx.protective_bubble ? Number(monFx.protective_bubble) / 4 : 0;
+  const bubbleRes = Number(monFx.protective_bubble || 0);
+  let bubbleElement = null;
 
   let monBurnDmg = runeFx.burn ? Math.round(sumAttack(charStats) * runeFx.burn / 100) : 0;
 
@@ -360,6 +391,8 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
 
   let charTurnCount = 0;
   let monTurnCount = 0;
+  let charFrenzyReady = false;
+  let monFrenzyReady = false;
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     const isCharTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
@@ -388,9 +421,14 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
       }
 
       const didCrit = rollCrit(charStats, rng);
-      const dmgBonus = didCrit ? Number(runeFx.frenzy || 0) : 0;
+      const dmgBonus = charFrenzyReady ? Number(runeFx.frenzy || 0) : 0;
+      charFrenzyReady = false;
+      const resReduction = { ...corruptedReduction };
+      if (bubbleElement) {
+        resReduction[bubbleElement] -= bubbleRes;
+      }
       let { damage } = calcRandomDamage(charStats, monsterStats, rng, {
-        resReduction: -bubbleRes,
+        resReduction,
         dmgBonus,
         crit: didCrit,
       });
@@ -401,12 +439,21 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
         damage -= absorbed;
       }
 
+      const dealtDamage = Math.min(monHp, Math.max(0, damage));
       monHp -= damage;
 
-      if (corruptedPct > 0) corruptedStacks++;
+      if (corruptedPct > 0) {
+        for (const element of attackElements(charStats)) {
+          corruptedReduction[element] += corruptedPct;
+        }
+      }
 
-      if (runeFx.lifesteal && didCrit) {
-        charHp = Math.min(charMaxHp, charHp + Math.round(Number(runeFx.lifesteal) / 100 * sumAttack(charStats)));
+      if (runeFx.lifesteal && didCrit && dealtDamage > 0) {
+        charHp = Math.min(charMaxHp, charHp + Math.round(Number(runeFx.lifesteal) / 100 * dealtDamage));
+      }
+
+      if (didCrit && runeFx.frenzy) {
+        charFrenzyReady = true;
       }
 
       if (berserkerPct > 0 && !berserkerActive && monHp > 0 && monHp < monMaxHp * 0.25) {
@@ -421,6 +468,10 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
       }
     } else {
       monTurnCount++;
+
+      if (bubbleRes > 0) {
+        bubbleElement = chooseBubbleElement(bubbleElement, rng);
+      }
 
       if (monFx.reconstitution && monTurnCount === Number(monFx.reconstitution)) {
         monHp = monMaxHp;
@@ -442,16 +493,22 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
       }
 
       const didCrit = rollCrit(monsterStats, rng);
-      const dmgBonus = (berserkerActive ? berserkerPct : 0) + (didCrit ? Number(monFx.frenzy || 0) : 0);
+      const dmgBonus = (berserkerActive ? berserkerPct : 0) + (monFrenzyReady ? Number(monFx.frenzy || 0) : 0);
+      monFrenzyReady = false;
       const { damage } = calcRandomDamage(monsterStats, charStats, rng, {
-        resReduction: corruptedPct * corruptedStacks,
+        resReduction: 0,
         dmgBonus,
         crit: didCrit,
       });
+      const dealtDamage = Math.min(charHp, Math.max(0, damage));
       charHp -= damage;
 
-      if (monFx.lifesteal && didCrit) {
-        monHp = Math.min(monMaxHp, monHp + Math.round(Number(monFx.lifesteal) / 100 * sumAttack(monsterStats)));
+      if (monFx.lifesteal && didCrit && dealtDamage > 0) {
+        monHp = Math.min(monMaxHp, monHp + Math.round(Number(monFx.lifesteal) / 100 * dealtDamage));
+      }
+
+      if (didCrit && monFx.frenzy) {
+        monFrenzyReady = true;
       }
 
       if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);

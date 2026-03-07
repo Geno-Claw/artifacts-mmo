@@ -309,22 +309,21 @@ function validateMechanics(monster, apiResult) {
   if (effects.includes('void_drain') && analysis.voidDrainTicks.length > 0) {
     const drainTurns = analysis.voidDrainTicks.map(e => e.turn);
     findings.push(`  VOID DRAIN triggers at turns: [${drainTurns.join(', ')}]`);
-    findings.push(`    Our code fires at: 5, 9, 13, 17... ((turn-1) % 4 === 0, turn > 1)`);
-    findings.push(`    Expected if off-by-one: 4, 8, 12, 16... (turn % 4 === 0)`);
+    findings.push('    Local sim models this every 4 played turns of the monster, before its attack.');
   }
 
   // Check barrier timing
   if (effects.includes('barrier') && analysis.barrierEvents.length > 0) {
     const barrierTurns = analysis.barrierEvents.map(e => e.turn);
     findings.push(`  BARRIER events at turns: [${barrierTurns.join(', ')}]`);
-    findings.push(`    Our code: start + refresh at 6, 11, 16...`);
+    findings.push('    Local sim models this at fight start and every 5 played turns of the monster.');
   }
 
   // Check healing timing
   if (effects.includes('healing') && analysis.healingEvents.length > 0) {
     const healTurns = analysis.healingEvents.map(e => e.turn);
     findings.push(`  HEALING events at turns: [${healTurns.join(', ')}]`);
-    findings.push(`    Our code fires at: 4, 7, 10, 13...`);
+    findings.push('    Local sim models this every 3 played turns of the bearer, at the start of the turn.');
   }
 
   // Check burn damage decay

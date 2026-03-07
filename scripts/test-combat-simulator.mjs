@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 
-const { calcTurnDamage, simulateCombat } = await import('../src/services/combat-simulator.mjs');
+const { calcTurnDamage, simulateCombat, simulateCombatOnce } = await import('../src/services/combat-simulator.mjs');
 
 // --- Test helpers ---
 
@@ -106,6 +106,19 @@ test('damage with crit', () => {
   assert.equal(dmg, 110);
 });
 
+test('multi-element crit rounds per element before summing', () => {
+  const char = makeChar({
+    attack_fire: 27,
+    attack_earth: 27,
+    attack_water: 27,
+    attack_air: 27,
+    critical_strike: 100,
+  });
+  const mon = makeMonster();
+  const dmg = calcTurnDamage(char, mon);
+  assert.equal(dmg, 164);
+});
+
 // === No-effects regression ===
 
 console.log('\nNo-effects fast path:');
@@ -144,6 +157,22 @@ test('initiative tie broken by HP', () => {
   assert.equal(result.win, true);
   assert.equal(result.turns, 1);
   assert.equal(result.remainingHp, 500);
+});
+
+test('fast path crit rounds per element before summing', () => {
+  const char = makeChar({ hp: 163, attack_fire: 1, initiative: 50 });
+  const mon = makeMonster({
+    hp: 1000,
+    attack_fire: 27,
+    attack_earth: 27,
+    attack_water: 27,
+    attack_air: 27,
+    critical_strike: 100,
+    initiative: 100,
+  });
+  const result = simulateCombatOnce(char, mon, { rng: () => 0 });
+  assert.equal(result.win, false);
+  assert.equal(result.turns, 1, '164 crit damage should kill immediately');
 });
 
 console.log('\nSeed stability:');
@@ -281,15 +310,19 @@ test('monster burn damages player each turn (decaying)', () => {
 
 console.log('\nCorrupted:');
 
-test('corrupted reduces player resistance over time', () => {
-  const char = makeChar({ hp: 2000, attack_fire: 50, initiative: 200, res_fire: 30 });
-  const mon = makeMonster({ hp: 800, attack_fire: 40, initiative: 50, effects: [{ code: 'corrupted', value: 5 }] });
-  const resultClean = simulateCombat(char, makeMonster({ hp: 800, attack_fire: 40, initiative: 50 }));
-  const resultCorrupted = simulateCombat(char, mon);
+test('corrupted lowers the bearer resistance to attacked elements', () => {
+  const char = makeChar({ hp: 5000, attack_fire: 100, initiative: 200 });
+  const mon = makeMonster({
+    hp: 150,
+    attack_fire: 1,
+    initiative: 50,
+    res_fire: 100,
+    effects: [{ code: 'corrupted', value: 50 }],
+  });
 
-  // With corrupted, player takes more damage over time → lower remaining HP
-  assert.ok(resultCorrupted.remainingHp < resultClean.remainingHp,
-    `corrupted remainingHp ${resultCorrupted.remainingHp} should be < clean ${resultClean.remainingHp}`);
+  const result = simulateCombat(char, mon, { iterations: 1 });
+  assert.equal(result.win, true);
+  assert.equal(result.turns, 5, 'monster fire resistance should drop from 100% to 50% to 0%');
 });
 
 console.log('\nBerserker Rage:');
@@ -331,6 +364,20 @@ test('protective bubble reduces player damage', () => {
   // Bubble adds resistance → takes more turns to kill
   assert.ok(resultBubble.turns > resultClean.turns,
     `bubble turns ${resultBubble.turns} should be > clean ${resultClean.turns}`);
+});
+
+test('protective bubble rotates one resisted element at a time', () => {
+  const char = makeChar({ hp: 5000, attack_fire: 0, attack_earth: 100, initiative: 200 });
+  const mon = makeMonster({
+    hp: 250,
+    attack_fire: 0,
+    initiative: 50,
+    effects: [{ code: 'protective_bubble', value: 65 }],
+  });
+
+  const result = simulateCombatOnce(char, mon, { rng: () => 0 });
+  assert.equal(result.win, true);
+  assert.equal(result.turns, 7, 'earth damage should only be reduced when bubble rotates to earth');
 });
 
 // === Player utility effects ===
@@ -402,6 +449,21 @@ test('player lifesteal rune heals on crit (expected value)', () => {
     `lifesteal remainingHp ${resultRune.remainingHp} should be >= ${resultNoRune.remainingHp}`);
 });
 
+test('player lifesteal scales with actual post-mitigation damage', () => {
+  const char = makeChar({ hp: 100, attack_fire: 100, initiative: 200, critical_strike: 100 });
+  const mon = makeMonster({ hp: 15, attack_fire: 0, initiative: 50, res_fire: 90 });
+  const rune = { code: 'lifesteal_rune', effects: [{ code: 'lifesteal', value: 50 }] };
+
+  const result = simulateCombatOnce(char, mon, {
+    rune,
+    rng: () => 0,
+    startingHp: 10,
+  });
+
+  assert.equal(result.win, true);
+  assert.equal(result.remainingHp, 18, '15 dealt damage should heal 8 HP, not raw-attack lifesteal');
+});
+
 console.log('\nPlayer rune healing:');
 
 test('player healing rune restores HP every 3 turns', () => {
@@ -430,6 +492,16 @@ test('player frenzy rune boosts damage on expected crits', () => {
   // Frenzy should kill faster
   assert.ok(resultRune.turns <= resultNoRune.turns,
     `frenzy turns ${resultRune.turns} should be <= no-rune ${resultNoRune.turns}`);
+});
+
+test('player frenzy applies on the next turn after a crit', () => {
+  const char = makeChar({ hp: 500, attack_fire: 100, initiative: 200, critical_strike: 100 });
+  const mon = makeMonster({ hp: 230, attack_fire: 0, initiative: 50 });
+  const rune = { code: 'frenzy_rune', effects: [{ code: 'frenzy', value: 60 }] };
+
+  const result = simulateCombatOnce(char, mon, { rune, rng: () => 0 });
+  assert.equal(result.win, true);
+  assert.equal(result.turns, 3, 'first crit should arm frenzy for the next attack, not the current one');
 });
 
 console.log('\nUnsupported solo rune effects:');
@@ -473,6 +545,21 @@ test('monster lifesteal heals on crit (expected value)', () => {
     `lifesteal turns ${resultLS.turns} should be >= clean ${resultClean.turns}`);
 });
 
+test('monster lifesteal scales with actual post-mitigation damage', () => {
+  const char = makeChar({ hp: 1000, attack_fire: 70, initiative: 200, res_fire: 90 });
+  const mon = makeMonster({
+    hp: 100,
+    attack_fire: 100,
+    initiative: 50,
+    critical_strike: 100,
+    effects: [{ code: 'lifesteal', value: 50 }],
+  });
+
+  const result = simulateCombatOnce(char, mon, { rng: () => 0 });
+  assert.equal(result.win, true);
+  assert.equal(result.turns, 3, '15 dealt damage should heal 8 HP, leaving the monster killable on the next player turn');
+});
+
 console.log('\nMonster frenzy:');
 
 test('monster frenzy boosts damage on crits', () => {
@@ -487,6 +574,20 @@ test('monster frenzy boosts damage on crits', () => {
     `frenzy remainingHp ${resultFrenzy.remainingHp} should be <= clean ${resultClean.remainingHp}`);
 });
 
+test('monster frenzy applies on the next turn after a crit', () => {
+  const char = makeChar({ hp: 230, attack_fire: 0, initiative: 50 });
+  const mon = makeMonster({
+    hp: 999,
+    attack_fire: 100,
+    initiative: 100,
+    critical_strike: 100,
+    effects: [{ code: 'frenzy', value: 60 }],
+  });
+
+  const result = simulateCombatOnce(char, mon, { rng: () => 0 });
+  assert.equal(result.win, false);
+  assert.equal(result.turns, 3, 'first crit should arm frenzy for the next monster turn, not deal boosted damage immediately');
+});
 // === Combined effects ===
 
 console.log('\nCombined effects:');
