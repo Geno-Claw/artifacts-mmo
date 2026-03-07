@@ -442,9 +442,11 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
 
   if (toWithdraw.length === 0) return true;
 
-  // Cap by available inventory space
+  // Cap by available inventory space, reserving slots for fight drops
+  const DROP_RESERVE = 8;
   let totalCount = toWithdraw.reduce((sum, w) => sum + w.quantity, 0);
-  const space = ctx.inventoryCapacity() - ctx.inventoryCount();
+  const rawSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
+  const space = Math.max(0, rawSpace - DROP_RESERVE);
   if (totalCount > space && space > 0) {
     const scale = space / totalCount;
     for (const w of toWithdraw) {
