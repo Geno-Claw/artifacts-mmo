@@ -62,6 +62,7 @@ export class CharacterContext {
     this._lastLevel = null;  // for detecting level-ups
     this.craftTarget = null;  // shared craft target for gather/craft routines
     this._settings = mergeSettings(settings);
+    this._routineKeepCodes = {};  // { code: quantity } — items routines want kept in inventory
   }
 
   async refresh() {
@@ -200,6 +201,21 @@ export class CharacterContext {
 
   clearLosses(monsterCode) {
     delete this._losses[monsterCode];
+  }
+
+  /** Register items that should be kept in inventory (not deposited). */
+  setRoutineKeepCodes(keepCodes) {
+    this._routineKeepCodes = keepCodes || {};
+  }
+
+  /** Clear routine keep-codes (call when combat/routine ends). */
+  clearRoutineKeepCodes() {
+    this._routineKeepCodes = {};
+  }
+
+  /** Get current routine keep-codes. */
+  getRoutineKeepCodes() {
+    return this._routineKeepCodes;
   }
 
   taskType() {

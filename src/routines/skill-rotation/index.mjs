@@ -103,6 +103,7 @@ export class SkillRotationRoutine extends BaseRoutine {
         });
       }
       this._foodWithdrawn = false;
+      if (typeof ctx.clearRoutineKeepCodes === 'function') ctx.clearRoutineKeepCodes();
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
     }
 

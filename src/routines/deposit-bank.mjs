@@ -447,6 +447,17 @@ export class DepositBankRoutine extends BaseRoutine {
       keepByCode[equippedWeapon] = Math.max(keepByCode[equippedWeapon] || 0, 1);
     }
 
+    // Protect items registered by active routines (e.g. combat food)
+    const routineKeep = typeof ctx.getRoutineKeepCodes === 'function'
+      ? ctx.getRoutineKeepCodes()
+      : {};
+    for (const [code, qty] of Object.entries(routineKeep)) {
+      const n = Math.max(0, Number(qty) || 0);
+      if (n > 0) {
+        keepByCode[code] = Math.max(keepByCode[code] || 0, n);
+      }
+    }
+
     // Protect all required gear-state items (combat loadout + tools), quantity-aware.
     const gearState = deps.getCharacterGearStateFn(ctx.name);
     const required = gearState?.required && typeof gearState.required === 'object'

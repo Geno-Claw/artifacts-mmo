@@ -489,5 +489,16 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
   });
   logWithdrawalWarnings(ctx, withdrawalResult, 'Food');
 
+  // Register withdrawn food as keep-codes so deposit routine won't bank them
+  if (typeof ctx.setRoutineKeepCodes === 'function') {
+    const keepCodes = { ...(ctx.getRoutineKeepCodes() || {}) };
+    for (const w of toWithdraw) {
+      if (w.quantity > 0) {
+        keepCodes[w.code] = (keepCodes[w.code] || 0) + w.quantity;
+      }
+    }
+    ctx.setRoutineKeepCodes(keepCodes);
+  }
+
   return true;
 }
