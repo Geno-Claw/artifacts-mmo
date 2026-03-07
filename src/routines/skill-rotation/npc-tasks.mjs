@@ -151,6 +151,8 @@ export async function runNpcTaskFlow(ctx, routine) {
     });
   }
 
+  const _preHp = ctx.get().hp;
+  const _preMaxHp = ctx.get().max_hp;
   const result = await fightOnce(ctx);
   const r = parseFightResult(result, ctx);
 
@@ -158,10 +160,10 @@ export async function runNpcTaskFlow(ctx, routine) {
     ctx.clearLosses(monster);
     routine.rotation.recordProgress(1);
     const fresh = ctx.get();
-    log.info(`[${ctx.name}] ${monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} [task: ${fresh.task_progress}/${fresh.task_total}] (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`);
+    log.info(`[${ctx.name}] ${monster}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} [task: ${fresh.task_progress}/${fresh.task_total}] (${routine.rotation.goalProgress}/${routine.rotation.goalTarget}) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`);
   } else {
     ctx.recordLoss(monster);
-    log.warn(`[${ctx.name}] ${monster}: LOSS ${r.turns}t (${ctx.consecutiveLosses(monster)} losses)`);
+    log.warn(`[${ctx.name}] ${monster}: LOSS ${r.turns}t (${ctx.consecutiveLosses(monster)} losses) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`);
     return false;
   }
 

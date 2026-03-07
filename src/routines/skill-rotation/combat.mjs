@@ -136,6 +136,8 @@ export async function executeCombat(ctx, routine) {
     });
   }
 
+  const _preHp = ctx.get().hp;
+  const _preMaxHp = ctx.get().max_hp;
   const result = await fightOnce(ctx);
   const r = parseFightResult(result, ctx);
 
@@ -143,7 +145,7 @@ export async function executeCombat(ctx, routine) {
     ctx.clearLosses(monsterCode);
 
     if (routine._recordProgress(1)) {
-      logger.debug(`[${ctx.name}] ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+      logger.debug(`[${ctx.name}] ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget}) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`, {
         event: 'combat.fight.won',
         data: {
           monsterCode,
@@ -160,7 +162,7 @@ export async function executeCombat(ctx, routine) {
       await routine._depositClaimItemsIfNeeded(ctx);
       const active = routine._syncActiveClaimFromBoard();
       const remaining = active ? active.remainingQty : 0;
-      logger.info(`[${ctx.name}] Order fight ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (remaining ${remaining})`, {
+      logger.info(`[${ctx.name}] Order fight ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (remaining ${remaining}) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`, {
         event: 'combat.claim.progress',
         data: {
           orderId: active?.orderId || routine._activeOrderClaim?.orderId || null,
@@ -180,13 +182,16 @@ export async function executeCombat(ctx, routine) {
 
   ctx.recordLoss(monsterCode);
   const losses = ctx.consecutiveLosses(monsterCode);
-  logger.warn(`[${ctx.name}] ${monsterCode}: LOSS ${r.turns}t (${losses} losses)`, {
+  logger.warn(`[${ctx.name}] ${monsterCode}: LOSS ${r.turns}t (${losses} losses) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`, {
     event: 'combat.fight.lost',
     reasonCode: 'unwinnable_combat',
     data: {
       monsterCode,
       turns: r.turns,
       losses,
+      startHp: _preHp,
+      maxHp: _preMaxHp,
+      finalHp: r.finalHp,
       sourceType: claim?.sourceType || null,
     },
   });

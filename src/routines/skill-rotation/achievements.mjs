@@ -166,6 +166,8 @@ async function executeFightObjective(ctx, routine, action) {
   }
 
   // Fight
+  const _preHp = ctx.get().hp;
+  const _preMaxHp = ctx.get().max_hp;
   const result = await fightOnce(ctx);
   const r = parseFightResult(result, ctx);
   const ach = routine.rotation.achievement;
@@ -173,7 +175,7 @@ async function executeFightObjective(ctx, routine, action) {
   if (r.win) {
     ctx.clearLosses(monsterCode);
     routine._recordProgress(1);
-    achievementLog.debug(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget})`, {
+    achievementLog.debug(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} (${routine.rotation.goalProgress}/${routine.rotation.goalTarget}) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`, {
       event: 'achievement.fight.progress',
       context: { character: ctx.name },
       data: {
@@ -192,7 +194,7 @@ async function executeFightObjective(ctx, routine, action) {
 
   ctx.recordLoss(monsterCode);
   const losses = ctx.consecutiveLosses(monsterCode);
-  achievementLog.warn(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} LOSS ${r.turns}t (${losses} losses)`, {
+  achievementLog.warn(`[${ctx.name}] Achievement ${ach.code}: ${monsterCode} LOSS ${r.turns}t (${losses} losses) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`, {
     event: 'achievement.fight.lost',
     reasonCode: 'unwinnable_combat',
     context: { character: ctx.name },
@@ -201,6 +203,9 @@ async function executeFightObjective(ctx, routine, action) {
       monsterCode,
       turns: r.turns,
       losses,
+      startHp: _preHp,
+      maxHp: _preMaxHp,
+      finalHp: r.finalHp,
     },
   });
   if (losses >= routine.maxLosses) {

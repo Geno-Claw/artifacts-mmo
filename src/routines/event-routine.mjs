@@ -249,12 +249,14 @@ export class EventRoutine extends BaseRoutine {
     }
 
     // Fight
+    const _preHp = ctx.get().hp;
+    const _preMaxHp = ctx.get().max_hp;
     const result = await fightOnce(ctx);
     const r = parseFightResult(result, ctx);
 
     if (r.win) {
       ctx.clearLosses(monsterCode);
-      log.info(`[${ctx.name}] ${TAG} ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''}`);
+      log.info(`[${ctx.name}] ${TAG} ${monsterCode}: WIN ${r.turns}t | +${r.xp}xp +${r.gold}g${r.drops ? ' | ' + r.drops : ''} [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`);
 
       if (ctx.inventoryFull()) {
         log.info(`[${ctx.name}] ${TAG}: inventory full, yielding for deposit`);
@@ -277,7 +279,7 @@ export class EventRoutine extends BaseRoutine {
     // Loss
     ctx.recordLoss(monsterCode);
     const losses = ctx.consecutiveLosses(monsterCode);
-    log.warn(`[${ctx.name}] ${TAG} ${monsterCode}: LOSS ${r.turns}t (${losses} consecutive)`);
+    log.warn(`[${ctx.name}] ${TAG} ${monsterCode}: LOSS ${r.turns}t (${losses} consecutive) [${_preHp}/${_preMaxHp}hp → ${r.finalHp}hp]`);
     this._setCooldown(target.code);
     this._clearTarget();
     return false;
