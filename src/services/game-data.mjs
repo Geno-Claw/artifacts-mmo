@@ -187,7 +187,8 @@ export function estimatedFightsForDrops(monsterCode, itemCode, quantity) {
   const avgPerKill = (drop.rate / 100) * avgQtyPerDrop;
   if (avgPerKill <= 0) return quantity;
 
-  return Math.ceil((quantity / avgPerKill) * 1.2);
+  const safetyMargin = 1 + 0.2 * (1 - drop.rate / 100);
+  return Math.ceil((quantity / avgPerKill) * safetyMargin);
 }
 
 /** Returns true if the item code is obtainable from task coin exchange. */
