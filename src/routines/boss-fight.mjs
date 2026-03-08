@@ -54,6 +54,7 @@ export class BossFightRoutine extends BaseRoutine {
     this.repeat = cfg.repeat !== false;
     this.maxFights = cfg.maxFights || 0; // 0 = unlimited
     this.orderDriven = cfg.orderDriven === true;
+    this.teamStrategy = cfg.teamStrategy || 'fast'; // 'fast' = fewest turns, 'xp' = lowest total level
     this.bosses = this._normalizeBosses(cfg);
     this.enabledBossCodes = this.bosses.filter(b => b.enabled).map(b => b.code);
     this._evalCooldownUntil = new Map(); // bossCode → timestamp
@@ -82,6 +83,7 @@ export class BossFightRoutine extends BaseRoutine {
     if (cfg.repeat !== undefined) this.repeat = cfg.repeat !== false;
     if (cfg.maxFights !== undefined) this.maxFights = cfg.maxFights || 0;
     if (cfg.orderDriven !== undefined) this.orderDriven = cfg.orderDriven === true;
+    if (cfg.teamStrategy !== undefined) this.teamStrategy = cfg.teamStrategy || 'fast';
     if (cfg.bosses !== undefined) {
       this.bosses = Array.isArray(cfg.bosses) ? cfg.bosses : this._normalizeBosses(cfg);
       this.enabledBossCodes = this.bosses.filter(b => b.enabled).map(b => b.code);
@@ -457,10 +459,20 @@ export class BossFightRoutine extends BaseRoutine {
               iterations: 10,
             });
             const winrate = response.winrate ?? 0;
-            log.debug(`[${TAG}] Role team [${team.map(c => c.name).join(', ')}] tank=${tankName}: ${winrate}%`);
 
-            if (!bestResult || this._preferTeam(winrate, team.length, bestResult.winrate, bestResult.team.length)) {
-              bestResult = { team, winrate, roles, loadouts: teamLoadouts };
+            // Compute tiebreaker (lower = better)
+            let tiebreaker;
+            if (this.teamStrategy === 'xp') {
+              tiebreaker = team.reduce((sum, ctx) => sum + (ctx.character?.level ?? 0), 0);
+            } else {
+              tiebreaker = response.results?.length > 0
+                ? response.results.reduce((sum, r) => sum + r.turns, 0) / response.results.length
+                : Infinity;
+            }
+            log.debug(`[${TAG}] Role team [${team.map(c => c.name).join(', ')}] tank=${tankName}: ${winrate}% (tiebreak=${Math.round(tiebreaker * 10) / 10} [${this.teamStrategy}])`);
+
+            if (!bestResult || this._preferTeam(winrate, tiebreaker, team.length, bestResult.winrate, bestResult.tiebreaker, bestResult.team.length)) {
+              bestResult = { team, winrate, tiebreaker, roles, loadouts: teamLoadouts };
             }
           } catch (err) {
             log.warn(`[${TAG}] Role team simulation failed: ${err.message}`);
@@ -474,12 +486,15 @@ export class BossFightRoutine extends BaseRoutine {
 
   /**
    * Decide if a new candidate team should replace the current best.
-   * Prefer minTeamSize when winrates are equal; pick larger only if strictly better.
+   * Prefer higher winrate, then lower tiebreaker (turns or level), then size closest to minTeamSize.
    */
-  _preferTeam(newWinrate, newSize, bestWinrate, bestSize) {
+  _preferTeam(newWinrate, newTiebreaker, newSize, bestWinrate, bestTiebreaker, bestSize) {
     if (newWinrate > bestWinrate) return true;
     if (newWinrate < bestWinrate) return false;
-    // Equal winrate — prefer the size closest to minTeamSize
+    // Equal winrate — use tiebreaker (lower = better)
+    if (newTiebreaker < bestTiebreaker) return true;
+    if (newTiebreaker > bestTiebreaker) return false;
+    // Equal tiebreaker — prefer size closest to minTeamSize
     const newDist = Math.abs(newSize - this.minTeamSize);
     const bestDist = Math.abs(bestSize - this.minTeamSize);
     return newDist < bestDist;

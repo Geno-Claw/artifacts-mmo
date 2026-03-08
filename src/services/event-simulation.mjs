@@ -205,12 +205,14 @@ export async function findBestTeam(contexts, monsterCode, {
   maxTeamSize = 3,
   minTeamSize = 2,
   fakeCharsByName = null,
+  teamStrategy = 'fast', // 'fast' = fewest turns tiebreak, 'xp' = lowest total level tiebreak
 } = {}) {
   if (contexts.length < minTeamSize) return null;
 
   const candidates = contexts.slice(0, 5); // max 5 characters
   let bestTeam = null;
   let bestWinrate = -1;
+  let bestTiebreaker = Infinity; // lower is better for both strategies
 
   // Try team sizes from minTeamSize to maxTeamSize
   const maxSize = Math.min(maxTeamSize, candidates.length);
@@ -228,10 +230,25 @@ export async function findBestTeam(contexts, monsterCode, {
         });
 
         const winrate = response.winrate ?? 0;
-        log.debug(`${TAG} Team [${team.map(c => c.name).join(', ')}] vs ${monsterCode}: ${winrate}% (${iterations} iters)`);
-        if (winrate > bestWinrate) {
+
+        // Compute tiebreaker value (lower = better)
+        let tiebreaker;
+        if (teamStrategy === 'xp') {
+          // Prefer lowest total team level (more XP for lower-level chars)
+          tiebreaker = team.reduce((sum, ctx) => sum + (ctx.character?.level ?? ctx.level ?? 0), 0);
+        } else {
+          // 'fast': prefer fewest average turns
+          tiebreaker = response.results?.length > 0
+            ? response.results.reduce((sum, r) => sum + r.turns, 0) / response.results.length
+            : Infinity;
+        }
+
+        log.debug(`${TAG} Team [${team.map(c => c.name).join(', ')}] vs ${monsterCode}: ${winrate}% (${iterations} iters, tiebreak=${Math.round(tiebreaker * 10) / 10} [${teamStrategy}])`);
+
+        if (winrate > bestWinrate || (winrate === bestWinrate && tiebreaker < bestTiebreaker)) {
           bestWinrate = winrate;
           bestTeam = team;
+          bestTiebreaker = tiebreaker;
         }
       } catch (err) {
         log.warn(`${TAG} Team simulation failed: ${err.message}`);
@@ -241,7 +258,7 @@ export async function findBestTeam(contexts, monsterCode, {
 
   if (!bestTeam) return null;
 
-  log.info(`${TAG} Best team for ${monsterCode}: ${bestTeam.map(c => c.name).join(', ')} (${bestWinrate}% winrate)`);
+  log.info(`${TAG} Best team for ${monsterCode}: ${bestTeam.map(c => c.name).join(', ')} (${bestWinrate}% winrate, ${teamStrategy}=${Math.round(bestTiebreaker * 10) / 10})`);
   return { team: bestTeam, winrate: bestWinrate };
 }
 

@@ -496,6 +496,12 @@
           "default": false,
           "description": "When true, only rally a boss if the order board has an active order requiring its drops (directly or as crafting ingredients)"
         },
+        "teamStrategy": {
+          "type": "string",
+          "enum": ["fast", "xp"],
+          "default": "fast",
+          "description": "Tiebreaker when teams have equal winrate. 'fast' picks fewest avg turns, 'xp' picks lowest total team level (to maximize XP from level-gated rewards)"
+        },
         "bosses": {
           "type": "array",
           "description": "Per-boss configuration. Each entry controls whether this character will fight that boss and the minimum winrate required.",
