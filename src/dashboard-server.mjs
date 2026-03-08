@@ -27,7 +27,11 @@ import {
   subscribeUiEvents,
 } from './services/ui-state.mjs';
 import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
-import { clearGearState } from './services/gear-state.mjs';
+import {
+  clearGearState,
+  publishDesiredOrdersForTrackedCharacters,
+  refreshGearState,
+} from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
 import { getNpcEventCodes } from './services/event-manager.mjs';
 import { findItems, getAllResources, getNpcBuyableItems } from './services/game-data.mjs';
@@ -86,6 +90,24 @@ function statusFromError(err, fallback = 502) {
   if (Number.isInteger(numCode) && numCode >= 400 && numCode <= 599) return numCode;
   if (err?.code === 'account_required') return 400;
   return fallback;
+}
+
+function isRuntimeActive(runtimeManager) {
+  if (!runtimeManager) return false;
+
+  try {
+    const status = typeof runtimeManager.getStatus === 'function'
+      ? runtimeManager.getStatus()
+      : (typeof runtimeManager.status === 'function' ? runtimeManager.status() : null);
+
+    if (!status || typeof status !== 'object') return false;
+    if (status.runtime?.active === true) return true;
+    if (status.state === 'running') return true;
+    if (status.lifecycle === 'running') return true;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
@@ -940,10 +962,15 @@ export async function startDashboardServer({
         }
         try {
           const result = clearOrderBoard('dashboard_manual_clear');
+          if (isRuntimeActive(runtimeManager)) {
+            await refreshGearState({ force: true });
+          }
+          const republished = publishDesiredOrdersForTrackedCharacters();
           sendJson(res, 200, {
             ok: true,
             operation: 'clear_order_board',
             cleared: result.cleared,
+            republished,
           });
         } catch (err) {
           sendError(res, 500, 'service_error', err?.message || 'Failed to clear order board', 'clear_order_board_failed');

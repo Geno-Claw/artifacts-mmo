@@ -26,14 +26,61 @@ const {
   _resetOrderBoardForTests,
   claimOrder,
   createOrMergeOrder,
+  getOrderBoardSnapshot,
   initializeOrderBoard,
 } = orderBoard;
+const gearState = await import('../src/services/gear-state.mjs');
+const {
+  _resetGearStateForTests,
+  _setDepsForTests: setGearStateDepsForTests,
+  initializeGearState,
+  registerContext,
+  refreshGearState,
+} = gearState;
 
 function assertHasKeys(obj, keys, label) {
   assert.ok(obj && typeof obj === 'object', `${label} must be an object`);
   for (const key of keys) {
     assert.equal(Object.hasOwn(obj, key), true, `${label} missing key "${key}"`);
   }
+}
+
+function mapLoadout(slots = {}) {
+  return new Map(Object.entries(slots).filter(([, code]) => !!code));
+}
+
+function makeGearCtx(name = 'Alpha', level = 10) {
+  const char = {
+    name,
+    level,
+    weapon_slot: 'none',
+    shield_slot: 'none',
+    helmet_slot: 'none',
+    body_armor_slot: 'none',
+    leg_armor_slot: 'none',
+    boots_slot: 'none',
+    ring1_slot: 'none',
+    ring2_slot: 'none',
+    amulet_slot: 'none',
+    utility1_slot: '',
+    utility1_slot_quantity: 0,
+    utility2_slot: '',
+    utility2_slot_quantity: 0,
+    inventory: [],
+  };
+
+  return {
+    name,
+    get() {
+      return char;
+    },
+    inventoryCapacity() {
+      return 30;
+    },
+    itemCount() {
+      return 0;
+    },
+  };
 }
 
 function assertSnapshotCharacterShape(char, label = 'snapshot character') {
@@ -954,6 +1001,7 @@ async function run() {
     });
 
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
     await initializeOrderBoard({ path: orderBoardPath });
     const seedOrder = createOrMergeOrder({
       requesterName: 'CrafterAlpha',
@@ -968,6 +1016,56 @@ async function run() {
     assert.ok(seedOrder, 'expected order board seed order');
     const claimResult = claimOrder(seedOrder.id, { charName: 'WorkerAlpha', leaseMs: 10_000 });
     assert.ok(claimResult, 'expected order board seed claim');
+
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem(code) {
+          if (code === 'dashboard_staff') {
+            return {
+              code,
+              type: 'weapon',
+              level: 12,
+              craft: {
+                skill: 'weaponcrafting',
+                level: 12,
+              },
+            };
+          }
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'dashboard_staff' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 0,
+    });
+
+    await initializeGearState({
+      path: join(configFixture.tempDir, 'gear-state.json'),
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      }],
+    });
+    registerContext(makeGearCtx('Alpha', 12));
+    await refreshGearState({ force: true });
 
     dashboard = await startDashboardServer({
       host: '127.0.0.1',
@@ -1036,6 +1134,21 @@ async function run() {
     const ordersPayload = await ordersRes.json();
     assertOrdersPayloadShape(ordersPayload, 'GET /api/ui/orders payload');
     assert.ok(ordersPayload.orders.length >= 1, 'orders endpoint should include seeded order');
+
+    const clearOrderBoardRes = await requestJson(`${baseUrl}/api/control/clear-order-board`, { method: 'POST' });
+    assert.equal(
+      clearOrderBoardRes.res.status,
+      200,
+      `Expected /api/control/clear-order-board 200, got ${clearOrderBoardRes.res.status}`,
+    );
+    assertControlSuccessShape(clearOrderBoardRes.payload, 'POST /api/control/clear-order-board');
+    assert.equal(clearOrderBoardRes.payload?.cleared >= 1, true, 'clear-order-board should report cleared orders');
+    assert.equal(clearOrderBoardRes.payload?.republished, 1, 'clear-order-board should republish current desired orders');
+
+    const clearedSnapshot = getOrderBoardSnapshot();
+    assert.equal(clearedSnapshot.orders.length, 1, 'manual clear should repopulate the order board immediately');
+    assert.equal(clearedSnapshot.orders[0]?.itemCode, 'dashboard_staff');
+    assert.equal(clearedSnapshot.orders[0]?.claim, null, 'republished desired orders should be open, not claimed');
 
     const detailRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}`);
     assert.equal(detailRes.status, 200);
@@ -1243,8 +1356,8 @@ async function run() {
     const materializedDiskConfig = JSON.parse(readFileSync(configFixture.configPath, 'utf-8'));
     const materializedRoutineTypes = materializedDiskConfig.characters?.[0]?.routines?.map((entry) => entry?.type) || [];
     assert.deepEqual(
-      materializedRoutineTypes.slice(0, 7),
-      ['rest', 'depositBank', 'bankExpansion', 'event', 'completeTask', 'orderFulfillment', 'skillRotation'],
+      materializedRoutineTypes.slice(0, 8),
+      ['rest', 'depositBank', 'bankExpansion', 'event', 'bossFight', 'completeTask', 'orderFulfillment', 'skillRotation'],
       'save normalization should materialize the managed routine template in canonical order',
     );
     assert.equal(
@@ -1349,6 +1462,7 @@ async function run() {
     if (closeRegressionSse) await closeRegressionSse.close();
     if (closeRegressionDashboard) await closeRegressionDashboard.close();
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
     globalThis.fetch = originalFetch;
     if (originalBotConfig === undefined) delete process.env.BOT_CONFIG;
     else process.env.BOT_CONFIG = originalBotConfig;

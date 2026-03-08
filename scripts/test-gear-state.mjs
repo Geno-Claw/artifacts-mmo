@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const gearState = await import('../src/services/gear-state.mjs');
+const orderBoard = await import('../src/services/order-board.mjs');
 
 const {
   _resetGearStateForTests,
@@ -18,9 +19,15 @@ const {
   getOwnedKeepByCodeForInventory,
   initializeGearState,
   publishDesiredOrdersForCharacter,
+  publishDesiredOrdersForTrackedCharacters,
   refreshGearState,
   registerContext,
 } = gearState;
+const {
+  _resetOrderBoardForTests,
+  getOrderBoardSnapshot,
+  initializeOrderBoard,
+} = orderBoard;
 
 function mapLoadout(slots = {}) {
   return new Map(Object.entries(slots).filter(([, code]) => !!code));
@@ -1252,6 +1259,91 @@ async function testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(basePath) {
   await flushGearState();
 }
 
+async function testPublishDesiredOrdersForTrackedCharactersIsIdempotent(basePath) {
+  _resetGearStateForTests();
+  _resetOrderBoardForTests();
+
+  const alpha = makeCtx({ name: 'Alpha', level: 20, capacity: 30 });
+  const beta = makeCtx({ name: 'Beta', level: 20, capacity: 30 });
+  const itemsByCode = new Map([
+    ['alpha_blade', {
+      code: 'alpha_blade',
+      type: 'weapon',
+      level: 15,
+      craft: { skill: 'weaponcrafting', level: 15 },
+    }],
+    ['beta_shield', {
+      code: 'beta_shield',
+      type: 'shield',
+      level: 12,
+      craft: { skill: 'gearcrafting', level: 12 },
+    }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'target', level: 20 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async (ctx) => ({
+      loadout: ctx.name === 'Alpha'
+        ? mapLoadout({ weapon: 'alpha_blade' })
+        : mapLoadout({ shield: 'beta_shield' }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: 4,
+        remainingHp: 90,
+      },
+    }),
+    getBankRevisionFn: () => 11,
+    globalCountFn: () => 0,
+  });
+
+  await initializeOrderBoard({ path: join(basePath, 'gear-orders-tracked-board.json') });
+  await initializeGearState({
+    path: join(basePath, 'gear-orders-tracked-state.json'),
+    characters: [
+      {
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      },
+      {
+        name: 'Beta',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: false } }],
+      },
+    ],
+  });
+
+  registerContext(alpha);
+  registerContext(beta);
+  await refreshGearState({ force: true });
+
+  const first = publishDesiredOrdersForTrackedCharacters();
+  assert.equal(first, 1, 'tracked publish should skip characters with createOrders disabled');
+
+  let snapshot = getOrderBoardSnapshot();
+  assert.equal(snapshot.orders.length, 1, 'only enabled character should seed the order board');
+  assert.equal(snapshot.orders[0]?.itemCode, 'alpha_blade');
+  assert.equal(snapshot.orders[0]?.requestedQty, 1);
+  assert.equal(snapshot.orders[0]?.remainingQty, 1);
+
+  const second = publishDesiredOrdersForTrackedCharacters(['Alpha', 'Alpha', 'Beta']);
+  assert.equal(second, 1, 'duplicate names should be de-duped and disabled characters should still skip');
+
+  snapshot = getOrderBoardSnapshot();
+  assert.equal(snapshot.orders.length, 1, 'republishing should not create duplicate orders');
+  assert.equal(snapshot.orders[0]?.requestedQty, 1, 'republishing should not increase requested quantity');
+  assert.equal(snapshot.orders[0]?.remainingQty, 1, 'republishing should not increase remaining quantity');
+
+  await flushGearState();
+  _resetOrderBoardForTests();
+}
+
 async function testRuneVariantsPublishNpcBuyOrders(basePath) {
   _resetGearStateForTests();
 
@@ -1439,12 +1531,14 @@ async function run() {
     await testPublishDesiredOrdersSkipsToolItems(tempDir);
     await testPublishDesiredOrdersCraftOnlyForGloballyMissing(tempDir);
     await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
+    await testPublishDesiredOrdersForTrackedCharactersIsIdempotent(tempDir);
     await testRuneVariantsPublishNpcBuyOrders(tempDir);
     await testFallbackOverClaimPreventedAcrossCharacters(tempDir);
     console.log('test-gear-state: PASS');
   } finally {
     await flushGearState().catch(() => {});
     _resetGearStateForTests();
+    _resetOrderBoardForTests();
     rmSync(tempDir, { recursive: true, force: true });
   }
 }
@@ -1452,6 +1546,7 @@ async function run() {
 run().catch(async (err) => {
   await flushGearState().catch(() => {});
   _resetGearStateForTests();
+  _resetOrderBoardForTests();
   console.error(err);
   process.exit(1);
 });

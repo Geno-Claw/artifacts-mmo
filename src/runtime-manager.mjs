@@ -19,6 +19,7 @@ import {
 import {
   flushGearState,
   initializeGearState,
+  publishDesiredOrdersForTrackedCharacters,
   refreshGearState,
   registerContext,
   unregisterContext,
@@ -377,6 +378,24 @@ export class RuntimeManager {
     });
   }
 
+  _republishDesiredOrdersForCharacters(charNames = [], reason = 'runtime_refresh') {
+    const names = Array.isArray(charNames)
+      ? charNames.map(name => `${name || ''}`.trim()).filter(Boolean)
+      : [];
+    const republished = publishDesiredOrdersForTrackedCharacters(names);
+
+    runtimeLog.info('[Runtime] Republished desired orders', {
+      event: 'runtime.order_board.republish_desired',
+      data: {
+        reason,
+        characterCount: names.length,
+        republished,
+      },
+    });
+
+    return republished;
+  }
+
   _handleSchedulerFailure(runId, charName, err) {
     const run = this.activeRun;
     if (!run || run.runId !== runId) return;
@@ -574,6 +593,7 @@ export class RuntimeManager {
       }
 
       await refreshGearState({ force: true });
+      this._republishDesiredOrdersForCharacters(run.characterNames, 'startup');
 
       run.loopPromises = run.schedulerEntries.map((entry) => {
         return entry.scheduler.run().catch((err) => {

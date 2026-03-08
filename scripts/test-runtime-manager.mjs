@@ -368,7 +368,58 @@ async function testOperationLockConflict(manager, controls) {
 async function testRolloutHardClearRunsOnce() {
   await withIsolatedCwd('runtime-rollout-test', async () => {
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
     await initializeOrderBoard({ path: './report/order-board.json' });
+
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem(code) {
+          if (code === 'rollout_staff') {
+            return {
+              code,
+              type: 'weapon',
+              level: 12,
+              craft: {
+                skill: 'weaponcrafting',
+                level: 12,
+              },
+            };
+          }
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'rollout_staff' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 0,
+    });
+
+    await initializeGearState({
+      path: './report/gear-state.json',
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      }],
+    });
+    registerContext(makeGearCtx('Alpha', 12));
+    await refreshGearState({ force: true });
 
     const manager = createRuntimeManager();
     createOrMergeOrder({
@@ -387,22 +438,93 @@ async function testRolloutHardClearRunsOnce() {
     assert.equal(getOrderBoardSnapshot().orders.length, 0, 'first rollout run should hard-clear board');
     assert.equal(existsSync('./report/.order-board-v2-rollout'), true, 'rollout marker should be written');
 
-    createOrMergeOrder({
-      requesterName: 'Alpha',
-      recipeCode: 'gear_state:Alpha:iron_shield',
-      itemCode: 'iron_shield',
-      sourceType: 'craft',
-      sourceCode: 'iron_shield',
-      craftSkill: 'gearcrafting',
-      sourceLevel: 10,
-      quantity: 1,
-    });
-    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'fixture should restore one order');
+    manager._republishDesiredOrdersForCharacters(['Alpha'], 'rollout_v2_hard_clear');
+    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'rollout clear should be repopulatable from gear-state');
+    assert.equal(getOrderBoardSnapshot().orders[0]?.itemCode, 'rollout_staff');
 
     manager._runOrderBoardRolloutResetIfNeeded();
     assert.equal(getOrderBoardSnapshot().orders.length, 1, 'marker should prevent repeated hard-clear');
 
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
+  });
+}
+
+async function testRepublishDesiredOrdersForCharactersUsesGearStateSnapshot() {
+  await withIsolatedCwd('runtime-republish-test', async () => {
+    _resetOrderBoardForTests();
+    _resetGearStateForTests();
+
+    await initializeOrderBoard({ path: './report/order-board.json' });
+
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem(code) {
+          if (code === 'runtime_staff') {
+            return {
+              code,
+              type: 'weapon',
+              level: 12,
+              craft: {
+                skill: 'weaponcrafting',
+                level: 12,
+              },
+            };
+          }
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'runtime_staff' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 0,
+    });
+
+    await initializeGearState({
+      path: './report/gear-state.json',
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      }],
+    });
+
+    const gearCtx = makeGearCtx('Alpha', 12);
+    registerContext(gearCtx);
+    await refreshGearState({ force: true });
+
+    const manager = createRuntimeManager();
+    const republished = manager._republishDesiredOrdersForCharacters(['Alpha'], 'startup_test');
+    assert.equal(republished, 1, 'runtime republish helper should publish current desired orders');
+
+    let snapshot = getOrderBoardSnapshot();
+    assert.equal(snapshot.orders.length, 1, 'runtime republish should seed order board immediately');
+    assert.equal(snapshot.orders[0]?.itemCode, 'runtime_staff');
+    assert.equal(snapshot.orders[0]?.requestedQty, 1);
+
+    manager._republishDesiredOrdersForCharacters(['Alpha'], 'startup_test_repeat');
+    snapshot = getOrderBoardSnapshot();
+    assert.equal(snapshot.orders.length, 1, 'repeat republish should not duplicate orders');
+    assert.equal(snapshot.orders[0]?.requestedQty, 1, 'repeat republish should not increase requested quantity');
+
+    _resetOrderBoardForTests();
+    _resetGearStateForTests();
   });
 }
 
@@ -580,6 +702,7 @@ async function run() {
   await testLifecycleTransitions(manager, controls);
   await testOperationLockConflict(manager, controls);
   await testRolloutHardClearRunsOnce();
+  await testRepublishDesiredOrdersForCharactersUsesGearStateSnapshot();
   await testCleanupFlushesGearStateAndReleasesClaims();
   await testActionEventsPopulateUiLogWithoutWebsocket();
 

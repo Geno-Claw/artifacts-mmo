@@ -639,7 +639,7 @@ export function publishDesiredOrdersForCharacter(name) {
     if (!source) continue;
 
     try {
-      _deps.createOrMergeOrderFn({
+      const order = _deps.createOrMergeOrderFn({
         requesterName: name,
         recipeCode: `gear_state:${name}:${itemCode}`,
         itemCode,
@@ -650,10 +650,27 @@ export function publishDesiredOrdersForCharacter(name) {
         sourceLevel: source.sourceLevel,
         quantity: missingQty,
       });
-      created += 1;
+      if (order) created += 1;
     } catch (err) {
       log.warn(`[GearState] Could not create desired order for ${name} ${itemCode}: ${err?.message || String(err)}`);
     }
+  }
+
+  return created;
+}
+
+export function publishDesiredOrdersForTrackedCharacters(names = null) {
+  if (!initialized) return 0;
+
+  const sourceNames = Array.isArray(names) ? names : characterOrder;
+  const seen = new Set();
+  let created = 0;
+
+  for (const rawName of sourceNames) {
+    const name = `${rawName || ''}`.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    created += publishDesiredOrdersForCharacter(name);
   }
 
   return created;
