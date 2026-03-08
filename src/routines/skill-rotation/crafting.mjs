@@ -75,6 +75,27 @@ export async function executeCrafting(ctx, routine) {
     routine.rotation.bankChecked = true;
     routine._currentBatch = claimMode ? 1 : routine._batchSize(ctx);
     await routine._withdrawFromBank(ctx, plan, recipe.code, routine._currentBatch);
+
+    // When fulfilling an order claim, enqueue sub-orders for any gather/fight
+    // materials we still need after bank withdrawal.  This lets other characters
+    // contribute the raw materials while we also farm them ourselves.
+    if (claimMode && routine.orderBoard?.createOrders) {
+      for (const step of plan) {
+        if (step.type === 'gather' && step.resource) {
+          const needed = rawMaterialNeeded(ctx, plan, step.itemCode, routine._currentBatch);
+          const have = ctx.itemCount(step.itemCode);
+          if (needed > have) {
+            routine._enqueueGatherOrderForDeficit(step, claim, ctx, needed - have);
+          }
+        } else if (step.type === 'fight' && step.monster) {
+          const needed = step.quantity * routine._currentBatch;
+          const have = ctx.itemCount(step.itemCode);
+          if (needed > have) {
+            routine._enqueueFightOrderForDeficit(step, claim, ctx, needed - have);
+          }
+        }
+      }
+    }
   }
 
   // Walk through production plan steps
