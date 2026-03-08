@@ -290,7 +290,11 @@ export function getEquipmentForSlot(slot, charLevel) {
 
   // Try each mapping until we find results
   for (const mapping of mappings) {
-    const results = findItems({ ...mapping, maxLevel: charLevel });
+    let results = findItems({ ...mapping, maxLevel: charLevel });
+    // Exclude tools (fishing rods, pickaxes) from weapon candidates
+    if (slot === 'weapon') {
+      results = results.filter(item => item.subtype !== 'tool');
+    }
     if (results.length > 0) return results;
   }
   return [];

@@ -55,8 +55,8 @@ async function testPrepareConfigForSaveMaterializesManagedTemplate() {
   const { config } = await prepareConfigForSave(input);
   const routines = config.characters[0].routines;
   assert.deepEqual(
-    routines.slice(0, 7).map((entry) => entry.type),
-    ['rest', 'depositBank', 'bankExpansion', 'event', 'completeTask', 'orderFulfillment', 'skillRotation'],
+    routines.slice(0, 8).map((entry) => entry.type),
+    ['rest', 'depositBank', 'bankExpansion', 'event', 'bossFight', 'completeTask', 'orderFulfillment', 'skillRotation'],
     'prepareConfigForSave should materialize the managed routine template in canonical order',
   );
   assert.equal(

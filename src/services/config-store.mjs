@@ -10,6 +10,7 @@ export const MANAGED_ROUTINE_ORDER = Object.freeze([
   'depositBank',
   'bankExpansion',
   'event',
+  'bossFight',
   'completeTask',
   'orderFulfillment',
   'skillRotation',
@@ -17,6 +18,7 @@ export const MANAGED_ROUTINE_ORDER = Object.freeze([
 
 export const TOGGLEABLE_ROUTINE_TYPES = Object.freeze([
   'event',
+  'bossFight',
   'orderFulfillment',
   'skillRotation',
 ]);
@@ -55,6 +57,7 @@ export const ROUTINE_EDITOR_METADATA = Object.freeze([
   { type: 'depositBank', label: 'Deposit Bank', toggleable: false, readOnly: false },
   { type: 'bankExpansion', label: 'Bank Expansion', toggleable: false, readOnly: false },
   { type: 'event', label: 'Events', toggleable: true, readOnly: false },
+  { type: 'bossFight', label: 'Boss Fight', toggleable: true, readOnly: false },
   { type: 'completeTask', label: 'Complete Task', toggleable: false, readOnly: true },
   { type: 'orderFulfillment', label: 'Order Fulfillment', toggleable: true, readOnly: false },
   { type: 'skillRotation', label: 'Skill Rotation', toggleable: true, readOnly: false },

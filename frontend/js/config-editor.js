@@ -51,6 +51,22 @@ const CONFIG_EDITOR_FALLBACK_ROUTINES = Object.freeze([
     },
   },
   {
+    type: 'bossFight',
+    label: 'Boss Fight',
+    toggleable: true,
+    readOnly: false,
+    defaultConfig: {
+      type: 'bossFight',
+      priority: 15,
+      enabled: false,
+      bossCode: 'king_slime',
+      teamSize: 3,
+      minWinrate: 80,
+      repeat: true,
+      maxFights: 0,
+    },
+  },
+  {
     type: 'completeTask',
     label: 'Complete Task',
     toggleable: false,
@@ -920,6 +936,17 @@ function renderConfigRoutineCard(character, routineMeta) {
           </select>
         </label>
         ${renderConfigSettingField('Cooldown Ms', fieldAttrs('cooldownMs'), getConfigEditorPathValue(routineConfig, 'cooldownMs', 60000), 'number', 'min="0" step="1000"', routineDesc('cooldownMs'))}
+      </div>
+    `;
+  } else if (routineMeta.type === 'bossFight') {
+    body = `
+      <div class="config-field-grid">
+        ${renderConfigSettingField('Enabled', fieldAttrs('enabled'), getConfigEditorPathValue(routineConfig, 'enabled', false) === true, 'checkbox', '', routineDesc('enabled'))}
+        ${renderConfigSettingField('Boss Code', fieldAttrs('bossCode'), getConfigEditorPathValue(routineConfig, 'bossCode', 'king_slime'), 'text', '', routineDesc('bossCode'))}
+        ${renderConfigSettingField('Team Size', fieldAttrs('teamSize'), getConfigEditorPathValue(routineConfig, 'teamSize', 3), 'number', 'min="2" max="5" step="1"', routineDesc('teamSize') || 'Maximum team size (2-5 characters)')}
+        ${renderConfigSettingField('Min Winrate %', fieldAttrs('minWinrate'), getConfigEditorPathValue(routineConfig, 'minWinrate', 80), 'number', 'min="0" max="100" step="1"', routineDesc('minWinrate'))}
+        ${renderConfigSettingField('Repeat', fieldAttrs('repeat'), getConfigEditorPathValue(routineConfig, 'repeat', true) === true, 'checkbox', '', routineDesc('repeat'))}
+        ${renderConfigSettingField('Max Fights', fieldAttrs('maxFights'), getConfigEditorPathValue(routineConfig, 'maxFights', 0), 'number', 'min="0" step="1"', routineDesc('maxFights') || 'Maximum fights per rally before stopping (0 = unlimited)')}
       </div>
     `;
   } else if (routineMeta.type === 'completeTask') {

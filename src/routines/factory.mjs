@@ -8,6 +8,7 @@ import { SkillRotationRoutine } from './skill-rotation/index.mjs';
 import { EventRoutine } from './event-routine.mjs';
 import { CompleteTaskRoutine } from './complete-task.mjs';
 import { OrderFulfillmentRoutine } from './order-fulfillment.mjs';
+import { BossFightRoutine } from './boss-fight.mjs';
 
 const ROUTINE_TYPES = {
   rest:              (cfg) => new RestRoutine({ ...cfg, type: 'rest' }),
@@ -17,6 +18,7 @@ const ROUTINE_TYPES = {
   completeTask:      (cfg) => new CompleteTaskRoutine({ ...cfg, type: 'completeTask' }),
   skillRotation:     (cfg) => new SkillRotationRoutine({ ...cfg, type: 'skillRotation' }),
   orderFulfillment:  (cfg) => new OrderFulfillmentRoutine({ ...cfg, type: 'orderFulfillment' }),
+  bossFight:         (cfg) => new BossFightRoutine({ ...cfg, type: 'bossFight' }),
 };
 
 export function buildRoutines(routineConfigs) {

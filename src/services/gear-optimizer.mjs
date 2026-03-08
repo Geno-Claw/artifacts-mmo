@@ -250,7 +250,10 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
     }
 
     // Check bank
-    const inBank = Math.max(_deps.bankCountFn(item.code), bankItems?.get(item.code) || 0);
+    const excluded = opts.excludeBank?.get(item.code) || 0;
+    const inBank = Math.max(0,
+      Math.max(_deps.bankCountFn(item.code), bankItems?.get(item.code) || 0) - excluded,
+    );
     if (inBank >= 1) {
       candidates.set(item.code, { item, source: 'bank' });
       continue;
@@ -384,6 +387,7 @@ function resetMultiSlotFamilyBaseline(loadout) {
 export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
   const candidateOpts = {
     includeCraftableUnavailable: opts.includeCraftableUnavailable === true,
+    excludeBank: opts.excludeBank || null,
   };
   const candidateIterations = toPositiveInt(opts.candidateIterations, OPTIMIZER_CANDIDATE_ITERATIONS);
   const finalIterations = Math.max(candidateIterations, toPositiveInt(opts.finalIterations, OPTIMIZER_FINAL_ITERATIONS));
@@ -391,6 +395,15 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
   if (!monster) return null;
 
   const bankItems = await _deps.getBankItemsFn();
+
+  // Apply exclusions for team gear deconfliction
+  if (opts.excludeBank) {
+    for (const [code, qty] of opts.excludeBank) {
+      const current = bankItems.get(code) || 0;
+      if (current > 0) bankItems.set(code, Math.max(0, current - qty));
+    }
+  }
+
   const baseStats = getBaseStats(ctx);
   const baseSimOpts = getBaseSimOptions(ctx);
   const optimizerSeedBase = buildOptimizerSeedBase(ctx, monsterCode);

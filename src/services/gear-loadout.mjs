@@ -55,7 +55,7 @@ function buildDepositRowsRespectingKeep(ctx, codes, keepByCode = {}) {
  *   swapping when any target item is unavailable after bank withdrawal
  * @returns {Promise<{ changed: boolean, swapsFailed: boolean, missingSlots: string[] }>}
  */
-async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abortOnMissing = false } = {}) {
+export async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abortOnMissing = false } = {}) {
   // Determine which slots need changing
   const changes = [];
   for (const slot of EQUIPMENT_SLOTS) {

@@ -78,6 +78,9 @@
                   "$ref": "#/$defs/eventRoutine"
                 },
                 {
+                  "$ref": "#/$defs/bossFightRoutine"
+                },
+                {
                   "$ref": "#/$defs/skillRotationRoutine"
                 },
                 {
@@ -445,6 +448,58 @@
           "default": 60000,
           "minimum": 0,
           "description": "Per-event cooldown (ms) between participation attempts"
+        }
+      }
+    },
+    "bossFightRoutine": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "bossFight"
+        },
+        "priority": {
+          "type": "number",
+          "default": 15,
+          "description": "Execution priority (default 15)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable boss fight participation"
+        },
+        "bossCode": {
+          "type": "string",
+          "default": "king_slime",
+          "description": "Monster code of the boss to fight"
+        },
+        "teamSize": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "maximum": 5,
+          "description": "Maximum team size (2-5 characters)"
+        },
+        "minWinrate": {
+          "type": "number",
+          "default": 80,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimum simulated win rate to attempt the fight"
+        },
+        "repeat": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to repeat the fight after completion"
+        },
+        "maxFights": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Maximum fights per rally before stopping (0 = unlimited)"
         }
       }
     },

@@ -54,8 +54,8 @@ export {
 } from './services/food-manager.mjs';
 
 /** Single fight. Returns the full action result. */
-export async function fightOnce(ctx) {
-  const result = await api.fight(ctx.name);
+export async function fightOnce(ctx, { participants = [] } = {}) {
+  const result = await api.fight(ctx.name, { participants });
   ctx.applyActionResult(result);
   await api.waitForCooldown(result);
   return result;

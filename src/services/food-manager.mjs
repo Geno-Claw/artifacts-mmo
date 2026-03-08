@@ -24,7 +24,7 @@ function isConditionNotMet(err) {
  * Score and filter healing items from a list of { code, quantity } entries.
  * Returns items sorted by potency (most potent first).
  */
-function scoreHealingItems(entries, character) {
+export function scoreHealingItems(entries, character) {
   const foods = [];
   for (const { code, quantity } of entries) {
     if (!code || quantity <= 0) continue;

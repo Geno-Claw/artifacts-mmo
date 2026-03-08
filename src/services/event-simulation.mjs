@@ -51,6 +51,32 @@ export function buildFakeCharacter(ctx) {
 }
 
 /**
+ * Build a FakeCharacter from a CharacterContext with a specific gear loadout.
+ * Loadout is Map<slot, itemCode|null>.
+ */
+export function buildFakeCharacterWithLoadout(ctx, loadout) {
+  const char = ctx.get();
+  const fake = { level: char.level };
+
+  for (const slot of EQUIPMENT_SLOTS) {
+    const code = loadout.get(slot) || null;
+    if (code) {
+      fake[`${slot}_slot`] = code;
+    }
+  }
+
+  // Include utility quantities from current character state
+  if (fake.utility1_slot) {
+    fake.utility1_slot_quantity = char.utility1_slot_quantity || 1;
+  }
+  if (fake.utility2_slot) {
+    fake.utility2_slot_quantity = char.utility2_slot_quantity || 1;
+  }
+
+  return fake;
+}
+
+/**
  * Generate a cache key from character state.
  */
 function cacheKey(ctx, monsterCode) {
@@ -163,41 +189,53 @@ export function clearCache(charName) {
 }
 
 /**
- * Evaluate best team of up to 3 characters against a boss monster.
- * Framework for V2 — not called in V1.
+ * Evaluate best team against a boss monster.
  *
  * @param {CharacterContext[]} contexts - all available character contexts
  * @param {string} monsterCode
- * @param {{ iterations?: number }} options
+ * @param {object} options
+ * @param {number} [options.iterations] - simulation iterations
+ * @param {number} [options.maxTeamSize=3] - max characters per team
+ * @param {number} [options.minTeamSize=2] - min characters per team (boss fights are group-only)
+ * @param {Map<string, object>} [options.fakeCharsByName] - pre-built fake characters keyed by ctx.name
  * @returns {Promise<{ team: CharacterContext[], winrate: number } | null>}
  */
-export async function findBestTeam(contexts, monsterCode, { iterations = DEFAULT_ITERATIONS } = {}) {
-  if (contexts.length < 1) return null;
+export async function findBestTeam(contexts, monsterCode, {
+  iterations = DEFAULT_ITERATIONS,
+  maxTeamSize = 3,
+  minTeamSize = 2,
+  fakeCharsByName = null,
+} = {}) {
+  if (contexts.length < minTeamSize) return null;
 
   const candidates = contexts.slice(0, 5); // max 5 characters
   let bestTeam = null;
   let bestWinrate = -1;
 
-  // Try all combinations of 3 (or fewer if not enough characters)
-  const teamSize = Math.min(3, candidates.length);
-  const combos = combinations(candidates, teamSize);
+  // Try team sizes from minTeamSize to maxTeamSize
+  const maxSize = Math.min(maxTeamSize, candidates.length);
+  for (let size = minTeamSize; size <= maxSize; size++) {
+    const combos = combinations(candidates, size);
+    for (const team of combos) {
+      try {
+        const fakeChars = team.map(ctx =>
+          fakeCharsByName?.get(ctx.name) || buildFakeCharacter(ctx),
+        );
+        const response = await api.simulateFight({
+          characters: fakeChars,
+          monster: monsterCode,
+          iterations,
+        });
 
-  for (const team of combos) {
-    try {
-      const fakeChars = team.map(ctx => buildFakeCharacter(ctx));
-      const response = await api.simulateFight({
-        characters: fakeChars,
-        monster: monsterCode,
-        iterations,
-      });
-
-      const winrate = response.winrate ?? 0;
-      if (winrate > bestWinrate) {
-        bestWinrate = winrate;
-        bestTeam = team;
+        const winrate = response.winrate ?? 0;
+        log.debug(`${TAG} Team [${team.map(c => c.name).join(', ')}] vs ${monsterCode}: ${winrate}% (${iterations} iters)`);
+        if (winrate > bestWinrate) {
+          bestWinrate = winrate;
+          bestTeam = team;
+        }
+      } catch (err) {
+        log.warn(`${TAG} Team simulation failed: ${err.message}`);
       }
-    } catch (err) {
-      log.warn(`${TAG} Team simulation failed: ${err.message}`);
     }
   }
 

@@ -128,11 +128,13 @@ function buildAggregateBaseResult(results, iterations) {
   let totalRemainingHp = 0;
   let totalHpLostPercent = 0;
   let totalHpLostOnWin = 0;
+  let totalMonsterRemainingHpPercent = 0;
 
   for (const result of results) {
     totalTurns += Number(result.turns || 0);
     totalRemainingHp += Number(result.remainingHp || 0);
     totalHpLostPercent += Number(result.hpLostPercent || 0);
+    totalMonsterRemainingHpPercent += Number(result.monsterRemainingHpPercent || 0);
     if (result.win) {
       wins++;
       totalHpLostOnWin += Number(result.hpLost || 0);
@@ -149,6 +151,7 @@ function buildAggregateBaseResult(results, iterations) {
     avgRemainingHp: totalRemainingHp / iterations,
     avgHpLostPercent: totalHpLostPercent / iterations,
     avgHpLostOnWin: wins > 0 ? totalHpLostOnWin / wins : null,
+    avgMonsterRemainingHpPercent: totalMonsterRemainingHpPercent / iterations,
   };
 }
 
@@ -163,6 +166,7 @@ function materializeAggregateResult(baseResult, threshold) {
     turns: baseResult.avgTurns,
     remainingHp: baseResult.avgRemainingHp,
     hpLostPercent: baseResult.avgHpLostPercent,
+    monsterRemainingHpPercent: baseResult.avgMonsterRemainingHpPercent,
   };
 }
 
@@ -325,15 +329,17 @@ function charGoesFirst(charStats, monsterStats, rng = Math.random, startingHp = 
   return rng() < 0.5;
 }
 
-function makeSingleFightResult(win, turns, remainingHp, maxHp) {
+function makeSingleFightResult(win, turns, remainingHp, maxHp, monsterHp, monsterMaxHp) {
   const hp = Math.max(0, remainingHp);
   const safeMaxHp = Math.max(1, maxHp);
+  const safeMonMaxHp = Math.max(1, monsterMaxHp || 1);
   return {
     win,
     turns,
     remainingHp: hp,
     hpLost: Math.max(0, safeMaxHp - hp),
     hpLostPercent: ((safeMaxHp - hp) / safeMaxHp) * 100,
+    monsterRemainingHpPercent: (Math.max(0, monsterHp ?? 0) / safeMonMaxHp) * 100,
   };
 }
 
@@ -341,8 +347,9 @@ function simulateFastPathOnce(charStats, monsterStats, rng, startingHp) {
   const charHpStart = normalizeStartingHp(charStats, startingHp);
   const first = charGoesFirst(charStats, monsterStats, rng, charHpStart);
   const charMaxHp = Math.max(1, Number(charStats?.max_hp || charStats?.hp || 1));
+  const monMaxHp = Math.max(1, Number(monsterStats?.hp || 1));
   let charHp = charHpStart;
-  let monsterHp = Math.max(1, Number(monsterStats?.hp || 1));
+  let monsterHp = monMaxHp;
 
   const charProfile = calcDamageProfile(charStats, monsterStats, 0, 0);
   const monProfile = calcDamageProfile(monsterStats, charStats, 0, 0);
@@ -351,14 +358,14 @@ function simulateFastPathOnce(charStats, monsterStats, rng, startingHp) {
     const isCharTurn = first ? (turn % 2 === 1) : (turn % 2 === 0);
     if (isCharTurn) {
       monsterHp -= rollCrit(charStats, rng) ? charProfile.critDamage : charProfile.baseDamage;
-      if (monsterHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp);
+      if (monsterHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp, monsterHp, monMaxHp);
     } else {
       charHp -= rollCrit(monsterStats, rng) ? monProfile.critDamage : monProfile.baseDamage;
-      if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
+      if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp, monsterHp, monMaxHp);
     }
   }
 
-  return makeSingleFightResult(false, MAX_TURNS, charHp, charMaxHp);
+  return makeSingleFightResult(false, MAX_TURNS, charHp, charMaxHp, monsterHp, monMaxHp);
 }
 
 function simulateWithEffectsOnce(charStats, monsterStats, rng, {
@@ -402,13 +409,13 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
 
       if (poisonDmg > 0) {
         charHp -= poisonDmg;
-        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
+        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp, monHp, monMaxHp);
       }
 
       if (playerBurnDmg > 0) {
         charHp -= playerBurnDmg;
         playerBurnDmg = Math.floor(playerBurnDmg * 0.9);
-        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
+        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp, monHp, monMaxHp);
       }
 
       if (monBurnDmg > 0) {
@@ -460,7 +467,7 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
         berserkerActive = true;
       }
 
-      if (monHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp);
+      if (monHp <= 0) return makeSingleFightResult(true, turn, charHp, charMaxHp, monHp, monMaxHp);
 
       if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
         charHp = Math.min(charMaxHp, charHp + restoreHp);
@@ -489,7 +496,7 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
         const drained = Math.round(charHp * Number(monFx.void_drain) / 100);
         charHp -= drained;
         monHp = Math.min(monMaxHp, monHp + drained);
-        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
+        if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp, monHp, monMaxHp);
       }
 
       const didCrit = rollCrit(monsterStats, rng);
@@ -511,7 +518,7 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
         monFrenzyReady = true;
       }
 
-      if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp);
+      if (charHp <= 0) return makeSingleFightResult(false, turn, 0, charMaxHp, monHp, monMaxHp);
 
       if (restoreHp > 0 && !restoreUsed && charHp < charMaxHp * 0.5) {
         charHp = Math.min(charMaxHp, charHp + restoreHp);
@@ -520,7 +527,7 @@ function simulateWithEffectsOnce(charStats, monsterStats, rng, {
     }
   }
 
-  return makeSingleFightResult(false, MAX_TURNS, charHp, charMaxHp);
+  return makeSingleFightResult(false, MAX_TURNS, charHp, charMaxHp, monHp, monMaxHp);
 }
 
 export function simulateCombatOnce(charStats, monsterStats, options = {}) {
@@ -564,6 +571,12 @@ export function isBetterCombatResult(a, b) {
   const aRequiredHp = Number.isFinite(a.requiredHp) ? a.requiredHp : Number.POSITIVE_INFINITY;
   const bRequiredHp = Number.isFinite(b.requiredHp) ? b.requiredHp : Number.POSITIVE_INFINITY;
   if (aRequiredHp !== bRequiredHp) return aRequiredHp < bRequiredHp;
+
+  // Lower monster remaining HP % = dealt more damage = better
+  const aMonHpPct = Number(a.avgMonsterRemainingHpPercent ?? a.monsterRemainingHpPercent ?? 100);
+  const bMonHpPct = Number(b.avgMonsterRemainingHpPercent ?? b.monsterRemainingHpPercent ?? 100);
+  if (aMonHpPct !== bMonHpPct) return aMonHpPct < bMonHpPct;
+
   if (Number(a.avgTurns || a.turns || 0) !== Number(b.avgTurns || b.turns || 0)) {
     return Number(a.avgTurns || a.turns || 0) < Number(b.avgTurns || b.turns || 0);
   }
@@ -579,9 +592,12 @@ export function isCombatResultTie(a, b) {
   const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
   const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
   const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  const aMonHpPct = Number(a.avgMonsterRemainingHpPercent ?? a.monsterRemainingHpPercent ?? 100);
+  const bMonHpPct = Number(b.avgMonsterRemainingHpPercent ?? b.monsterRemainingHpPercent ?? 100);
   return aCanWin === bCanWin
     && aWinRate === bWinRate
     && aRequiredHp === bRequiredHp
+    && aMonHpPct === bMonHpPct
     && Number(a.avgTurns || a.turns || 0) === Number(b.avgTurns || b.turns || 0)
     && Number(a.avgRemainingHp || a.remainingHp || 0) === Number(b.avgRemainingHp || b.remainingHp || 0);
 }

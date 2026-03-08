@@ -439,8 +439,9 @@ export async function transition(name = CHARACTER) {
   return request('POST', `/my/${name}/action/transition`);
 }
 
-export async function fight(name = CHARACTER) {
-  return request('POST', `/my/${name}/action/fight`);
+export async function fight(name = CHARACTER, { participants = [] } = {}) {
+  const body = participants.length > 0 ? { participants } : undefined;
+  return request('POST', `/my/${name}/action/fight`, body);
 }
 
 export async function gather(name = CHARACTER) {
@@ -453,6 +454,13 @@ export async function rest(name = CHARACTER) {
 
 export async function useItem(code, quantity = 1, name = CHARACTER) {
   return request('POST', `/my/${name}/action/use`, { code, quantity });
+}
+
+export async function giveItem(items, targetCharacter, name = CHARACTER) {
+  return request('POST', `/my/${name}/action/give/item`, {
+    items,
+    character: targetCharacter,
+  });
 }
 
 export async function craft(code, quantity = 1, name = CHARACTER) {

@@ -23,6 +23,10 @@ import {
   registerContext,
   unregisterContext,
 } from './services/gear-state.mjs';
+import {
+  registerContext as registerBossRallyContext,
+  unregisterContext as unregisterBossRallyContext,
+} from './services/boss-rally.mjs';
 import { createCharacter, subscribeActionEvents } from './api.mjs';
 import { initializeUiState, recordCooldown, recordLog, recordGameLog } from './services/ui-state.mjs';
 import {
@@ -445,6 +449,7 @@ export class RuntimeManager {
 
     for (const entry of run.schedulerEntries) {
       unregisterContext(entry.name);
+      unregisterBossRallyContext(entry.name);
     }
 
     if (typeof run.unsubscribeActionEvents === 'function') {
@@ -560,6 +565,7 @@ export class RuntimeManager {
         }, async () => this._createScheduler(charCfg));
         scheduler.setRunContext({ runId: run.runId });
         registerContext(ctx);
+        registerBossRallyContext(ctx);
         run.schedulerEntries.push({
           name: charCfg.name,
           scheduler,
