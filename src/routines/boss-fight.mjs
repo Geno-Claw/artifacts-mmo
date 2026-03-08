@@ -50,6 +50,7 @@ export class BossFightRoutine extends BaseRoutine {
       urgent: false,
     });
     this.teamSize = cfg.teamSize || 3;
+    this.minTeamSize = cfg.minTeamSize || cfg.teamSize || 3;
     this.repeat = cfg.repeat !== false;
     this.maxFights = cfg.maxFights || 0; // 0 = unlimited
     this.orderDriven = cfg.orderDriven === true;
@@ -77,6 +78,7 @@ export class BossFightRoutine extends BaseRoutine {
 
   updateConfig(cfg) {
     if (cfg.teamSize !== undefined) this.teamSize = cfg.teamSize;
+    if (cfg.minTeamSize !== undefined) this.minTeamSize = cfg.minTeamSize;
     if (cfg.repeat !== undefined) this.repeat = cfg.repeat !== false;
     if (cfg.maxFights !== undefined) this.maxFights = cfg.maxFights || 0;
     if (cfg.orderDriven !== undefined) this.orderDriven = cfg.orderDriven === true;
@@ -148,12 +150,12 @@ export class BossFightRoutine extends BaseRoutine {
     if (ctx.cooldownRemainingMs() > 0) return false;
     if (ctx.inventoryFull()) return false;
 
-    // Need at least 2 eligible characters (group-only)
+    // Need at least minTeamSize eligible characters
     const allContextNames = bossRally.getAllContexts()
       .filter(c => !c.inventoryFull())
       .map(c => c.name);
-    if (allContextNames.length < 2) {
-      log.debug(`[${TAG}] ${ctx.name}: skipped — only ${allContextNames.length} eligible context(s) registered`);
+    if (allContextNames.length < this.minTeamSize) {
+      log.debug(`[${TAG}] ${ctx.name}: skipped — only ${allContextNames.length} eligible context(s), need ${this.minTeamSize}`);
       return false;
     }
 
@@ -292,8 +294,8 @@ export class BossFightRoutine extends BaseRoutine {
     const enabledNames = allContexts.map(c => c.name);
     const eligible = bossRally.getEligibleContexts({ enabledNames, bossCode, ignoreCooldown: true });
 
-    if (eligible.length < 2) {
-      log.info(`[${TAG}] ${ctx.name}: Not enough eligible characters for ${bossCode} (${eligible.length})`);
+    if (eligible.length < this.minTeamSize) {
+      log.info(`[${TAG}] ${ctx.name}: Not enough eligible characters for ${bossCode} (${eligible.length}/${this.minTeamSize})`);
       this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
@@ -320,8 +322,8 @@ export class BossFightRoutine extends BaseRoutine {
 
     // Need at least 2 characters with both loadouts
     const fullyOptimized = eligible.filter(c => tankLoadouts.has(c.name) && dpsLoadouts.has(c.name));
-    if (fullyOptimized.length < 2) {
-      log.info(`[${TAG}] ${ctx.name}: Not enough optimized characters for ${bossCode} (${fullyOptimized.length})`);
+    if (fullyOptimized.length < this.minTeamSize) {
+      log.info(`[${TAG}] ${ctx.name}: Not enough optimized characters for ${bossCode} (${fullyOptimized.length}/${this.minTeamSize})`);
       this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
@@ -415,9 +417,11 @@ export class BossFightRoutine extends BaseRoutine {
     let bestResult = null;
 
     const maxSize = Math.min(this.teamSize, eligible.length);
-    const minSize = Math.min(2, eligible.length);
+    const minSize = Math.max(this.minTeamSize, 2);
 
-    for (let size = minSize; size <= maxSize; size++) {
+    if (eligible.length < minSize) return null;
+
+    for (let size = maxSize; size >= minSize; size--) {
       const combos = combinations(eligible, size);
       for (const team of combos) {
         // Try each character as tank
@@ -463,6 +467,8 @@ export class BossFightRoutine extends BaseRoutine {
           }
         }
       }
+      // Found a viable team at this size — don't try smaller groups
+      if (bestResult) break;
     }
 
     return bestResult;

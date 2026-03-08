@@ -473,6 +473,13 @@
           "maximum": 3,
           "description": "Maximum team size (2-3 characters, API max is 3)"
         },
+        "minTeamSize": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "maximum": 3,
+          "description": "Minimum team size required to start a boss fight (won't attempt with fewer)"
+        },
         "repeat": {
           "type": "boolean",
           "default": true,
