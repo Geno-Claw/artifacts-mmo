@@ -113,7 +113,7 @@ export class DepositBankRoutine extends BaseRoutine {
       await this._recycleEquipment(ctx);
     }
 
-    // Step 3: Sell items on GE — whitelist only (alwaysSell rules)
+    // Step 3: Sell items on GE — duplicate gear plus alwaysSell rules
     if (this.sellOnGE && deps.getSellRulesFn()) {
       await this._sellOnGE(ctx);
     }
@@ -252,8 +252,8 @@ export class DepositBankRoutine extends BaseRoutine {
 
     const gold = ctx.get().gold;
     if (gold > 0) {
-      depositLog.info(`[${ctx.name}] Depositing ${gold}g from GE collections`, {
-        event: 'routine.deposit.ge_cleanup_gold',
+      depositLog.info(`[${ctx.name}] Depositing ${gold}g to bank`, {
+        event: 'routine.deposit.gold_cleanup',
         context: {
           character: ctx.name,
           routine: this.name,
@@ -263,10 +263,10 @@ export class DepositBankRoutine extends BaseRoutine {
         },
       });
       try {
-        await deps.depositGoldToBankFn(ctx, gold, { reason: 'deposit routine GE cleanup gold' });
+        await deps.depositGoldToBankFn(ctx, gold, { reason: 'deposit routine gold cleanup' });
       } catch (err) {
         depositLog.warn(`[${ctx.name}] Could not deposit gold: ${err.message}`, {
-          event: 'routine.deposit.ge_cleanup_gold_failed',
+          event: 'routine.deposit.gold_cleanup_failed',
           reasonCode: 'bank_unavailable',
           context: {
             character: ctx.name,

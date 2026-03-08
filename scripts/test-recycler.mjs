@@ -56,6 +56,7 @@ function installAnalyzeDeps({
   sellRules,
   itemsByCode,
   claimedByCode,
+  openOrderByCode = new Map(),
   globalByCode,
   bankByCode,
   levelsByChar = {},
@@ -71,10 +72,21 @@ function installAnalyzeDeps({
         return itemsByCode.get(code) || null;
       },
       isEquipmentType(item) {
-        return item?.type === 'weapon' || item?.type === 'ring' || item?.type === 'amulet';
+        return item?.type === 'weapon'
+          || item?.type === 'shield'
+          || item?.type === 'helmet'
+          || item?.type === 'body_armor'
+          || item?.type === 'leg_armor'
+          || item?.type === 'boots'
+          || item?.type === 'ring'
+          || item?.type === 'amulet'
+          || item?.type === 'artifact'
+          || item?.type === 'bag'
+          || item?.type === 'rune';
       },
     },
     getClaimedTotalFn: (code) => claimedByCode.get(code) || 0,
+    getOpenOrderDemandByCodeFn: () => openOrderByCode,
     globalCountFn: (code) => globalByCode.get(code) || 0,
     bankCountFn: (code) => bankByCode.get(code) || 0,
     getCharacterToolProfilesSnapshotFn: () => levelsByChar,
@@ -161,6 +173,37 @@ async function testAnalyzeTreatsFallbackClaimsAsProtected() {
 
   const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
   assert.equal(rows.length, 0, 'fully-claimed fallback gear should not be selected for recycle');
+}
+
+async function testAnalyzeProtectsOpenOrderDemand() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['skeleton_pants', 2],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['skeleton_pants', { code: 'skeleton_pants', type: 'leg_armor', craft: { skill: 'gearcrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['skeleton_pants', 1],
+    ]),
+    openOrderByCode: new Map([
+      ['skeleton_pants', 1],
+    ]),
+    globalByCode: new Map([
+      ['skeleton_pants', 2],
+    ]),
+    bankByCode: bankItems,
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  assert.deepEqual(rows, [], 'open order demand should reserve duplicate craftable gear before recycle');
 }
 
 async function testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds() {
@@ -468,6 +511,7 @@ async function testClaimedEquipmentIsProtectedFromRecycle() {
 async function run() {
   await testAnalyzeUsesClaimBasedProtection();
   await testAnalyzeTreatsFallbackClaimsAsProtected();
+  await testAnalyzeProtectsOpenOrderDemand();
   await testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds();
   await testAnalyzeToolSurplusStillHonorsClaimedProtection();
   await testAnalyzeSkipsToolRecycleOnIncompleteLevelSnapshot();

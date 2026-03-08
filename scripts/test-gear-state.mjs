@@ -1432,6 +1432,88 @@ async function testRuneVariantsPublishNpcBuyOrders(basePath) {
   await flushGearState();
 }
 
+async function testDroppedGearPublishesFightOrders(basePath) {
+  _resetGearStateForTests();
+
+  const ctx = makeCtx({ name: 'Ranger', level: 20, capacity: 30 });
+  const created = [];
+  const itemsByCode = new Map([
+    ['starter_sword', { code: 'starter_sword', type: 'weapon', level: 1 }],
+    ['forest_ring', { code: 'forest_ring', type: 'ring', level: 15 }],
+  ]);
+
+  _setDepsForTests({
+    gameDataSvc: {
+      ...createBaseGameData([{ code: 'forest_sprite', level: 15 }]),
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+    },
+    optimizeForMonsterFn: async () => ({
+      loadout: mapLoadout({
+        weapon: 'starter_sword',
+        ring1: 'forest_ring',
+        ring2: 'forest_ring',
+      }),
+      simResult: {
+        win: true,
+        hpLostPercent: 20,
+        turns: 4,
+        remainingHp: 90,
+      },
+    }),
+    getBankRevisionFn: () => 13,
+    globalCountFn: (code) => (code === 'starter_sword' ? 1 : 0),
+    resolveItemOrderSourceFn: (code) => {
+      if (code === 'forest_ring') {
+        return {
+          sourceType: 'fight',
+          sourceCode: 'forest_sprite',
+          sourceLevel: 15,
+          craftSkill: null,
+          gatherSkill: null,
+        };
+      }
+      return null;
+    },
+    createOrMergeOrderFn: (request) => {
+      created.push(request);
+      return { id: `order-${request.itemCode}` };
+    },
+  });
+
+  await initializeGearState({
+    path: join(basePath, 'gear-drop-orders.json'),
+    characters: [{
+      name: 'Ranger',
+      settings: {},
+      routines: [{
+        type: 'skillRotation',
+        orderBoard: {
+          enabled: true,
+          createOrders: true,
+        },
+      }],
+    }],
+  });
+  registerContext(ctx);
+  await refreshGearState({ force: true });
+
+  const state = getCharacterGearState('Ranger');
+  assert.equal(state.required.forest_ring, 2, 'required should preserve duplicate dropped ring counts');
+  assert.equal(state.desired.forest_ring, 2, 'missing dropped gear should propagate into desired counts');
+
+  const added = publishDesiredOrdersForCharacter('Ranger');
+  assert.equal(added, 1, 'duplicate dropped gear should merge into one fight order');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].itemCode, 'forest_ring');
+  assert.equal(created[0].sourceType, 'fight');
+  assert.equal(created[0].sourceCode, 'forest_sprite');
+  assert.equal(created[0].quantity, 2, 'fight order should request both desired copies');
+
+  await flushGearState();
+}
+
 async function testFallbackOverClaimPreventedAcrossCharacters(basePath) {
   _resetGearStateForTests();
 
@@ -1533,6 +1615,7 @@ async function run() {
     await testDesiredCraftOrdersWhenAnotherCharacterOwnsCopy(tempDir);
     await testPublishDesiredOrdersForTrackedCharactersIsIdempotent(tempDir);
     await testRuneVariantsPublishNpcBuyOrders(tempDir);
+    await testDroppedGearPublishesFightOrders(tempDir);
     await testFallbackOverClaimPreventedAcrossCharacters(tempDir);
     console.log('test-gear-state: PASS');
   } finally {

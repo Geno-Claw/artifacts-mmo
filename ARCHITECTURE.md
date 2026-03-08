@@ -284,8 +284,8 @@ Combat utility automation service:
 - Can preserve non-potion utility items in occupied slots
 
 ### Recycler (`services/recycler.mjs`)
-Equipment recycling at workshops. Surplus equipment is broken down into crafting materials instead of being sold on the GE:
-- Identify recycle candidates from unclaimed equipment/jewelry only (gear-state ownership is protected)
+Equipment recycling at workshops. Craftable surplus gear is broken down into crafting materials:
+- Identify recycle candidates with the shared duplicate-gear analyzer (gear-state ownership is protected)
 - Group by `craft.skill` to minimize workshop travel (e.g., weaponcrafting, gearcrafting, jewelrycrafting)
 - Withdraw → move to workshop → recycle → deposit materials flow
 - Mid-batch inventory management: deposits materials to bank when inventory hits 90% capacity
@@ -293,8 +293,9 @@ Equipment recycling at workshops. Surplus equipment is broken down into crafting
 - Contention control: reservation-backed bank withdrawals (no recycler-level mutex)
 
 ### GE Seller (`services/ge-seller.mjs`)
-Grand Exchange selling automation — **whitelist-only** (only `alwaysSell` rules):
-- Equipment duplicates are handled by the recycler, not the GE
+Grand Exchange selling automation:
+- Reuses the duplicate-gear analyzer so surplus claimed-safe equipment can be sold, including dropped loot that cannot be recycled
+- `alwaysSell` acts as an override for matching item codes, bypassing normal keep logic except `neverSell`
 - Price via undercut strategy (configured % below lowest listing)
 - Withdraw → list → deposit flow with inventory verification before each sell order
 - Order collection and stale order cancellation
@@ -371,8 +372,8 @@ Character `settings` can optionally include potion automation controls (`setting
 ### `config/sell-rules.json`
 
 Controls equipment recycling and GE selling:
-- `sellDuplicateEquipment` — recycle surplus unclaimed equipment/jewelry at workshops
-- `alwaysSell` — whitelist of items to sell on the GE (the only items that go to GE)
+- `sellDuplicateEquipment` — enable shared duplicate-gear disposal logic (recycler for craftable gear, GE for sellable gear including drops)
+- `alwaysSell` — explicit sell overrides for matching item codes
 - `neverSell` — item codes exempt from both recycling and GE selling
 - `pricingStrategy` — "undercut" with configurable `undercutPercent` (for GE listings)
 

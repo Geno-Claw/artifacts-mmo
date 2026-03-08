@@ -343,7 +343,7 @@
         "sellOnGE": {
           "type": "boolean",
           "default": true,
-          "description": "Sell whitelisted items on Grand Exchange during deposit (alwaysSell rules only)"
+          "description": "Sell GE candidates during deposit, including duplicate gear disposal plus any alwaysSell overrides"
         },
         "recycleEquipment": {
           "type": "boolean",

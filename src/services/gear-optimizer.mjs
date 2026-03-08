@@ -27,7 +27,7 @@ import { canUseItem } from './item-conditions.mjs';
 import * as gameData from './game-data.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
 import { bankCount } from './inventory-manager.mjs';
-import { TOOL_EFFECT_BY_SKILL } from './tool-policy.mjs';
+import { resolveItemOrderSource, TOOL_EFFECT_BY_SKILL } from './tool-policy.mjs';
 import * as log from '../log.mjs';
 import { toPositiveInt } from '../utils.mjs';
 
@@ -126,6 +126,7 @@ let _deps = {
   getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
   findItemsFn: (filters) => gameData.findItems(filters),
   findNpcForItemFn: (code) => gameData.findNpcForItem(code),
+  resolveItemOrderSourceFn: (code) => resolveItemOrderSource(code),
   bankCountFn: (code) => bankCount(code),
 };
 
@@ -301,8 +302,7 @@ function pruneDominatedDefensiveCandidates(candidates = []) {
  * Filtered by character level. Returns deduplicated by item code.
  */
 export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
-  const includeCraftableUnavailable = opts.includeCraftableUnavailable === true;
-  const includeVendorUnavailable = includeCraftableUnavailable && slot === 'rune';
+  const includeUnavailableSources = opts.includeCraftableUnavailable === true;
   const char = ctx.get();
   const charLevel = char.level;
   const candidates = new Map(); // code → { item, source }
@@ -339,15 +339,16 @@ export function getCandidatesForSlot(ctx, slot, bankItems, opts = {}) {
       continue;
     }
 
-    // Planning mode: include craftable items that are not yet owned.
-    if (includeCraftableUnavailable && item?.craft?.skill) {
-      candidates.set(item.code, { item, source: 'craftable' });
-      continue;
-    }
-
-    // Planning mode: runes can also be bought directly from NPC vendors.
-    if (includeVendorUnavailable && _deps.findNpcForItemFn(item.code)) {
-      candidates.set(item.code, { item, source: 'npc_buy' });
+    // Planning mode: include unavailable items when an acquisition source exists
+    // (craft, gather, fight, NPC buy). This lets desired gear cover drops too.
+    if (includeUnavailableSources) {
+      const source = _deps.resolveItemOrderSourceFn(item.code);
+      if (source?.sourceType) {
+        candidates.set(item.code, {
+          item,
+          source: source.sourceType === 'craft' ? 'craftable' : source.sourceType,
+        });
+      }
     }
   }
 
@@ -455,7 +456,7 @@ function filterDuplicateFamilyCandidates(candidates, slot, loadout, ctx, bankIte
   if (slotIndex <= 0) return candidates;
 
   const priorSlots = familySlots.slice(0, slotIndex);
-  const includeCraftableUnavailable = opts.includeCraftableUnavailable === true;
+  const includeUnavailableSources = opts.includeCraftableUnavailable === true;
 
   return candidates.filter(({ item, source }) => {
     const priorUses = priorSlots.reduce((count, priorSlot) => (
@@ -467,7 +468,7 @@ function filterDuplicateFamilyCandidates(candidates, slot, loadout, ctx, bankIte
     // multiple copies are owned.
     if (familySlots === ARTIFACT_SLOTS) return false;
 
-    if (includeCraftableUnavailable && source === 'craftable') return true;
+    if (includeUnavailableSources && !['equipped', 'inventory', 'bank'].includes(source)) return true;
 
     const c = ctx.get();
     const equippedCount = familySlots
@@ -1196,6 +1197,7 @@ export function _resetDepsForTests() {
     getEquipmentForSlotFn: (slot, charLevel) => gameData.getEquipmentForSlot(slot, charLevel),
     findItemsFn: (filters) => gameData.findItems(filters),
     findNpcForItemFn: (code) => gameData.findNpcForItem(code),
+    resolveItemOrderSourceFn: (code) => resolveItemOrderSource(code),
     bankCountFn: (code) => bankCount(code),
   };
 }

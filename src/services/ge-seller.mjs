@@ -12,6 +12,7 @@ import {
   withdrawGoldFromBank,
 } from './bank-ops.mjs';
 import { moveTo } from '../helpers.mjs';
+import { analyzeSurplusEquipmentCandidates } from './equipment-surplus.mjs';
 
 const geLog = log.createLogger({ scope: 'service.ge-seller' });
 
@@ -70,8 +71,8 @@ export function getSellRules() {
 
 /**
  * Determine which items to sell from bank contents.
- * Only considers bank quantities — items on characters are in use and not
- * part of the sell decision. Rings auto-double the keep value (2 slots per char).
+ * Duplicate equipment uses the same claim-aware logic as the recycler, while
+ * `alwaysSell` acts as an override for matching bank items.
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {Map<string, number>} bankItems - code → quantity
  * @returns {Array<{ code: string, quantity: number, reason: string }>}
@@ -80,14 +81,14 @@ export function analyzeSellCandidates(ctx, bankItems) {
   if (!sellRules) return [];
 
   const candidates = [];
+  const seen = new Set();
   const neverSellSet = new Set(sellRules.neverSell || []);
 
-  // Equipment duplicates are handled by recycler — GE is whitelist-only (alwaysSell)
-
-  // Always-sell list
+  // Always-sell rules take precedence over normal keep/claim logic for the
+  // same item code. `neverSell` remains the hard safety override.
   for (const rule of (sellRules.alwaysSell || [])) {
     if (neverSellSet.has(rule.code)) continue;
-    if (candidates.some(c => c.code === rule.code)) continue;
+    if (seen.has(rule.code)) continue;
 
     const bankQty = bankItems.get(rule.code) || 0;
     const keepInBank = rule.keepInBank || 0;
@@ -97,8 +98,24 @@ export function analyzeSellCandidates(ctx, bankItems) {
     candidates.push({
       code: rule.code,
       quantity: surplus,
-      reason: `always-sell rule (keeping ${keepInBank})`,
+      reason: `always-sell override (keeping ${keepInBank})`,
     });
+    seen.add(rule.code);
+  }
+
+  const duplicateCandidates = analyzeSurplusEquipmentCandidates(ctx, bankItems, {
+    sellRules,
+    requireCraftable: false,
+  });
+
+  for (const candidate of duplicateCandidates) {
+    if (seen.has(candidate.code)) continue;
+    candidates.push({
+      code: candidate.code,
+      quantity: candidate.quantity,
+      reason: candidate.reason,
+    });
+    seen.add(candidate.code);
   }
 
   return candidates;
@@ -467,4 +484,13 @@ export async function executeSellFlow(ctx) {
 
     return ordersCreated;
   });
+}
+
+export function _setSellRulesForTests(rules = null) {
+  sellRules = rules;
+}
+
+export function _resetForTests() {
+  sellRules = null;
+  _sellLock = null;
 }

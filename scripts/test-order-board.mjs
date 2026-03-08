@@ -10,6 +10,7 @@ import {
   clearOrderBoard,
   createOrMergeOrder,
   flushOrderBoard,
+  getOpenOrderDemandByCode,
   getOrderBoardSnapshot,
   initializeOrderBoard,
   listClaimableOrders,
@@ -345,6 +346,48 @@ async function run() {
     const fulfilledExchange = snapshot.orders.find(row => row.id === exchangeOrder1.id);
     assert.equal(fulfilledExchange.status, 'fulfilled', 'task_exchange order should be fulfilled');
     assert.equal(fulfilledExchange.remainingQty, 0);
+
+    // --- demand totals helper ---
+    const openDemandOrder = createOrMergeOrder({
+      requesterName: 'SafetyA',
+      recipeCode: 'safety_open',
+      itemCode: 'safety_ring',
+      sourceType: 'fight',
+      sourceCode: 'wolf',
+      sourceLevel: 15,
+      quantity: 2,
+    });
+    const claimedDemandOrder = createOrMergeOrder({
+      requesterName: 'SafetyB',
+      recipeCode: 'safety_claimed',
+      itemCode: 'safety_ring',
+      sourceType: 'craft',
+      sourceCode: 'safety_ring',
+      craftSkill: 'jewelrycrafting',
+      sourceLevel: 20,
+      quantity: 3,
+    });
+    const fulfilledDemandOrder = createOrMergeOrder({
+      requesterName: 'SafetyC',
+      recipeCode: 'safety_done',
+      itemCode: 'done_ring',
+      sourceType: 'npc_buy',
+      sourceCode: 'jeweler',
+      sourceLevel: 10,
+      quantity: 4,
+    });
+    const claimedDemand = claimOrder(claimedDemandOrder.id, { charName: 'SafetyWorker', leaseMs: 5_000 });
+    assert.ok(claimedDemand, 'claimed demand order should be claimable');
+    const fulfilledDemand = recordDeposits({
+      charName: 'SafetyWorker',
+      items: [{ code: 'done_ring', quantity: 4 }],
+    });
+    assert.equal(fulfilledDemand.length, 1, 'done_ring order should be fulfilled for helper test');
+
+    const demandByCode = getOpenOrderDemandByCode();
+    assert.equal(demandByCode.get('safety_ring'), 5, 'helper should sum open and claimed remaining demand by item code');
+    assert.equal(demandByCode.has('done_ring'), false, 'helper should exclude fulfilled demand');
+    assert.equal(demandByCode.has('missing_ring'), false, 'helper should not fabricate missing item codes');
 
     const cleared = clearOrderBoard('test_clear');
     assert.equal(cleared.cleared >= 1, true, 'clearOrderBoard should clear active rows');

@@ -6,61 +6,30 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { bankCount, globalCount, getCharacterToolProfilesSnapshot } from './inventory-manager.mjs';
-import { getClaimedTotal, getTrackedCharacterNames } from './gear-state.mjs';
 import {
   depositBankItems,
   withdrawBankItems,
 } from './bank-ops.mjs';
 import { getSellRules } from './ge-seller.mjs';
 import {
-  computeLatestToolBySkill,
-  computeToolNeedsByCode,
-  computeToolTargetsByCode,
-} from './tool-policy.mjs';
+  analyzeSurplusEquipmentCandidates,
+  _resetForTests as _resetSurplusDepsForTests,
+  _setDepsForTests as _setSurplusDepsForTests,
+} from './equipment-surplus.mjs';
 import { moveTo } from '../helpers.mjs';
-import { toPositiveInt } from '../utils.mjs';
 
 const TARGET_BANK_UNIQUE_SLOTS = 45;
 const MAX_RECYCLE_PASSES = 6;
-const LATEST_TOOL_BANK_RESERVE = 5;
 
 let _deps = {
   gameDataSvc: gameData,
   getSellRulesFn: getSellRules,
-  getClaimedTotalFn: getClaimedTotal,
-  globalCountFn: globalCount,
-  bankCountFn: bankCount,
-  getCharacterToolProfilesSnapshotFn: getCharacterToolProfilesSnapshot,
-  getCharacterLevelsSnapshotFn: getCharacterToolProfilesSnapshot,
-  getTrackedCharacterNamesFn: getTrackedCharacterNames,
-  computeToolNeedsByCodeFn: computeToolNeedsByCode,
-  computeLatestToolBySkillFn: computeLatestToolBySkill,
-  computeToolTargetsByCodeFn: computeToolTargetsByCode,
   withdrawBankItemsFn: withdrawBankItems,
   depositBankItemsFn: depositBankItems,
   moveToFn: moveTo,
   recycleFn: (code, qty, name) => api.recycle(code, qty, name),
   waitForCooldownFn: (result) => api.waitForCooldown(result),
 };
-
-function hasProfileForCharacter(toolProfilesByChar, name) {
-  const charName = `${name || ''}`.trim();
-  if (!charName) return false;
-  if (toolProfilesByChar instanceof Map) return toolProfilesByChar.has(charName);
-  if (toolProfilesByChar && typeof toolProfilesByChar === 'object') {
-    return Object.prototype.hasOwnProperty.call(toolProfilesByChar, charName);
-  }
-  return false;
-}
-
-function summarizeMissingCharacters(names = [], limit = 5) {
-  const list = Array.isArray(names) ? names : [];
-  if (list.length === 0) return 'none';
-  const head = list.slice(0, limit).join(', ');
-  const rest = list.length - Math.min(list.length, limit);
-  return rest > 0 ? `${head}, +${rest} more` : head;
-}
 
 // --- Analysis ---
 
@@ -74,83 +43,15 @@ function summarizeMissingCharacters(names = [], limit = 5) {
  * @returns {Array<{ code: string, quantity: number, reason: string, craftSkill: string }>}
  */
 export function analyzeRecycleCandidates(ctx, bankItems) {
-  const sellRules = _deps.getSellRulesFn();
-  if (!sellRules?.sellDuplicateEquipment) return [];
-
-  const candidates = [];
-  const neverSellSet = new Set(sellRules.neverSell || []);
-  const levelsByChar = typeof _deps.getCharacterToolProfilesSnapshotFn === 'function'
-    ? _deps.getCharacterToolProfilesSnapshotFn()
-    : _deps.getCharacterLevelsSnapshotFn?.() || {};
-  const trackedNames = _deps.getTrackedCharacterNamesFn();
-  const normalizedTracked = Array.isArray(trackedNames)
-    ? trackedNames.map(name => `${name || ''}`.trim()).filter(Boolean)
-    : [];
-  const missingLevelNames = [];
-  for (const name of normalizedTracked) {
-    if (hasProfileForCharacter(levelsByChar, name)) continue;
-    missingLevelNames.push(name);
-  }
-  const toolSnapshotComplete = normalizedTracked.length > 0 && missingLevelNames.length === 0;
-  if (!toolSnapshotComplete) {
-    const detail = normalizedTracked.length <= 0
-      ? 'no tracked characters'
-      : `missing ${missingLevelNames.length}/${normalizedTracked.length} tool profile(s): ${summarizeMissingCharacters(missingLevelNames)}`;
-    log.warn(`[${ctx.name}] Recycle: skipping tool recycle (incomplete tool snapshot: ${detail})`);
-  }
-
-  const needsByCode = toolSnapshotComplete ? _deps.computeToolNeedsByCodeFn(levelsByChar) : new Map();
-  const latestBySkill = toolSnapshotComplete ? _deps.computeLatestToolBySkillFn(levelsByChar) : new Map();
-  const targetsByCode = toolSnapshotComplete ? _deps.computeToolTargetsByCodeFn(levelsByChar) : new Map();
-  const latestToolCodes = new Set();
-  for (const tool of latestBySkill.values()) {
-    if (tool?.code) latestToolCodes.add(tool.code);
-  }
-
-  for (const [code, bankQty] of bankItems.entries()) {
-    if (neverSellSet.has(code)) continue;
-
-    const item = _deps.gameDataSvc.getItem(code);
-    if (!item || !_deps.gameDataSvc.isEquipmentType(item)) continue;
-
-    // Must have craft property to be recyclable
-    if (!item.craft?.skill) continue;
-
-    const claimed = _deps.getClaimedTotalFn(code);
-    const totalOwned = _deps.globalCountFn(code);
-    const liveBankQty = _deps.bankCountFn(code);
-    const isTool = item.type === 'weapon' && item.subtype === 'tool';
-    if (isTool && !toolSnapshotComplete) continue;
-
-    let qty = 0;
-    let reason = '';
-
-    if (isTool) {
-      const needKeep = needsByCode.get(code) || 0;
-      const keepTotal = Math.max(claimed, needKeep);
-      const maxByGlobal = Math.max(0, totalOwned - keepTotal);
-      const bankFloor = latestToolCodes.has(code) ? LATEST_TOOL_BANK_RESERVE : 0;
-      const maxByBankFloor = bankFloor > 0 ? Math.max(0, liveBankQty - bankFloor) : liveBankQty;
-      qty = Math.min(maxByGlobal, maxByBankFloor, liveBankQty);
-      const target = targetsByCode.get(code) || needKeep;
-      reason = `tool surplus (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${claimed}, needs: ${needKeep}, target: ${target}, floor: ${bankFloor})`;
-    } else {
-      const surplus = totalOwned - claimed;
-      qty = Math.min(Math.max(surplus, 0), liveBankQty);
-      reason = `unclaimed equipment/jewelry (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${claimed})`;
-    }
-
-    if (qty <= 0) continue;
-
-    candidates.push({
-      code,
-      quantity: qty,
-      reason,
-      craftSkill: item.craft.skill,
-    });
-  }
-
-  return candidates;
+  return analyzeSurplusEquipmentCandidates(ctx, bankItems, {
+    sellRules: _deps.getSellRulesFn(),
+    requireCraftable: true,
+  }).map(candidate => ({
+    code: candidate.code,
+    quantity: candidate.quantity,
+    reason: candidate.reason,
+    craftSkill: candidate.craftSkill,
+  }));
 }
 
 // --- Main recycle flow ---
@@ -317,6 +218,30 @@ async function _depositInventory(ctx) {
 
 export function _setDepsForTests(overrides = {}) {
   const input = overrides && typeof overrides === 'object' ? overrides : {};
+  const shared = {};
+  for (const key of [
+    'gameDataSvc',
+    'getClaimedTotalFn',
+    'getOpenOrderDemandByCodeFn',
+    'globalCountFn',
+    'bankCountFn',
+    'getCharacterToolProfilesSnapshotFn',
+    'getCharacterLevelsSnapshotFn',
+    'getTrackedCharacterNamesFn',
+    'computeToolNeedsByCodeFn',
+    'computeLatestToolBySkillFn',
+    'computeToolTargetsByCodeFn',
+  ]) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    shared[key] = input[key];
+    delete input[key];
+  }
+  if (Object.keys(shared).length > 0) {
+    _setSurplusDepsForTests(shared);
+  }
+  if (Object.prototype.hasOwnProperty.call(shared, 'gameDataSvc')) {
+    input.gameDataSvc = shared.gameDataSvc;
+  }
   _deps = {
     ..._deps,
     ...input,
@@ -324,18 +249,10 @@ export function _setDepsForTests(overrides = {}) {
 }
 
 export function _resetForTests() {
+  _resetSurplusDepsForTests();
   _deps = {
     gameDataSvc: gameData,
     getSellRulesFn: getSellRules,
-    getClaimedTotalFn: getClaimedTotal,
-    globalCountFn: globalCount,
-    bankCountFn: bankCount,
-    getCharacterToolProfilesSnapshotFn: getCharacterToolProfilesSnapshot,
-    getCharacterLevelsSnapshotFn: getCharacterToolProfilesSnapshot,
-    getTrackedCharacterNamesFn: getTrackedCharacterNames,
-    computeToolNeedsByCodeFn: computeToolNeedsByCode,
-    computeLatestToolBySkillFn: computeLatestToolBySkill,
-    computeToolTargetsByCodeFn: computeToolTargetsByCode,
     withdrawBankItemsFn: withdrawBankItems,
     depositBankItemsFn: depositBankItems,
     moveToFn: moveTo,

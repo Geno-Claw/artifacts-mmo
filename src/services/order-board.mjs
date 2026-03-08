@@ -559,6 +559,22 @@ export function getOrderBoardSnapshot() {
   };
 }
 
+export function getOpenOrderDemandByCode() {
+  const totals = new Map();
+  const snapshot = getOrderBoardSnapshot();
+  const rows = Array.isArray(snapshot?.orders) ? snapshot.orders : [];
+
+  for (const order of rows) {
+    if (!order?.itemCode) continue;
+    if (order.status === 'fulfilled') continue;
+    const remainingQty = Math.max(0, Math.floor(Number(order.remainingQty) || 0));
+    if (remainingQty <= 0) continue;
+    totals.set(order.itemCode, (totals.get(order.itemCode) || 0) + remainingQty);
+  }
+
+  return totals;
+}
+
 export function subscribeOrderBoardEvents(listener) {
   if (typeof listener !== 'function') {
     throw new Error('subscribeOrderBoardEvents(listener) requires a function');

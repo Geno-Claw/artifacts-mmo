@@ -83,6 +83,19 @@ function installOptimizerDeps({
       return [];
     },
     findNpcForItemFn: (code) => npcOffers.get(code) || null,
+    resolveItemOrderSourceFn: (code) => {
+      const npcMatch = npcOffers.get(code);
+      if (npcMatch?.npcCode) {
+        return {
+          sourceType: 'npc_buy',
+          sourceCode: npcMatch.npcCode,
+          sourceLevel: Number(itemsByCode.get(code)?.level || 0),
+          craftSkill: null,
+          gatherSkill: null,
+        };
+      }
+      return null;
+    },
     bankCountFn: () => 0,
     calcTurnDamageFn: () => 1,
     simulateCombatFn: () => ({
@@ -513,6 +526,69 @@ async function testOptimizeForMonsterPlanningIncludesVendorRune() {
   assert.equal(candidates[0].source, 'npc_buy');
 }
 
+async function testOptimizeForMonsterPlanningAllowsDuplicateDropRings() {
+  _resetDepsForTests();
+
+  const starterSword = makeItem('starter_sword', { level: 1 });
+  const forestRing = makeItem('forest_ring', { level: 15, effects: [{ code: 'hp', value: 10 }] });
+  const itemsByCode = new Map([
+    [starterSword.code, starterSword],
+    [forestRing.code, forestRing],
+  ]);
+  const equipmentBySlot = new Map([
+    ['weapon', [starterSword]],
+    ['ring1', [forestRing]],
+    ['ring2', [forestRing]],
+  ]);
+
+  installOptimizerDeps({
+    itemsByCode,
+    equipmentBySlot,
+  });
+
+  _setDepsForTests({
+    resolveItemOrderSourceFn: (code) => {
+      if (code === 'forest_ring') {
+        return {
+          sourceType: 'fight',
+          sourceCode: 'forest_sprite',
+          sourceLevel: 15,
+          gatherSkill: null,
+          craftSkill: null,
+        };
+      }
+      return null;
+    },
+    simulateCombatFn: (stats) => ({
+      canWin: true,
+      winRate: 100,
+      avgTurns: 4,
+      avgRemainingHp: Number(stats.max_hp || 0),
+      avgHpLostPercent: 0,
+      avgMonsterRemainingHpPercent: 0,
+    }),
+    findRequiredHpForFightFn: () => ({ requiredHp: null }),
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    equipped: {
+      weapon: 'starter_sword',
+    },
+  });
+
+  const result = await optimizeForMonster(ctx, 'test_monster', {
+    includeCraftableUnavailable: true,
+  });
+  assert.ok(result, 'optimizeForMonster should return a result');
+  assert.equal(result.loadout.get('ring1'), 'forest_ring');
+  assert.equal(
+    result.loadout.get('ring2'),
+    'forest_ring',
+    'planning mode should allow duplicate drop rings even before copies are owned',
+  );
+}
+
 async function testOptimizeForMonsterKeepsNeutralRune() {
   _resetDepsForTests();
 
@@ -646,6 +722,7 @@ async function run() {
     await testOptimizeForGatheringIncludesArtifactProspecting();
     await testOptimizeForGatheringDoesNotDuplicateArtifactCopies();
     await testOptimizeForMonsterPlanningIncludesVendorRune();
+    await testOptimizeForMonsterPlanningAllowsDuplicateDropRings();
     await testOptimizeForMonsterKeepsNeutralRune();
     await testOptimizeForMonsterSkipsStrictlyWorseShield();
     await testFindBestCombatTargetSkipsBosses();
