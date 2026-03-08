@@ -248,6 +248,13 @@ async function _recycleGroup(ctx, skill, workshop, items) {
 
     const qty = Math.min(item.quantity, actualQty);
 
+    // Pre-emptive deposit if inventory is nearly full before attempting recycle
+    if (ctx.inventoryCount() >= ctx.inventoryCapacity() * 0.8) {
+      log.info(`[${ctx.name}] Recycle: inventory at ${ctx.inventoryCount()}/${ctx.inventoryCapacity()}, depositing before next recycle`);
+      await _depositInventory(ctx);
+      await _deps.moveToFn(ctx, workshop.x, workshop.y);
+    }
+
     try {
       log.info(`[${ctx.name}] Recycle: recycling ${item.code} x${qty} at ${skill} workshop`);
       const result = await _deps.recycleFn(item.code, qty, ctx.name);
@@ -258,12 +265,29 @@ async function _recycleGroup(ctx, skill, workshop, items) {
     } catch (err) {
       if (err.code === 473) {
         log.info(`[${ctx.name}] Recycle: ${item.code} cannot be recycled (error 473), will re-deposit`);
+      } else if (err.message?.includes('inventory is full') || err.code === 497) {
+        // Inventory full — deposit materials and retry once
+        log.info(`[${ctx.name}] Recycle: inventory full, depositing and retrying ${item.code} x${qty}`);
+        await _depositInventory(ctx);
+        await _deps.moveToFn(ctx, workshop.x, workshop.y);
+        try {
+          const retryQty = Math.min(qty, ctx.itemCount(item.code));
+          if (retryQty > 0) {
+            const result = await _deps.recycleFn(item.code, retryQty, ctx.name);
+            ctx.applyActionResult(result);
+            await _deps.waitForCooldownFn(result);
+            recycled++;
+            log.info(`[${ctx.name}] Recycle: successfully recycled ${item.code} x${retryQty} (retry)`);
+          }
+        } catch (retryErr) {
+          log.warn(`[${ctx.name}] Recycle: retry failed for ${item.code}: ${retryErr.message}`);
+        }
       } else {
         log.warn(`[${ctx.name}] Recycle: failed to recycle ${item.code}: ${err.message}`);
       }
     }
 
-    // Check if inventory is getting full from recycled materials
+    // Post-recycle deposit if inventory is getting full from recycled materials
     if (ctx.inventoryCount() >= ctx.inventoryCapacity() * 0.9) {
       log.info(`[${ctx.name}] Recycle: inventory nearly full, depositing materials`);
       await _depositInventory(ctx);
