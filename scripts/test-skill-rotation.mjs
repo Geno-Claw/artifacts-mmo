@@ -1225,6 +1225,132 @@ async function testCraftFightStepTreatsReadinessUnwinnableAsNonViable() {
   });
 }
 
+async function testCraftGatherStepInsufficientSkillRotatesBeforeGathering() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => null;
+
+  let rotateCalls = 0;
+  let blockCalls = 0;
+  routine.rotation = {
+    currentSkill: 'gearcrafting',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'ash_plank', craft: { skill: 'gearcrafting', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 2,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    }],
+    bankChecked: true,
+    blockCurrentRecipe: () => {
+      blockCalls += 1;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+
+  let fetchCalls = 0;
+  const result = await withMockFetch(async () => {
+    fetchCalls += 1;
+    throw new Error('unexpected fetch during insufficient-skill craft gather test');
+  }, async () => routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+    skillLevel(skill) {
+      if (skill === 'gearcrafting') return 10;
+      if (skill === 'woodcutting') return 1;
+      return 1;
+    },
+  }));
+
+  assert.equal(result, true, 'should return true after rotating away from un-gatherable recipe');
+  assert.equal(rotateCalls, 1, 'should rotate instead of attempting to gather');
+  assert.equal(blockCalls, 0, 'should not block the recipe in normal rotation mode');
+  assert.equal(fetchCalls, 0, 'should not make any API calls before the skill guard trips');
+}
+
+async function testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: true,
+    },
+  });
+  routine._ensureOrderClaim = async () => ({
+    orderId: 'craft-order-1',
+    charName: 'Tester',
+    itemCode: 'ash_plank',
+    sourceType: 'craft',
+    sourceCode: 'ash_plank',
+    craftSkill: 'gearcrafting',
+    remainingQty: 1,
+    claim: {},
+  });
+  routine._getCraftClaimItem = () => ({
+    code: 'ash_plank',
+    craft: { skill: 'gearcrafting', level: 1, items: [] },
+  });
+  routine._resolveRecipeChain = () => [{
+    type: 'gather',
+    itemCode: 'ash_wood',
+    quantity: 2,
+    resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+  }];
+
+  let rotateCalls = 0;
+  let blockReason = null;
+  routine.rotation = {
+    currentSkill: 'gearcrafting',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'ash_plank', craft: { skill: 'gearcrafting', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 2,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    }],
+    bankChecked: true,
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+    blockCurrentRecipe: () => true,
+  };
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    blockReason = reason;
+  };
+
+  let fetchCalls = 0;
+  const result = await withMockFetch(async () => {
+    fetchCalls += 1;
+    throw new Error('unexpected fetch during insufficient-skill craft claim gather test');
+  }, async () => routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+    skillLevel(skill) {
+      if (skill === 'gearcrafting') return 10;
+      if (skill === 'woodcutting') return 1;
+      return 1;
+    },
+  }));
+
+  assert.equal(result, true, 'claim mode should return true after blocking the claim');
+  assert.equal(blockReason, 'insufficient_skill', 'claim mode should block and release the claim');
+  assert.equal(rotateCalls, 0, 'claim mode should not rotate');
+  assert.equal(fetchCalls, 0, 'claim mode should not hit the API before blocking');
+}
+
 async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
   await withMonsterCache([
     {
@@ -3099,6 +3225,8 @@ async function run() {
   await testAcquireCraftClaimPrioritizesToolOrders();
   await testCraftFightStepSkipsCombatWhenSimUnwinnable();
   await testCraftFightStepTreatsReadinessUnwinnableAsNonViable();
+  await testCraftGatherStepInsufficientSkillRotatesBeforeGathering();
+  await testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering();
   await testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable();
   await testNpcBuyGoldClaimBuysAffordableQuantityAndBlocksWhenBudgetExhausted();
   await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();

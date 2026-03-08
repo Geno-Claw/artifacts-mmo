@@ -150,6 +150,33 @@ export async function executeCrafting(ctx, routine) {
       const needed = rawMaterialNeeded(ctx, plan, step.itemCode, routine._currentBatch);
       if (ctx.itemCount(step.itemCode) >= needed) continue;
 
+      if (step.resource.level > ctx.skillLevel(step.resource.skill)) {
+        if (claimMode) {
+          await routine._blockAndReleaseClaim(ctx, 'insufficient_skill');
+        } else {
+          craftingLog.warn(
+            `[${ctx.name}] ${step.resource.code}: skill too low ` +
+            `(need ${step.resource.skill} lv${step.resource.level}, have lv${ctx.skillLevel(step.resource.skill)}), rotating`,
+            {
+              event: 'craft.gather.skill_insufficient',
+              reasonCode: 'insufficient_skill',
+              context: { character: ctx.name },
+              data: {
+                skill: routine.rotation.currentSkill,
+                itemCode: step.itemCode,
+                resourceCode: step.resource.code,
+                requiredLevel: step.resource.level,
+                currentLevel: ctx.skillLevel(step.resource.skill),
+                gatherSkill: step.resource.skill,
+                recipeCode: recipe.code,
+              },
+            },
+          );
+          await routine.rotation.forceRotate(ctx);
+        }
+        return true;
+      }
+
       // Reserve only guards bank withdrawals (preventing overflow). Gathering
       // uses the natural inventoryFull() check in the loop below, so we don't
       // block here — avoids deadlock when inventory is above deposit threshold
