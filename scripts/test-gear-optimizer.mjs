@@ -541,6 +541,72 @@ async function testOptimizeForMonsterKeepsNeutralRune() {
   assert.equal(result.loadout.get('rune'), 'healing_aura_rune', 'rune with no combat impact should be kept rather than stripped');
 }
 
+async function testOptimizeForMonsterSkipsStrictlyWorseShield() {
+  _resetDepsForTests();
+
+  const woodenShield = {
+    code: 'wooden_shield',
+    type: 'shield',
+    level: 1,
+    effects: [
+      { code: 'res_fire', value: 2 },
+      { code: 'res_earth', value: 2 },
+      { code: 'res_water', value: 2 },
+      { code: 'res_air', value: 2 },
+    ],
+  };
+  const slimeShield = {
+    code: 'slime_shield',
+    type: 'shield',
+    level: 20,
+    effects: [
+      { code: 'res_fire', value: 7 },
+      { code: 'res_earth', value: 7 },
+      { code: 'res_water', value: 7 },
+      { code: 'res_air', value: 7 },
+    ],
+  };
+
+  const itemsByCode = new Map([
+    [woodenShield.code, woodenShield],
+    [slimeShield.code, slimeShield],
+  ]);
+  const equipmentBySlot = new Map([
+    ['shield', [woodenShield, slimeShield]],
+  ]);
+
+  installOptimizerDeps({ itemsByCode, equipmentBySlot });
+
+  _setDepsForTests({
+    simulateCombatFn: (stats) => ({
+      win: true,
+      canWin: true,
+      winRate: 100,
+      avgTurns: 5,
+      avgRemainingHp: stats.res_fire === 2 ? 250 : 100,
+      avgHpLostPercent: 0,
+      avgMonsterRemainingHpPercent: 0,
+    }),
+    findRequiredHpForFightFn: () => ({ requiredHp: null }),
+  });
+
+  const ctx = makeCtx({
+    level: 20,
+    inventory: {
+      wooden_shield: 1,
+      slime_shield: 1,
+    },
+  });
+
+  const result = await optimizeForMonster(ctx, 'test_monster');
+  assert.ok(result, 'optimizeForMonster should return a result');
+  assert.equal(
+    result.loadout.get('shield'),
+    'slime_shield',
+    'optimizer should skip a strictly worse shield when a better one is available',
+  );
+}
+
 async function testFindBestCombatTargetSkipsBosses() {
   _resetDepsForTests();
 
@@ -581,6 +647,7 @@ async function run() {
     await testOptimizeForGatheringDoesNotDuplicateArtifactCopies();
     await testOptimizeForMonsterPlanningIncludesVendorRune();
     await testOptimizeForMonsterKeepsNeutralRune();
+    await testOptimizeForMonsterSkipsStrictlyWorseShield();
     await testFindBestCombatTargetSkipsBosses();
     console.log('test-gear-optimizer: PASS');
   } finally {

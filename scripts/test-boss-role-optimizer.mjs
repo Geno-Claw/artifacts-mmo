@@ -211,6 +211,24 @@ const ITEMS = {
     code: 'iron_helmet', type: 'helmet', level: 10,
     effects: [{ name: 'res_fire', value: 10 }, { name: 'hp', value: 30 }],
   },
+  wooden_shield: {
+    code: 'wooden_shield', type: 'shield', level: 1,
+    effects: [
+      { name: 'res_fire', value: 2 },
+      { name: 'res_earth', value: 2 },
+      { name: 'res_water', value: 2 },
+      { name: 'res_air', value: 2 },
+    ],
+  },
+  slime_shield: {
+    code: 'slime_shield', type: 'shield', level: 15,
+    effects: [
+      { name: 'res_fire', value: 7 },
+      { name: 'res_earth', value: 7 },
+      { name: 'res_water', value: 7 },
+      { name: 'res_air', value: 7 },
+    ],
+  },
   // Amulet
   amulet_of_might: {
     code: 'amulet_of_might', type: 'amulet', level: 10,
@@ -296,6 +314,7 @@ _setDepsForTests({
     return Object.values(ITEMS).filter(item => {
       if (item.level > level) return false;
       if (slot === 'weapon') return item.type === 'weapon';
+      if (slot === 'shield') return item.type === 'shield';
       if (slot === 'ring1' || slot === 'ring2') return item.type === 'ring';
       if (slot === 'helmet') return item.type === 'helmet';
       if (slot === 'amulet') return item.type === 'amulet';
@@ -400,6 +419,44 @@ console.log('Test: optimizeForRole returns null for unknown monster');
   const ctx = makeTestCtx('Nobody');
   const result = await optimizeForRole(ctx, 'nonexistent_boss', 'tank');
   assert.equal(result, null);
+}
+console.log('  PASS');
+
+console.log('Test: tank optimizer skips strictly worse shield');
+{
+  _setDepsForTests({
+    simulateCombatFn: (charStats, _monsterStats, opts) => ({
+      winRate: 100,
+      canWin: true,
+      avgTurns: charStats.res_fire === 2 ? 40 : 20,
+      avgRemainingHp: charStats.res_fire === 2 ? 300 : 100,
+      avgHpLostPercent: 0,
+      avgMonsterRemainingHpPercent: 0,
+      iterations: opts?.iterations || 200,
+    }),
+  });
+  const ctx = makeTestCtx('TankShield');
+  const result = await optimizeForRole(ctx, 'test_boss', 'tank');
+  assert.equal(result.loadout.get('shield'), 'slime_shield');
+}
+console.log('  PASS');
+
+console.log('Test: dps optimizer skips strictly worse shield');
+{
+  _setDepsForTests({
+    simulateCombatFn: (charStats, _monsterStats, opts) => ({
+      winRate: 100,
+      canWin: true,
+      avgTurns: 3,
+      avgRemainingHp: 100,
+      avgHpLostPercent: 0,
+      avgMonsterRemainingHpPercent: charStats.res_fire === 2 ? 0 : 50,
+      iterations: opts?.iterations || 200,
+    }),
+  });
+  const ctx = makeTestCtx('DpsShield');
+  const result = await optimizeForRole(ctx, 'test_boss', 'dps');
+  assert.equal(result.loadout.get('shield'), 'slime_shield');
 }
 console.log('  PASS');
 

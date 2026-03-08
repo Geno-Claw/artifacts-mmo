@@ -40,6 +40,20 @@ const MULTI_SLOT_FAMILIES = [
   ['ring1', 'ring2'],
   ARTIFACT_SLOTS,
 ];
+const STRICT_DEFENSIVE_DOMINANCE_TYPES = new Set([
+  'shield',
+  'helmet',
+  'body_armor',
+  'leg_armor',
+  'boots',
+]);
+const STRICT_DEFENSIVE_EFFECTS = new Set([
+  'hp',
+  'res_fire',
+  'res_earth',
+  'res_water',
+  'res_air',
+]);
 const MULTI_SLOT_FAMILY_BY_SLOT = new Map(
   MULTI_SLOT_FAMILIES.flatMap(family => family.map(slot => [slot, family])),
 );
@@ -216,6 +230,68 @@ function loadoutCode(loadout, slot) {
   const value = loadout?.get(slot) ?? null;
   if (!value) return null;
   return typeof value === 'string' ? value : (value.code || null);
+}
+
+function effectCode(effect) {
+  return `${effect?.name || effect?.code || ''}`.trim();
+}
+
+function getStrictDefensiveEffectMap(item) {
+  if (!item?.code) return null;
+  if (!STRICT_DEFENSIVE_DOMINANCE_TYPES.has(item.type)) return null;
+  if (item.subtype === 'tool') return null;
+
+  const effects = new Map();
+  for (const effect of item.effects || []) {
+    const code = effectCode(effect);
+    if (!code || !STRICT_DEFENSIVE_EFFECTS.has(code)) return null;
+
+    const value = Number(effect?.value);
+    if (!Number.isFinite(value) || value < 0) return null;
+    effects.set(code, (effects.get(code) || 0) + value);
+  }
+
+  return effects;
+}
+
+function strictlyDominatesDefensiveItem(dominator, candidate) {
+  if (!dominator?.code || !candidate?.code) return false;
+  if (dominator.code === candidate.code) return false;
+  if (dominator.type !== candidate.type) return false;
+
+  const dominatorEffects = getStrictDefensiveEffectMap(dominator);
+  const candidateEffects = getStrictDefensiveEffectMap(candidate);
+  if (!dominatorEffects || !candidateEffects) return false;
+
+  let strictlyBetter = false;
+  const keys = new Set([
+    ...dominatorEffects.keys(),
+    ...candidateEffects.keys(),
+  ]);
+
+  for (const key of keys) {
+    const dominatorValue = dominatorEffects.get(key) || 0;
+    const candidateValue = candidateEffects.get(key) || 0;
+    if (dominatorValue < candidateValue) return false;
+    if (dominatorValue > candidateValue) strictlyBetter = true;
+  }
+
+  return strictlyBetter;
+}
+
+function pruneDominatedDefensiveCandidates(candidates = []) {
+  return candidates.filter((candidate, index) => {
+    const item = candidate?.item || null;
+    if (!item?.code) return true;
+
+    for (let otherIndex = 0; otherIndex < candidates.length; otherIndex += 1) {
+      if (otherIndex === index) continue;
+      const otherItem = candidates[otherIndex]?.item || null;
+      if (strictlyDominatesDefensiveItem(otherItem, item)) return false;
+    }
+
+    return true;
+  });
 }
 
 // --- Candidate collection ---
@@ -483,7 +559,9 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
 
   // --- Phase 2: Defensive slots (maximize survivability) ---
   for (const slot of DEFENSIVE_SLOTS) {
-    const candidates = getCandidatesForSlot(ctx, slot, bankItems, candidateOpts);
+    const candidates = pruneDominatedDefensiveCandidates(
+      getCandidatesForSlot(ctx, slot, bankItems, candidateOpts),
+    );
     let bestResult = null;
     let bestItem = loadout.get(slot);
     const slotSeed = seedForSlot(slot);
@@ -754,7 +832,9 @@ export async function optimizeForRole(ctx, monsterCode, role, opts = {}) {
 
   // --- Phase 2: Defensive slots ---
   for (const slot of DEFENSIVE_SLOTS) {
-    const candidates = filterCandidates(getCandidatesForSlot(ctx, slot, bankItems, candidateOpts));
+    const candidates = pruneDominatedDefensiveCandidates(
+      filterCandidates(getCandidatesForSlot(ctx, slot, bankItems, candidateOpts)),
+    );
     let bestResult = null;
     let bestItem = loadout.get(slot);
     const slotSeed = seedForSlot(slot);

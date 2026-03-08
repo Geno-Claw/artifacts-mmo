@@ -113,12 +113,20 @@ export class BossFightRoutine extends BaseRoutine {
 
     // 2. Check if ANY enabled boss is past eval cooldown
     const now = Date.now();
-    const anyPastCooldown = this.enabledBossCodes.some(code =>
+    const runnableBossCodes = this.enabledBossCodes.filter(code =>
       now >= (this._evalCooldownUntil.get(code) || 0),
     );
-    if (!anyPastCooldown) {
+    if (runnableBossCodes.length === 0) {
       log.debug(`[${TAG}] ${ctx.name}: skipped — all bosses on eval cooldown`);
       return false;
+    }
+
+    if (this.orderDriven) {
+      const hasMatchingOrders = runnableBossCodes.some(code => this._ordersRequireBoss(code));
+      if (!hasMatchingOrders) {
+        log.debug(`[${TAG}] ${ctx.name}: skipped — no matching orders for enabled bosses (order-driven mode)`);
+        return false;
+      }
     }
 
     // 3. No rally → sync checks for potential leader evaluation
@@ -468,17 +476,13 @@ export class BossFightRoutine extends BaseRoutine {
       const opt = origLoadouts.get(name);
       if (!opt) continue;
 
+      const ctx = bossRally.getContext(name);
       let loadout;
-      if (excludeBank.size > 0) {
-        const ctx = bossRally.getContext(name);
-        if (ctx) {
-          try {
-            const reOpt = await optimizeForRole(ctx, bossCode, role, { excludeBank });
-            loadout = this._extractLoadoutCodes(reOpt?.loadout || opt.loadout);
-          } catch {
-            loadout = this._extractLoadoutCodes(opt.loadout);
-          }
-        } else {
+      if (excludeBank.size > 0 && ctx) {
+        try {
+          const reOpt = await optimizeForRole(ctx, bossCode, role, { excludeBank });
+          loadout = this._extractLoadoutCodes(reOpt?.loadout || opt.loadout);
+        } catch {
           loadout = this._extractLoadoutCodes(opt.loadout);
         }
       } else {
@@ -487,10 +491,13 @@ export class BossFightRoutine extends BaseRoutine {
 
       finalLoadouts.set(name, loadout);
 
-      for (const [, code] of loadout) {
-        if (code) {
-          excludeBank.set(code, (excludeBank.get(code) || 0) + 1);
-        }
+      // Only exclude items that must come from the bank — skip items already equipped or in inventory
+      const char = ctx?.get();
+      for (const [slot, code] of loadout) {
+        if (!code) continue;
+        if (char && char[`${slot}_slot`] === code) continue;
+        if (ctx?.hasItem(code)) continue;
+        excludeBank.set(code, (excludeBank.get(code) || 0) + 1);
       }
     }
 
