@@ -28,11 +28,20 @@ export class BaseRoutine {
     return true;
   }
 
+  effectivePriority(_ctx) {
+    return this.priority;
+  }
+
+  isUrgent(_ctx) {
+    return this.urgent === true;
+  }
+
   /** Check if an urgent higher-priority routine needs to run. */
   _hasUrgentPreemption(ctx) {
     if (!this._peerRoutines) return false;
+    const ownPriority = this.effectivePriority(ctx);
     return this._peerRoutines.some(
-      r => r.priority > this.priority && r.urgent && r.canRun(ctx),
+      r => r !== this && r.effectivePriority(ctx) > ownPriority && r.isUrgent(ctx) && r.canRun(ctx),
     );
   }
 

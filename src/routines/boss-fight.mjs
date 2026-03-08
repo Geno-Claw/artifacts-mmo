@@ -1,8 +1,9 @@
 /**
  * Boss Fight Routine — coordinates multi-character group boss fights.
  *
- * Priority 15, non-urgent, loop routine. Characters finish their current
- * SkillRotation goal before joining (canBePreempted returns true between goals).
+ * Priority 15, non-urgent by default, loop routine. Once a rally is active
+ * for a character, it temporarily escalates in scheduler priority/urgency so
+ * participants peel off other routines after their current action boundary.
  *
  * One character becomes the evaluator/leader, runs gear optimization and
  * team simulation, then creates a rally via boss-rally service. All
@@ -27,6 +28,7 @@ import { logWithdrawalWarnings } from '../utils.mjs';
 
 const TAG = 'BossFight';
 const EVAL_COOLDOWN_MS = 5 * 60_000; // 5 minutes between evaluations
+const ACTIVE_RALLY_PRIORITY = 95;
 
 const ALL_BOSS_CODES = [
   'king_slime',
@@ -82,6 +84,17 @@ export class BossFightRoutine extends BaseRoutine {
       this.bosses = Array.isArray(cfg.bosses) ? cfg.bosses : this._normalizeBosses(cfg);
       this.enabledBossCodes = this.bosses.filter(b => b.enabled).map(b => b.code);
     }
+  }
+
+  effectivePriority(ctx) {
+    if (bossRally.isParticipant(ctx.name)) {
+      return Math.max(this.priority, ACTIVE_RALLY_PRIORITY);
+    }
+    return this.priority;
+  }
+
+  isUrgent(ctx) {
+    return bossRally.isParticipant(ctx.name) || this.urgent === true;
   }
 
   canBePreempted(ctx) {

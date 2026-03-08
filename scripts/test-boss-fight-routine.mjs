@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { BossFightRoutine } from '../src/routines/boss-fight.mjs';
 import { _setCachesForTests as setGameDataCachesForTests, _resetForTests as resetGameDataForTests } from '../src/services/game-data.mjs';
 import { _resetOrderBoardForTests, createOrMergeOrder, initializeOrderBoard } from '../src/services/order-board.mjs';
-import { _resetForTests as resetBossRallyForTests, registerContext } from '../src/services/boss-rally.mjs';
+import { _resetForTests as resetBossRallyForTests, registerContext, tryCreateRally } from '../src/services/boss-rally.mjs';
 
 function makeCtx(name, { cooldown = 0, full = false } = {}) {
   return {
@@ -101,6 +101,42 @@ console.log('Test: BossFight canRun stays runnable when order-driven boss has a 
     assert.equal(routine.canRun(leader), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+    resetSharedState();
+  }
+}
+console.log('  PASS');
+
+console.log('Test: BossFight escalates priority and urgency for active rally participants');
+{
+  try {
+    resetBossRallyForTests();
+    const leader = makeCtx('Alice');
+    const partner = makeCtx('Bob');
+    registerContext(leader);
+    registerContext(partner);
+
+    const routine = new BossFightRoutine({
+      type: 'bossFight',
+      priority: 15,
+      bosses: [{ code: 'king_slime', enabled: true, minWinrate: 80 }],
+    });
+
+    assert.equal(routine.effectivePriority(leader), 15);
+    assert.equal(routine.isUrgent(leader), false);
+
+    tryCreateRally({
+      bossCode: 'king_slime',
+      location: { x: 1, y: 2 },
+      leaderName: 'Alice',
+      participants: ['Bob'],
+    });
+
+    assert.equal(routine.canRun(leader), true);
+    assert.equal(routine.effectivePriority(leader), 95);
+    assert.equal(routine.isUrgent(leader), true);
+    assert.equal(routine.effectivePriority(partner), 95);
+    assert.equal(routine.isUrgent(partner), true);
+  } finally {
     resetSharedState();
   }
 }

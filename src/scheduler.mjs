@@ -65,12 +65,24 @@ export class Scheduler {
     });
   }
 
+  _routinePriority(routine) {
+    return Number(routine.effectivePriority?.(this.ctx) ?? routine.priority) || 0;
+  }
+
+  _routineUrgent(routine) {
+    return routine.isUrgent?.(this.ctx) === true;
+  }
+
   /** Return the highest-priority routine whose canRun() passes + debug candidates. */
   pickRoutineWithDetails() {
     let selected = null;
+    let selectedPriority = Number.NEGATIVE_INFINITY;
+    let selectedUrgent = false;
     const candidates = [];
 
     for (const routine of this.routines) {
+      const priority = this._routinePriority(routine);
+      const urgent = this._routineUrgent(routine);
       let runnable = false;
       try {
         runnable = routine.canRun(this.ctx) === true;
@@ -89,16 +101,27 @@ export class Scheduler {
       }
       candidates.push({
         name: routine.name,
-        priority: routine.priority,
-        urgent: !!routine.urgent,
+        priority,
+        urgent,
         runnable,
       });
-      if (!selected && runnable) {
+      if (runnable && (
+        !selected
+        || priority > selectedPriority
+        || (priority === selectedPriority && urgent && !selectedUrgent)
+      )) {
         selected = routine;
+        selectedPriority = priority;
+        selectedUrgent = urgent;
       }
     }
 
-    return { routine: selected, candidates };
+    return {
+      routine: selected,
+      candidates,
+      priority: selected ? selectedPriority : null,
+      urgent: selected ? selectedUrgent : null,
+    };
   }
 
   _finishSleep(completed) {
@@ -198,7 +221,7 @@ export class Scheduler {
       }, async () => this.ctx.refresh());
       if (this.stopRequested) break;
 
-      const { routine, candidates } = this.pickRoutineWithDetails();
+      const { routine, candidates, priority: selectedPriority, urgent: selectedUrgent } = this.pickRoutineWithDetails();
       schedulerLog.debug(`[${this.ctx.name}] Tick ${tickId} routine scan`, {
         event: 'scheduler.routines.scanned',
         context: {
@@ -235,7 +258,7 @@ export class Scheduler {
       recordRoutineState(this.ctx.name, {
         routineName: routine.name,
         phase: 'start',
-        priority: routine.priority,
+        priority: selectedPriority,
       });
       schedulerLog.info(`[${this.ctx.name}] -> ${routine.name}`, {
         event: 'routine.started',
@@ -246,9 +269,9 @@ export class Scheduler {
           routine: routine.name,
         },
         data: {
-          priority: routine.priority,
+          priority: selectedPriority,
           loop: routine.loop === true,
-          urgent: routine.urgent === true,
+          urgent: selectedUrgent === true,
         },
       });
 
@@ -279,10 +302,28 @@ export class Scheduler {
             }
 
             // Preemption: yield if a higher-priority routine needs to run.
-            const preempt = this.routines.find(
-              r => r.priority > routine.priority && r.canRun(this.ctx),
-            );
-            if (preempt && (preempt.urgent || routine.canBePreempted(this.ctx))) {
+            const currentPriority = this._routinePriority(routine);
+            const canBePreempted = routine.canBePreempted(this.ctx) === true;
+            let preempt = null;
+            let preemptPriority = Number.NEGATIVE_INFINITY;
+            let preemptUrgent = false;
+            for (const candidate of this.routines) {
+              if (candidate === routine) continue;
+              const candidatePriority = this._routinePriority(candidate);
+              if (candidatePriority <= currentPriority) continue;
+              if (!candidate.canRun(this.ctx)) continue;
+              const candidateUrgent = this._routineUrgent(candidate);
+              if (
+                !preempt
+                || candidatePriority > preemptPriority
+                || (candidatePriority === preemptPriority && candidateUrgent && !preemptUrgent)
+              ) {
+                preempt = candidate;
+                preemptPriority = candidatePriority;
+                preemptUrgent = candidateUrgent;
+              }
+            }
+            if (preempt && (preemptUrgent || canBePreempted)) {
               schedulerLog.info(`[${this.ctx.name}] ${routine.name}: preempted by ${preempt.name}`, {
                 event: 'routine.preempted',
                 reasonCode: 'preempted_by_higher_priority',
@@ -295,9 +336,9 @@ export class Scheduler {
                 data: {
                   interruptedRoutine: routine.name,
                   interruptingRoutine: preempt.name,
-                  interruptingPriority: preempt.priority,
-                  interruptingUrgent: preempt.urgent === true,
-                  canBePreempted: routine.canBePreempted(this.ctx) === true,
+                  interruptingPriority: preemptPriority,
+                  interruptingUrgent: preemptUrgent,
+                  canBePreempted,
                 },
               });
               break;
@@ -339,7 +380,7 @@ export class Scheduler {
           recordRoutineState(this.ctx.name, {
             routineName: routine.name,
             phase: 'done',
-            priority: routine.priority,
+            priority: selectedPriority,
           });
           schedulerLog.info(`[${this.ctx.name}] ${routine.name}: done`, {
             event: 'routine.done',
@@ -357,7 +398,7 @@ export class Scheduler {
         recordRoutineState(this.ctx.name, {
           routineName: routine.name,
           phase: 'error',
-          priority: routine.priority,
+          priority: selectedPriority,
           error: err.message,
         });
         schedulerLog.error(`[${this.ctx.name}] ${routine.name} failed`, {
