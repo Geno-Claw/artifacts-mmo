@@ -15,9 +15,9 @@ import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import * as bossRally from '../services/boss-rally.mjs';
 import { getOrderBoardSnapshot } from '../services/order-board.mjs';
-import { optimizeForMonster } from '../services/gear-optimizer.mjs';
+import { optimizeForMonster, optimizeForRole } from '../services/gear-optimizer.mjs';
 import { applyGearLoadout } from '../services/gear-loadout.mjs';
-import { findBestTeam, buildFakeCharacterWithLoadout } from '../services/event-simulation.mjs';
+import { findBestTeam, buildFakeCharacterWithLoadout, combinations } from '../services/event-simulation.mjs';
 import { scoreHealingItems, restUntil } from '../services/food-manager.mjs';
 import { moveTo, parseFightResult, depositAll } from '../helpers.mjs';
 import { getOwnedKeepByCodeForInventory } from '../services/gear-state.mjs';
@@ -123,6 +123,7 @@ export class BossFightRoutine extends BaseRoutine {
 
     // 3. No rally → sync checks for potential leader evaluation
     if (bossRally.isRallyActive()) return false;
+    if (bossRally.isEvaluating()) return false;
     if (ctx.cooldownRemainingMs() > 0) return false;
     if (ctx.inventoryFull()) return false;
 
@@ -188,22 +189,27 @@ export class BossFightRoutine extends BaseRoutine {
   // --- EVALUATING (no rally yet) ---
 
   async _evaluate(ctx) {
-    const now = Date.now();
-    for (const boss of this.bosses) {
-      if (!boss.enabled) continue;
-      if (now < (this._evalCooldownUntil.get(boss.code) || 0)) continue;
+    if (!bossRally.tryStartEvaluation(ctx.name)) return false;
+    try {
+      const now = Date.now();
+      for (const boss of this.bosses) {
+        if (!boss.enabled) continue;
+        if (now < (this._evalCooldownUntil.get(boss.code) || 0)) continue;
 
-      // Order-driven check
-      if (this.orderDriven && !this._ordersRequireBoss(boss.code)) {
-        log.debug(`[${TAG}] ${ctx.name}: skipping ${boss.code} — no matching orders (order-driven mode)`);
-        continue;
+        // Order-driven check
+        if (this.orderDriven && !this._ordersRequireBoss(boss.code)) {
+          log.debug(`[${TAG}] ${ctx.name}: skipping ${boss.code} — no matching orders (order-driven mode)`);
+          continue;
+        }
+
+        const result = await this._evaluateBoss(ctx, boss.code, boss.minWinrate);
+        if (result) return result;
+        // _evaluateBoss sets per-boss cooldown on failure
       }
-
-      const result = await this._evaluateBoss(ctx, boss.code, boss.minWinrate);
-      if (result) return result;
-      // _evaluateBoss sets per-boss cooldown on failure
+      return false;
+    } finally {
+      bossRally.endEvaluation(ctx.name);
     }
-    return false;
   }
 
   /**
@@ -247,7 +253,7 @@ export class BossFightRoutine extends BaseRoutine {
   }
 
   /**
-   * Evaluate a specific boss: optimize gear, find best team, create rally.
+   * Evaluate a specific boss: optimize gear with roles, find best team, create rally.
    * Returns truthy if a rally was created/joined, false otherwise.
    * Sets per-boss eval cooldown on failure.
    */
@@ -263,7 +269,7 @@ export class BossFightRoutine extends BaseRoutine {
     // Get all eligible contexts for this boss
     const allContexts = bossRally.getAllContexts();
     const enabledNames = allContexts.map(c => c.name);
-    const eligible = bossRally.getEligibleContexts({ enabledNames, bossCode });
+    const eligible = bossRally.getEligibleContexts({ enabledNames, bossCode, ignoreCooldown: true });
 
     if (eligible.length < 2) {
       log.info(`[${TAG}] ${ctx.name}: Not enough eligible characters for ${bossCode} (${eligible.length})`);
@@ -271,69 +277,59 @@ export class BossFightRoutine extends BaseRoutine {
       return false;
     }
 
-    // Run gear optimization for each eligible character
-    log.info(`[${TAG}] ${ctx.name}: Evaluating team for ${bossCode} (${eligible.length} eligible)`);
-    const optimized = new Map(); // name → { loadout, simResult }
+    // Run role-based gear optimization for each eligible character
+    log.info(`[${TAG}] ${ctx.name}: Evaluating team for ${bossCode} (${eligible.length} eligible, role-based)`);
+    const tankLoadouts = new Map(); // name → { loadout, simResult, gearThreat }
+    const dpsLoadouts = new Map();  // name → { loadout, simResult, gearThreat }
+
     for (const c of eligible) {
       try {
-        const result = await optimizeForMonster(c, bossCode);
-        if (result) {
-          optimized.set(c.name, result);
-        }
+        const tankResult = await optimizeForRole(c, bossCode, 'tank');
+        if (tankResult) tankLoadouts.set(c.name, tankResult);
       } catch (err) {
-        log.warn(`[${TAG}] Optimizer failed for ${c.name}: ${err.message}`);
+        log.warn(`[${TAG}] Tank optimizer failed for ${c.name}: ${err.message}`);
+      }
+      try {
+        const dpsResult = await optimizeForRole(c, bossCode, 'dps');
+        if (dpsResult) dpsLoadouts.set(c.name, dpsResult);
+      } catch (err) {
+        log.warn(`[${TAG}] DPS optimizer failed for ${c.name}: ${err.message}`);
       }
     }
 
-    if (optimized.size < 2) {
-      log.info(`[${TAG}] ${ctx.name}: Not enough optimized characters for ${bossCode} (${optimized.size})`);
+    // Need at least 2 characters with both loadouts
+    const fullyOptimized = eligible.filter(c => tankLoadouts.has(c.name) && dpsLoadouts.has(c.name));
+    if (fullyOptimized.length < 2) {
+      log.info(`[${TAG}] ${ctx.name}: Not enough optimized characters for ${bossCode} (${fullyOptimized.length})`);
       this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
 
-    // Build fake characters with optimized loadouts for team sim
-    const fakeCharsByName = new Map();
-    for (const [name, { loadout }] of optimized) {
-      const c = bossRally.getContext(name);
-      if (c) {
-        fakeCharsByName.set(name, buildFakeCharacterWithLoadout(c, loadout));
-      }
-    }
+    // Find best role-based team via server-side simulation
+    const roleTeamResult = await this._findBestRoleTeam(
+      fullyOptimized, bossCode, tankLoadouts, dpsLoadouts,
+    );
 
-    // Log fake characters for debugging
-    for (const [name, fake] of fakeCharsByName) {
-      const slots = Object.entries(fake)
-        .filter(([k, v]) => k.endsWith('_slot') && v && !k.includes('quantity'))
-        .map(([k, v]) => `${k.replace('_slot', '')}=${v}`)
-        .join(', ');
-      log.debug(`[${TAG}] Sim input ${name} (lv${fake.level}): ${slots || 'no gear'}`);
-    }
-
-    const eligibleForSim = eligible.filter(c => optimized.has(c.name));
-    const teamResult = await findBestTeam(eligibleForSim, bossCode, {
-      maxTeamSize: this.teamSize,
-      minTeamSize: 2,
-      fakeCharsByName,
-    });
-
-    if (!teamResult || teamResult.winrate < minWinrate) {
-      log.info(`[${TAG}] ${ctx.name}: Team winrate ${teamResult?.winrate ?? 0}% < ${minWinrate}% threshold for ${bossCode}`);
+    if (!roleTeamResult || roleTeamResult.winrate < minWinrate) {
+      log.info(`[${TAG}] ${ctx.name}: Team winrate ${roleTeamResult?.winrate ?? 0}% < ${minWinrate}% threshold for ${bossCode}`);
       this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
 
-    log.info(`[${TAG}] ${ctx.name}: Best team [${teamResult.team.map(c => c.name).join(', ')}] at ${teamResult.winrate}% winrate for ${bossCode}`);
+    const { team, winrate, roles, loadouts: teamLoadouts } = roleTeamResult;
+    const teamNames = team.map(c => c.name);
+    const tankName = [...roles].find(([, r]) => r === 'tank')?.[0];
 
-    const teamNames = teamResult.team.map(c => c.name);
+    log.info(`[${TAG}] ${ctx.name}: Best team [${teamNames.join(', ')}] at ${winrate}% winrate for ${bossCode} (tank=${tankName}, threat=${tankLoadouts.get(tankName)?.gearThreat ?? 0})`);
 
-    // Gear deconfliction for the winning team
-    const loadouts = await this._deconflictGear(teamNames, optimized, bossCode);
+    // Gear deconfliction — tank gets first pick
+    const deconflicted = await this._deconflictGear(teamNames, roles, tankLoadouts, dpsLoadouts, bossCode);
 
     // Re-sim with deconflicted loadouts if any changed
-    let finalWinrate = teamResult.winrate;
+    let finalWinrate = winrate;
     const anyChanged = teamNames.some(name => {
-      const orig = optimized.get(name)?.loadout;
-      const decon = loadouts.get(name);
+      const orig = teamLoadouts.get(name);
+      const decon = deconflicted.get(name);
       if (!orig || !decon) return false;
       for (const [slot, code] of decon) {
         if ((orig.get(slot)?.code || orig.get(slot) || null) !== code) return true;
@@ -345,21 +341,23 @@ export class BossFightRoutine extends BaseRoutine {
       const reFakeChars = new Map();
       for (const name of teamNames) {
         const c = bossRally.getContext(name);
-        if (c) {
-          reFakeChars.set(name, buildFakeCharacterWithLoadout(c, loadouts.get(name)));
-        }
+        if (c) reFakeChars.set(name, buildFakeCharacterWithLoadout(c, deconflicted.get(name)));
       }
-      const reResult = await findBestTeam(
-        teamResult.team, bossCode,
-        { maxTeamSize: teamNames.length, minTeamSize: teamNames.length, fakeCharsByName: reFakeChars },
-      );
-      if (reResult) {
-        finalWinrate = reResult.winrate;
+      try {
+        const fakeChars = teamNames.map(n => reFakeChars.get(n));
+        const response = await api.simulateFight({
+          characters: fakeChars,
+          monster: bossCode,
+          iterations: 10,
+        });
+        finalWinrate = response.winrate ?? 0;
         if (finalWinrate < minWinrate) {
           log.info(`[${TAG}] ${ctx.name}: Deconflicted winrate ${finalWinrate}% < ${minWinrate}% threshold for ${bossCode}`);
           this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
           return false;
         }
+      } catch (err) {
+        log.warn(`[${TAG}] Re-sim failed: ${err.message}, using original winrate`);
       }
     }
 
@@ -371,42 +369,111 @@ export class BossFightRoutine extends BaseRoutine {
       location,
       leaderName,
       participants,
-      loadouts,
+      loadouts: deconflicted,
+      roles,
     });
 
     if (!newRally) {
-      // Lost CAS race — check if we're a participant of the rally someone else created
       if (bossRally.isParticipant(ctx.name)) {
-        return true; // Continue to rallying phase
+        return true;
       }
       return false;
     }
 
-    // Only rally if evaluator is part of the team
     if (teamNames.includes(ctx.name)) {
       return this._rally(ctx, newRally);
     }
-    // Evaluator not on team — step aside, let team members handle it
     return false;
+  }
+
+  /**
+   * Find the best role-based team: try all team combos × tank assignments,
+   * simulate each via server API, return the best.
+   */
+  async _findBestRoleTeam(eligible, bossCode, tankLoadouts, dpsLoadouts) {
+    let bestResult = null;
+
+    const maxSize = Math.min(this.teamSize, eligible.length);
+    const minSize = Math.min(2, eligible.length);
+
+    for (let size = minSize; size <= maxSize; size++) {
+      const combos = combinations(eligible, size);
+      for (const team of combos) {
+        // Try each character as tank
+        for (const tankCtx of team) {
+          const tankName = tankCtx.name;
+          const tankOpt = tankLoadouts.get(tankName);
+          if (!tankOpt) continue;
+
+          const fakeChars = [];
+          const teamLoadouts = new Map();
+          const roles = new Map();
+          let valid = true;
+
+          for (const c of team) {
+            if (c.name === tankName) {
+              fakeChars.push(buildFakeCharacterWithLoadout(c, tankOpt.loadout));
+              teamLoadouts.set(c.name, tankOpt.loadout);
+              roles.set(c.name, 'tank');
+            } else {
+              const dpsOpt = dpsLoadouts.get(c.name);
+              if (!dpsOpt) { valid = false; break; }
+              fakeChars.push(buildFakeCharacterWithLoadout(c, dpsOpt.loadout));
+              teamLoadouts.set(c.name, dpsOpt.loadout);
+              roles.set(c.name, 'dps');
+            }
+          }
+          if (!valid) continue;
+
+          try {
+            const response = await api.simulateFight({
+              characters: fakeChars,
+              monster: bossCode,
+              iterations: 10,
+            });
+            const winrate = response.winrate ?? 0;
+            log.debug(`[${TAG}] Role team [${team.map(c => c.name).join(', ')}] tank=${tankName}: ${winrate}%`);
+
+            if (!bestResult || winrate > bestResult.winrate) {
+              bestResult = { team, winrate, roles, loadouts: teamLoadouts };
+            }
+          } catch (err) {
+            log.warn(`[${TAG}] Role team simulation failed: ${err.message}`);
+          }
+        }
+      }
+    }
+
+    return bestResult;
   }
 
   // --- Gear deconfliction ---
 
-  async _deconflictGear(teamNames, optimized, bossCode) {
+  async _deconflictGear(teamNames, roles, tankLoadouts, dpsLoadouts, bossCode) {
     const finalLoadouts = new Map();
     const excludeBank = new Map();
 
-    for (const name of teamNames) {
-      const opt = optimized.get(name);
+    // Sort so tank goes first — gets priority on threat/survivability items
+    const sorted = [...teamNames].sort((a, b) => {
+      const aRole = roles.get(a) || 'dps';
+      const bRole = roles.get(b) || 'dps';
+      if (aRole === 'tank' && bRole !== 'tank') return -1;
+      if (aRole !== 'tank' && bRole === 'tank') return 1;
+      return 0;
+    });
+
+    for (const name of sorted) {
+      const role = roles.get(name) || 'dps';
+      const origLoadouts = role === 'tank' ? tankLoadouts : dpsLoadouts;
+      const opt = origLoadouts.get(name);
       if (!opt) continue;
 
-      // Re-optimize with excluded bank items (except first character)
       let loadout;
       if (excludeBank.size > 0) {
         const ctx = bossRally.getContext(name);
         if (ctx) {
           try {
-            const reOpt = await optimizeForMonster(ctx, bossCode, { excludeBank });
+            const reOpt = await optimizeForRole(ctx, bossCode, role, { excludeBank });
             loadout = this._extractLoadoutCodes(reOpt?.loadout || opt.loadout);
           } catch {
             loadout = this._extractLoadoutCodes(opt.loadout);
@@ -420,7 +487,6 @@ export class BossFightRoutine extends BaseRoutine {
 
       finalLoadouts.set(name, loadout);
 
-      // Track bank items claimed by this character
       for (const [, code] of loadout) {
         if (code) {
           excludeBank.set(code, (excludeBank.get(code) || 0) + 1);

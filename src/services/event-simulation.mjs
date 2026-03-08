@@ -246,7 +246,7 @@ export async function findBestTeam(contexts, monsterCode, {
 }
 
 /** Generate all combinations of size k from an array. */
-function combinations(arr, k) {
+export function combinations(arr, k) {
   if (k === 1) return arr.map(x => [x]);
   const result = [];
   for (let i = 0; i <= arr.length - k; i++) {

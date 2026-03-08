@@ -602,6 +602,101 @@ export function isCombatResultTie(a, b) {
     && Number(a.avgRemainingHp || a.remainingHp || 0) === Number(b.avgRemainingHp || b.remainingHp || 0);
 }
 
+/**
+ * Tank role comparison: threat is PRIMARY, then survivability (more turns, more HP).
+ * @param {object} a - candidate sim result
+ * @param {object} b - current best sim result
+ * @param {number} aThreat - threat effect value of candidate's gear
+ * @param {number} bThreat - threat effect value of current best's gear
+ */
+export function isBetterTankResult(a, b, aThreat = 0, bThreat = 0) {
+  if (!b) return true;
+  if (!a) return false;
+
+  // 1. Has threat beats no threat — without aggro, survivability is useless
+  const aHasThreat = aThreat > 0;
+  const bHasThreat = bThreat > 0;
+  if (aHasThreat && !bHasThreat) return true;
+  if (!aHasThreat && bHasThreat) return false;
+
+  // 2. Higher win rate — winning the fight is best proof of survivability
+  const aCanWin = typeof a.canWin === 'boolean' ? a.canWin : Boolean(a.win);
+  const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
+  const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
+  const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  if (aWinRate !== bWinRate) return aWinRate > bWinRate;
+
+  // 3. Higher remaining HP — more HP left = better tank (captures fast kills AND good defense)
+  const aHp = Number(a.avgRemainingHp || a.remainingHp || 0);
+  const bHp = Number(b.avgRemainingHp || b.remainingHp || 0);
+  if (aHp !== bHp) return aHp > bHp;
+
+  // 4. Higher avgTurns — tiebreaker for losing scenarios (survived longer for DPS)
+  const aTurns = Number(a.avgTurns || a.turns || 0);
+  const bTurns = Number(b.avgTurns || b.turns || 0);
+  if (aTurns !== bTurns) return aTurns > bTurns;
+
+  // 5. More threat value (among items that both have threat)
+  if (aThreat !== bThreat) return aThreat > bThreat;
+
+  return false;
+}
+
+export function isTankResultTie(a, b, aThreat = 0, bThreat = 0) {
+  if (!a || !b) return false;
+  const aHasThreat = aThreat > 0;
+  const bHasThreat = bThreat > 0;
+  if (aHasThreat !== bHasThreat) return false;
+  const aCanWin = typeof a.canWin === 'boolean' ? a.canWin : Boolean(a.win);
+  const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
+  const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
+  const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  return aWinRate === bWinRate
+    && Number(a.avgRemainingHp || a.remainingHp || 0) === Number(b.avgRemainingHp || b.remainingHp || 0)
+    && Number(a.avgTurns || a.turns || 0) === Number(b.avgTurns || b.turns || 0)
+    && aThreat === bThreat;
+}
+
+/**
+ * DPS role comparison: maximize damage dealt to the monster.
+ */
+export function isBetterDpsResult(a, b) {
+  if (!b) return true;
+  if (!a) return false;
+
+  // 1. Lower monster remaining HP % — dealt more total damage
+  const aMonHpPct = Number(a.avgMonsterRemainingHpPercent ?? a.monsterRemainingHpPercent ?? 100);
+  const bMonHpPct = Number(b.avgMonsterRemainingHpPercent ?? b.monsterRemainingHpPercent ?? 100);
+  if (aMonHpPct !== bMonHpPct) return aMonHpPct < bMonHpPct;
+
+  // 2. Fewer turns — faster damage
+  const aTurns = Number(a.avgTurns || a.turns || 0);
+  const bTurns = Number(b.avgTurns || b.turns || 0);
+  if (aTurns !== bTurns) return aTurns < bTurns;
+
+  // 3. Higher win rate — secondary
+  const aCanWin = typeof a.canWin === 'boolean' ? a.canWin : Boolean(a.win);
+  const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
+  const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
+  const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  if (aWinRate !== bWinRate) return aWinRate > bWinRate;
+
+  return false;
+}
+
+export function isDpsResultTie(a, b) {
+  if (!a || !b) return false;
+  const aMonHpPct = Number(a.avgMonsterRemainingHpPercent ?? a.monsterRemainingHpPercent ?? 100);
+  const bMonHpPct = Number(b.avgMonsterRemainingHpPercent ?? b.monsterRemainingHpPercent ?? 100);
+  const aCanWin = typeof a.canWin === 'boolean' ? a.canWin : Boolean(a.win);
+  const bCanWin = typeof b.canWin === 'boolean' ? b.canWin : Boolean(b.win);
+  const aWinRate = Number.isFinite(Number(a.winRate)) ? Number(a.winRate) : (aCanWin ? 100 : 0);
+  const bWinRate = Number.isFinite(Number(b.winRate)) ? Number(b.winRate) : (bCanWin ? 100 : 0);
+  return aMonHpPct === bMonHpPct
+    && Number(a.avgTurns || a.turns || 0) === Number(b.avgTurns || b.turns || 0)
+    && aWinRate === bWinRate;
+}
+
 export function simulateCombat(charStats, monsterStats, options = {}) {
   const iterations = resolveIterations(options.iterations);
   const threshold = resolveThreshold(options.threshold);

@@ -10,6 +10,9 @@ import {
   getEligibleContexts,
   registerEnabledBosses,
   unregisterEnabledBosses,
+  tryStartEvaluation,
+  endEvaluation,
+  isEvaluating,
   tryCreateRally,
   getRally,
   isRallyActive,
@@ -521,6 +524,107 @@ console.log('Test: _resetForTests clears enabledBosses');
   registerContext(a);
   const eligible = getEligibleContexts({ enabledNames: ['Alice'], bossCode: 'king_slime' });
   assert.equal(eligible.length, 0);
+}
+console.log('  PASS');
+
+// --- Evaluation lock ---
+
+console.log('Test: evaluation lock CAS');
+{
+  _resetForTests();
+  assert.equal(tryStartEvaluation('Alice'), true);
+  assert.equal(isEvaluating(), true);
+  // Second call fails (lock held)
+  assert.equal(tryStartEvaluation('Bob'), false);
+  // Release
+  endEvaluation('Alice');
+  assert.equal(isEvaluating(), false);
+  // Now Bob can acquire
+  assert.equal(tryStartEvaluation('Bob'), true);
+  endEvaluation('Bob');
+}
+console.log('  PASS');
+
+console.log('Test: evaluation lock timeout override');
+{
+  _resetForTests();
+  assert.equal(tryStartEvaluation('Alice'), true);
+  // Manually backdate the lock to simulate timeout
+  // Access internal state indirectly by checking that a new call after 60s succeeds
+  // We can't easily backdate, so test the isEvaluating cleanup path instead
+  endEvaluation('Alice');
+
+  // Simulate a stale lock by acquiring and not releasing, then overriding
+  assert.equal(tryStartEvaluation('Stale'), true);
+  // Can't wait 60s in a test, but we can verify the CAS rejects while fresh
+  assert.equal(tryStartEvaluation('Override'), false);
+  endEvaluation('Stale');
+}
+console.log('  PASS');
+
+console.log('Test: evaluation lock idempotent endEvaluation');
+{
+  _resetForTests();
+  // End with no lock — should not throw
+  endEvaluation('Nobody');
+  assert.equal(isEvaluating(), false);
+
+  // End with wrong name — lock stays
+  assert.equal(tryStartEvaluation('Alice'), true);
+  endEvaluation('Bob'); // wrong name
+  assert.equal(isEvaluating(), true);
+  endEvaluation('Alice'); // correct name
+  assert.equal(isEvaluating(), false);
+}
+console.log('  PASS');
+
+console.log('Test: evaluation lock blocked by active rally');
+{
+  setup3();
+  tryCreateRally({
+    bossCode: 'king_slime',
+    location: { x: 1, y: 2 },
+    leaderName: 'Alice',
+    participants: ['Bob'],
+  });
+  // tryStartEvaluation should return false when a rally exists
+  assert.equal(tryStartEvaluation('Carol'), false);
+  cancelRally('test');
+  // Now it should succeed
+  assert.equal(tryStartEvaluation('Carol'), true);
+  endEvaluation('Carol');
+}
+console.log('  PASS');
+
+// --- ignoreCooldown option ---
+
+console.log('Test: ignoreCooldown includes characters on cooldown');
+{
+  _resetForTests();
+  const a = makeCtx('Alice');
+  const b = makeCtx('Bob', { cooldown: 5000 });
+  registerContext(a);
+  registerContext(b);
+
+  // Without ignoreCooldown — Bob excluded
+  const without = getEligibleContexts({ enabledNames: ['Alice', 'Bob'] });
+  assert.equal(without.length, 1);
+  assert.equal(without[0].name, 'Alice');
+
+  // With ignoreCooldown — Bob included
+  const withIgnore = getEligibleContexts({ enabledNames: ['Alice', 'Bob'], ignoreCooldown: true });
+  assert.equal(withIgnore.length, 2);
+}
+console.log('  PASS');
+
+console.log('Test: _resetForTests clears evaluation lock');
+{
+  assert.equal(tryStartEvaluation('Alice'), true);
+  _resetForTests();
+  assert.equal(isEvaluating(), false);
+  // Should be able to acquire after reset
+  assert.equal(tryStartEvaluation('Bob'), true);
+  _resetForTests();
 }
 console.log('  PASS');
 

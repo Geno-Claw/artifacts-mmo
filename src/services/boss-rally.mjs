@@ -50,13 +50,13 @@ export function unregisterEnabledBosses(name) {
  * Eligible = not on cooldown, inventory not full, not already in an active rally.
  * If bossCode is provided, also filters to characters with that boss enabled.
  */
-export function getEligibleContexts({ enabledNames, bossCode }) {
+export function getEligibleContexts({ enabledNames, bossCode, ignoreCooldown = false }) {
   cleanup();
   const eligible = [];
   const enabledSet = new Set(enabledNames);
   for (const ctx of contexts.values()) {
     if (!enabledSet.has(ctx.name)) continue;
-    if (ctx.cooldownRemainingMs() > 0) continue;
+    if (!ignoreCooldown && ctx.cooldownRemainingMs() > 0) continue;
     if (ctx.inventoryFull()) continue;
     if (rally && isParticipantUnchecked(ctx.name)) continue;
     if (bossCode) {
@@ -66,6 +66,50 @@ export function getEligibleContexts({ enabledNames, bossCode }) {
     eligible.push(ctx);
   }
   return eligible;
+}
+
+// --- Evaluation lock ---
+let evaluating = null; // { name, startedAt } or null
+const EVAL_TIMEOUT_MS = 60_000;
+
+/**
+ * CAS: claim the evaluation lock. Only one character evaluates at a time.
+ * Returns true if this character acquired the lock, false otherwise.
+ */
+export function tryStartEvaluation(name) {
+  if (rally) return false;
+  if (evaluating) {
+    if ((Date.now() - evaluating.startedAt) > EVAL_TIMEOUT_MS) {
+      log.warn(`${TAG} Evaluation lock held by ${evaluating.name} timed out after ${EVAL_TIMEOUT_MS}ms, overriding`);
+    } else {
+      return false;
+    }
+  }
+  evaluating = { name, startedAt: Date.now() };
+  return true;
+}
+
+/**
+ * Release the evaluation lock. Idempotent — only clears if held by the given name.
+ */
+export function endEvaluation(name) {
+  if (evaluating?.name === name) {
+    evaluating = null;
+  }
+}
+
+/**
+ * Returns true if an evaluation is currently in progress and not timed out.
+ * Cleans up stale locks as a side effect.
+ */
+export function isEvaluating() {
+  if (!evaluating) return false;
+  if ((Date.now() - evaluating.startedAt) > EVAL_TIMEOUT_MS) {
+    log.warn(`${TAG} Stale evaluation lock by ${evaluating.name}, clearing`);
+    evaluating = null;
+    return false;
+  }
+  return true;
 }
 
 // --- Rally state ---
@@ -88,7 +132,7 @@ function cleanup() {
  * Try to create a new rally (CAS — only succeeds if no rally is active).
  * @returns {object|null} The new rally, or null if one already exists.
  */
-export function tryCreateRally({ bossCode, location, leaderName, participants, loadouts, leaseTtlMs }) {
+export function tryCreateRally({ bossCode, location, leaderName, participants, loadouts, roles, leaseTtlMs }) {
   cleanup();
   if (rally) return null;
 
@@ -103,11 +147,15 @@ export function tryCreateRally({ bossCode, location, leaderName, participants, l
     leaseTtlMs: leaseTtlMs || DEFAULT_LEASE_TTL_MS,
     fightResult: null,
     loadouts: loadouts || new Map(),
+    roles: roles || new Map(),
     resultConsumedBy: new Set(),
     fightCount: 0,
   };
 
-  log.info(`${TAG} Rally created: ${leaderName} leads [${participants.join(', ')}] vs ${bossCode}`);
+  const roleDesc = rally.roles.size > 0
+    ? ` (${[...rally.roles].map(([n, r]) => `${n}=${r}`).join(', ')})`
+    : '';
+  log.info(`${TAG} Rally created: ${leaderName} leads [${participants.join(', ')}] vs ${bossCode}${roleDesc}`);
   return rally;
 }
 
@@ -205,6 +253,7 @@ export function cancelRally(reason) {
 // --- Test helpers ---
 export function _resetForTests() {
   rally = null;
+  evaluating = null;
   contexts.clear();
   enabledBossesMap.clear();
 }

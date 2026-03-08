@@ -17,6 +17,10 @@ import {
   isCombatResultViable,
   isBetterCombatResult,
   isCombatResultTie,
+  isBetterTankResult,
+  isTankResultTie,
+  isBetterDpsResult,
+  isDpsResultTie,
   simulateCombat,
 } from './combat-simulator.mjs';
 import { canUseItem } from './item-conditions.mjs';
@@ -297,6 +301,39 @@ function isPreferredItemOnTie(candidate, currentBest) {
   const aCode = `${candidate.code || ''}`;
   const bCode = `${currentBest.code || ''}`;
   return aCode.localeCompare(bCode) < 0;
+}
+
+/**
+ * DPS-role tiebreaker: prefer offensive rune effects (burn, frenzy) over
+ * defensive ones (lifesteal, healing) when the solo sim can't differentiate
+ * (e.g. both die against a boss). Falls back to default tiebreaker.
+ */
+const DPS_RUNE_EFFECT_RANK = { burn: 0, frenzy: 1, lifesteal: 2, healing: 3 };
+
+function isPreferredDpsItemOnTie(candidate, currentBest) {
+  if (!candidate && !currentBest) return false;
+  if (candidate && !currentBest) return true;
+  if (!candidate && currentBest) return false;
+
+  // Rune-specific: prefer offensive effects for DPS
+  const aType = candidate.type || '';
+  const bType = currentBest.type || '';
+  if (aType === 'rune' && bType === 'rune') {
+    const aRank = getDpsRuneRank(candidate);
+    const bRank = getDpsRuneRank(currentBest);
+    if (aRank !== bRank) return aRank < bRank;
+  }
+
+  return isPreferredItemOnTie(candidate, currentBest);
+}
+
+function getDpsRuneRank(item) {
+  if (!item?.effects) return 99;
+  for (const effect of item.effects) {
+    const name = effect.name || effect.code || '';
+    if (name in DPS_RUNE_EFFECT_RANK) return DPS_RUNE_EFFECT_RANK[name];
+  }
+  return 99;
 }
 
 function normalizeSimResult(result) {
@@ -601,6 +638,258 @@ export async function optimizeForMonster(ctx, monsterCode, opts = {}) {
   }
 
   return { loadout: codeLoadout, simResult };
+}
+
+// --- Role-based optimizer ---
+
+function itemHasThreat(item) {
+  return getEffectValue(item, 'threat') > 0;
+}
+
+/**
+ * Compute total threat from a gear set (Map<slot, item object>).
+ */
+function computeGearThreat(gearSet) {
+  let total = 0;
+  for (const [, item] of gearSet) {
+    total += getEffectValue(item, 'threat');
+  }
+  return total;
+}
+
+/**
+ * Optimize gear for a specific role in a boss fight.
+ * Same 4-phase greedy structure as optimizeForMonster, but uses role-specific
+ * comparison functions:
+ *   - tank: maximize survivability (turns survived + remaining HP), threat is primary
+ *   - dps: maximize damage output (lower monster remaining HP %), filter out threat items
+ *
+ * @param {import('../context.mjs').CharacterContext} ctx
+ * @param {string} monsterCode
+ * @param {'tank'|'dps'} role
+ * @param {object} [opts]
+ * @returns {Promise<{ loadout: Map<string, string|null>, simResult: object, gearThreat: number } | null>}
+ */
+export async function optimizeForRole(ctx, monsterCode, role, opts = {}) {
+  const candidateOpts = {
+    includeCraftableUnavailable: opts.includeCraftableUnavailable === true,
+    excludeBank: opts.excludeBank || null,
+  };
+  const candidateIterations = toPositiveInt(opts.candidateIterations, OPTIMIZER_CANDIDATE_ITERATIONS);
+  const finalIterations = Math.max(candidateIterations, toPositiveInt(opts.finalIterations, OPTIMIZER_FINAL_ITERATIONS));
+  const monster = _deps.getMonsterFn(monsterCode);
+  if (!monster) return null;
+
+  const isTank = role === 'tank';
+
+  const bankItems = await _deps.getBankItemsFn();
+
+  if (opts.excludeBank) {
+    for (const [code, qty] of opts.excludeBank) {
+      const current = bankItems.get(code) || 0;
+      if (current > 0) bankItems.set(code, Math.max(0, current - qty));
+    }
+  }
+
+  const baseStats = getBaseStats(ctx);
+  const baseSimOpts = getBaseSimOptions(ctx);
+  const optimizerSeedBase = buildOptimizerSeedBase(ctx, monsterCode);
+  const seedForSlot = (slot) => hashString(`${optimizerSeedBase}:${role}:${slot}`);
+
+  // Role-specific comparison helpers
+  const isBetter = isTank
+    ? (result, bestResult, item, bestItem) => {
+      const at = getEffectValue(item, 'threat');
+      const bt = getEffectValue(bestItem, 'threat');
+      return isBetterTankResult(result, bestResult, at, bt);
+    }
+    : (result, bestResult) => isBetterDpsResult(result, bestResult);
+
+  const isTie = isTank
+    ? (result, bestResult, item, bestItem) => {
+      const at = getEffectValue(item, 'threat');
+      const bt = getEffectValue(bestItem, 'threat');
+      return isTankResultTie(result, bestResult, at, bt);
+    }
+    : (result, bestResult) => isDpsResultTie(result, bestResult);
+
+  // DPS candidate filter: skip items with threat effect
+  const filterCandidates = isTank
+    ? (candidates) => candidates
+    : (candidates) => candidates.filter(({ item }) => !itemHasThreat(item));
+
+  // Role-aware tiebreaker: DPS prefers offensive rune effects
+  const preferredOnTie = isTank ? isPreferredItemOnTie : isPreferredDpsItemOnTie;
+
+  // Start with current gear as baseline
+  const loadout = new Map();
+  for (const slot of EQUIPMENT_SLOTS) {
+    const code = ctx.get()[`${slot}_slot`] || null;
+    loadout.set(slot, code ? _deps.getItemFn(code) : null);
+  }
+
+  // --- Phase 1: Weapon ---
+  const weaponCandidates = filterCandidates(getCandidatesForSlot(ctx, 'weapon', bankItems, candidateOpts));
+  let bestWeaponResult = null;
+  let bestWeapon = loadout.get('weapon');
+  const weaponSeed = seedForSlot('weapon');
+
+  for (const { item } of weaponCandidates) {
+    const testLoadout = new Map(loadout);
+    testLoadout.set('weapon', item);
+    const hypo = buildStats(baseStats, testLoadout);
+    const result = normalizeSimResult(_deps.simulateCombatFn(
+      hypo, monster,
+      buildSimOptions(baseSimOpts, testLoadout, { iterations: candidateIterations, seed: weaponSeed }),
+    ));
+    if (
+      isBetter(result, bestWeaponResult, item, bestWeapon)
+      || (isTie(result, bestWeaponResult, item, bestWeapon) && preferredOnTie(item, bestWeapon))
+    ) {
+      bestWeaponResult = result;
+      bestWeapon = item;
+    }
+  }
+  loadout.set('weapon', bestWeapon);
+
+  // --- Phase 2: Defensive slots ---
+  for (const slot of DEFENSIVE_SLOTS) {
+    const candidates = filterCandidates(getCandidatesForSlot(ctx, slot, bankItems, candidateOpts));
+    let bestResult = null;
+    let bestItem = loadout.get(slot);
+    const slotSeed = seedForSlot(slot);
+
+    for (const { item } of candidates) {
+      const testLoadout = new Map(loadout);
+      testLoadout.set(slot, item);
+      const hypo = buildStats(baseStats, testLoadout);
+      const result = normalizeSimResult(_deps.simulateCombatFn(
+        hypo, monster,
+        buildSimOptions(baseSimOpts, testLoadout, { iterations: candidateIterations, seed: slotSeed }),
+      ));
+      if (
+        isBetter(result, bestResult, item, bestItem)
+        || (isTie(result, bestResult, item, bestItem) && preferredOnTie(item, bestItem))
+      ) {
+        bestResult = result;
+        bestItem = item;
+      }
+    }
+
+    // Empty-slot test
+    const emptyLoadout = new Map(loadout);
+    emptyLoadout.set(slot, null);
+    const emptyHypo = buildStats(baseStats, emptyLoadout);
+    const emptyResult = normalizeSimResult(_deps.simulateCombatFn(
+      emptyHypo, monster,
+      buildSimOptions(baseSimOpts, emptyLoadout, { iterations: candidateIterations, seed: slotSeed }),
+    ));
+    if (isTank) {
+      // Tank: only strip if empty has strictly higher win rate
+      if (Number(emptyResult?.winRate ?? 0) > Number(bestResult?.winRate ?? 0)) {
+        bestItem = null;
+      }
+    } else {
+      // DPS: strip if empty deals more damage (lower monster HP %)
+      const emptyMonHp = Number(emptyResult?.avgMonsterRemainingHpPercent ?? emptyResult?.monsterRemainingHpPercent ?? 100);
+      const bestMonHp = Number(bestResult?.avgMonsterRemainingHpPercent ?? bestResult?.monsterRemainingHpPercent ?? 100);
+      if (emptyMonHp < bestMonHp) {
+        bestItem = null;
+      }
+    }
+
+    loadout.set(slot, bestItem);
+  }
+
+  resetMultiSlotFamilyBaseline(loadout);
+
+  // --- Phase 3: Accessories ---
+  for (const slot of ACCESSORY_SLOTS) {
+    const candidates = filterCandidates(filterDuplicateFamilyCandidates(
+      getCandidatesForSlot(ctx, slot, bankItems, candidateOpts),
+      slot, loadout, ctx, bankItems, candidateOpts,
+    ));
+
+    let bestResult = null;
+    let bestItem = loadout.get(slot);
+    const slotSeed = seedForSlot(slot);
+
+    for (const { item } of candidates) {
+      const testLoadout = new Map(loadout);
+      testLoadout.set(slot, item);
+      const hypo = buildStats(baseStats, testLoadout);
+      const result = normalizeSimResult(_deps.simulateCombatFn(
+        hypo, monster,
+        buildSimOptions(baseSimOpts, testLoadout, { iterations: candidateIterations, seed: slotSeed }),
+      ));
+      if (
+        isBetter(result, bestResult, item, bestItem)
+        || (isTie(result, bestResult, item, bestItem) && preferredOnTie(item, bestItem))
+      ) {
+        bestResult = result;
+        bestItem = item;
+      }
+    }
+
+    // Empty-slot test
+    const emptyLoadout = new Map(loadout);
+    emptyLoadout.set(slot, null);
+    const emptyHypo = buildStats(baseStats, emptyLoadout);
+    const emptyResult = normalizeSimResult(_deps.simulateCombatFn(
+      emptyHypo, monster,
+      buildSimOptions(baseSimOpts, emptyLoadout, { iterations: candidateIterations, seed: slotSeed }),
+    ));
+    if (isTank) {
+      if (Number(emptyResult?.avgTurns || 0) > Number(bestResult?.avgTurns || 0)) {
+        bestItem = null;
+      }
+    } else {
+      const emptyMonHp = Number(emptyResult?.avgMonsterRemainingHpPercent ?? emptyResult?.monsterRemainingHpPercent ?? 100);
+      const bestMonHp = Number(bestResult?.avgMonsterRemainingHpPercent ?? bestResult?.monsterRemainingHpPercent ?? 100);
+      if (emptyMonHp < bestMonHp) {
+        bestItem = null;
+      }
+    }
+
+    loadout.set(slot, bestItem);
+  }
+
+  // --- Phase 4: Bag ---
+  const bagCandidates = getCandidatesForSlot(ctx, 'bag', bankItems, candidateOpts);
+  const bestBag = chooseBestBagCandidate(bagCandidates);
+  if (bestBag?.item) {
+    loadout.set('bag', bestBag.item);
+  }
+
+  // --- Final validation ---
+  const finalStats = buildStats(baseStats, loadout);
+  const finalSimOptions = buildSimOptions(baseSimOpts, loadout, {
+    iterations: finalIterations,
+    seed: seedForSlot('final'),
+  });
+  const finalResult = normalizeSimResult(_deps.simulateCombatFn(finalStats, monster, finalSimOptions));
+  const gearThreat = computeGearThreat(loadout);
+
+  // Convert to slot → itemCode map
+  const codeLoadout = new Map();
+  for (const [slot, item] of loadout) {
+    codeLoadout.set(slot, item?.code || null);
+  }
+
+  // Log changes
+  const changes = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const current = ctx.get()[`${slot}_slot`] || null;
+    const optimal = codeLoadout.get(slot) || null;
+    if (current !== optimal) {
+      changes.push(`${slot}: ${current || '(empty)'} → ${optimal || '(empty)'}`);
+    }
+  }
+  if (changes.length > 0) {
+    log.debug(`[${ctx.name}] ${role} optimizer for ${monsterCode}: ${changes.join(', ')}${gearThreat ? ` (threat=${gearThreat})` : ''}`);
+  }
+
+  return { loadout: codeLoadout, simResult: finalResult, gearThreat };
 }
 
 /**
