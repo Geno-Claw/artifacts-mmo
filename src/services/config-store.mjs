@@ -625,6 +625,16 @@ function applySchemaDefaults(value, schema, rootSchema) {
       }
     }
 
+    // Strip properties not in schema when additionalProperties is false
+    // This handles schema migrations where fields are removed
+    if (activeSchema.additionalProperties === false) {
+      for (const key of Object.keys(result)) {
+        if (!hasOwn(properties, key)) {
+          delete result[key];
+        }
+      }
+    }
+
     return result;
   }
 
