@@ -421,7 +421,7 @@ export class BossFightRoutine extends BaseRoutine {
 
     if (eligible.length < minSize) return null;
 
-    for (let size = maxSize; size >= minSize; size--) {
+    for (let size = minSize; size <= maxSize; size++) {
       const combos = combinations(eligible, size);
       for (const team of combos) {
         // Try each character as tank
@@ -459,7 +459,7 @@ export class BossFightRoutine extends BaseRoutine {
             const winrate = response.winrate ?? 0;
             log.debug(`[${TAG}] Role team [${team.map(c => c.name).join(', ')}] tank=${tankName}: ${winrate}%`);
 
-            if (!bestResult || winrate > bestResult.winrate) {
+            if (!bestResult || this._preferTeam(winrate, team.length, bestResult.winrate, bestResult.team.length)) {
               bestResult = { team, winrate, roles, loadouts: teamLoadouts };
             }
           } catch (err) {
@@ -467,11 +467,22 @@ export class BossFightRoutine extends BaseRoutine {
           }
         }
       }
-      // Found a viable team at this size — don't try smaller groups
-      if (bestResult) break;
     }
 
     return bestResult;
+  }
+
+  /**
+   * Decide if a new candidate team should replace the current best.
+   * Prefer minTeamSize when winrates are equal; pick larger only if strictly better.
+   */
+  _preferTeam(newWinrate, newSize, bestWinrate, bestSize) {
+    if (newWinrate > bestWinrate) return true;
+    if (newWinrate < bestWinrate) return false;
+    // Equal winrate — prefer the size closest to minTeamSize
+    const newDist = Math.abs(newSize - this.minTeamSize);
+    const bestDist = Math.abs(bestSize - this.minTeamSize);
+    return newDist < bestDist;
   }
 
   // --- Gear deconfliction ---
