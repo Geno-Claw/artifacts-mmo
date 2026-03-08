@@ -8,6 +8,8 @@ import {
   getAllContexts,
   getContext,
   getEligibleContexts,
+  registerEnabledBosses,
+  unregisterEnabledBosses,
   tryCreateRally,
   getRally,
   isRallyActive,
@@ -452,6 +454,73 @@ console.log('Test: multi-fight cycle with resetForNextFight');
   cancelRally('reached fight limit');
   assert.equal(isRallyActive(), false);
   assert.equal(getFightCount(), 0); // no rally → 0
+}
+console.log('  PASS');
+
+// --- registerEnabledBosses ---
+
+console.log('Test: registerEnabledBosses and unregisterEnabledBosses');
+{
+  _resetForTests();
+  const a = makeCtx('Alice');
+  const b = makeCtx('Bob');
+  registerContext(a);
+  registerContext(b);
+
+  registerEnabledBosses('Alice', ['king_slime', 'lich']);
+  registerEnabledBosses('Bob', ['king_slime']);
+
+  // Both eligible for king_slime
+  const eligible1 = getEligibleContexts({ enabledNames: ['Alice', 'Bob'], bossCode: 'king_slime' });
+  assert.equal(eligible1.length, 2);
+
+  // Only Alice eligible for lich
+  const eligible2 = getEligibleContexts({ enabledNames: ['Alice', 'Bob'], bossCode: 'lich' });
+  assert.equal(eligible2.length, 1);
+  assert.equal(eligible2[0].name, 'Alice');
+
+  // No one eligible for goblin_priestess
+  const eligible3 = getEligibleContexts({ enabledNames: ['Alice', 'Bob'], bossCode: 'goblin_priestess' });
+  assert.equal(eligible3.length, 0);
+
+  // Without bossCode filter, all eligible
+  const eligible4 = getEligibleContexts({ enabledNames: ['Alice', 'Bob'] });
+  assert.equal(eligible4.length, 2);
+
+  // Unregister Alice's bosses
+  unregisterEnabledBosses('Alice');
+  const eligible5 = getEligibleContexts({ enabledNames: ['Alice', 'Bob'], bossCode: 'king_slime' });
+  assert.equal(eligible5.length, 1);
+  assert.equal(eligible5[0].name, 'Bob');
+}
+console.log('  PASS');
+
+console.log('Test: unregisterContext also clears enabledBosses');
+{
+  _resetForTests();
+  const a = makeCtx('Alice');
+  registerContext(a);
+  registerEnabledBosses('Alice', ['king_slime']);
+
+  unregisterContext('Alice');
+  // Re-register context without bosses — should not have boss filter data
+  registerContext(a);
+  const eligible = getEligibleContexts({ enabledNames: ['Alice'], bossCode: 'king_slime' });
+  assert.equal(eligible.length, 0); // no enabled bosses registered
+}
+console.log('  PASS');
+
+console.log('Test: _resetForTests clears enabledBosses');
+{
+  const a = makeCtx('Alice');
+  _resetForTests();
+  registerContext(a);
+  registerEnabledBosses('Alice', ['king_slime']);
+
+  _resetForTests();
+  registerContext(a);
+  const eligible = getEligibleContexts({ enabledNames: ['Alice'], bossCode: 'king_slime' });
+  assert.equal(eligible.length, 0);
 }
 console.log('  PASS');
 

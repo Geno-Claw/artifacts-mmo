@@ -53,17 +53,24 @@ const CONFIG_EDITOR_FALLBACK_ROUTINES = Object.freeze([
   {
     type: 'bossFight',
     label: 'Boss Fight',
-    toggleable: true,
+    toggleable: false,
     readOnly: false,
     defaultConfig: {
       type: 'bossFight',
       priority: 15,
-      enabled: false,
-      bossCode: 'king_slime',
       teamSize: 3,
-      minWinrate: 80,
       repeat: true,
       maxFights: 0,
+      orderDriven: false,
+      bosses: [
+        { code: 'king_slime', enabled: false, minWinrate: 80 },
+        { code: 'lich', enabled: false, minWinrate: 80 },
+        { code: 'goblin_priestess', enabled: false, minWinrate: 80 },
+        { code: 'cultist_emperor', enabled: false, minWinrate: 80 },
+        { code: 'rosenblood', enabled: false, minWinrate: 80 },
+        { code: 'duskworm', enabled: false, minWinrate: 80 },
+        { code: 'sandwhisper_empress', enabled: false, minWinrate: 80 },
+      ],
     },
   },
   {
@@ -961,14 +968,35 @@ function renderConfigRoutineCard(character, routineMeta) {
       </div>
     `;
   } else if (routineMeta.type === 'bossFight') {
+    const bosses = Array.isArray(routineConfig?.bosses) ? routineConfig.bosses : (routineMeta.defaultConfig?.bosses || []);
+    const bossFieldAttrs = (index, field) => `data-config-scope="boss-field" data-config-character="${escapeHtml(name)}" data-config-boss-index="${index}" data-config-field="${escapeHtml(field)}"`;
+    const bossRows = bosses.map((boss, i) => {
+      const code = safeText(boss?.code, '');
+      const enabled = boss?.enabled === true;
+      const minWinrate = boss?.minWinrate ?? 80;
+      return `
+        <div class="config-boss-row">
+          <label class="config-checkbox-inline" title="${escapeHtml(code)}">
+            <input type="checkbox" ${enabled ? 'checked' : ''} ${bossFieldAttrs(i, 'enabled')}>
+            <span>${escapeHtml(formatUpperToken(code, code))}</span>
+          </label>
+          <label class="config-field-inline" title="Min winrate %">
+            <input type="number" class="sandbox-input sandbox-input-sm" value="${minWinrate}" min="0" max="100" step="1" ${bossFieldAttrs(i, 'minWinrate')}>
+            <span>%</span>
+          </label>
+        </div>
+      `;
+    }).join('');
     body = `
       <div class="config-field-grid">
-        ${renderConfigSettingField('Enabled', fieldAttrs('enabled'), getConfigEditorPathValue(routineConfig, 'enabled', false) === true, 'checkbox', '', routineDesc('enabled'))}
-        ${renderConfigSettingField('Boss Code', fieldAttrs('bossCode'), getConfigEditorPathValue(routineConfig, 'bossCode', 'king_slime'), 'text', '', routineDesc('bossCode'))}
-        ${renderConfigSettingField('Team Size', fieldAttrs('teamSize'), getConfigEditorPathValue(routineConfig, 'teamSize', 3), 'number', 'min="2" max="5" step="1"', routineDesc('teamSize') || 'Maximum team size (2-5 characters)')}
-        ${renderConfigSettingField('Min Winrate %', fieldAttrs('minWinrate'), getConfigEditorPathValue(routineConfig, 'minWinrate', 80), 'number', 'min="0" max="100" step="1"', routineDesc('minWinrate'))}
+        ${renderConfigSettingField('Team Size', fieldAttrs('teamSize'), getConfigEditorPathValue(routineConfig, 'teamSize', 3), 'number', 'min="2" max="3" step="1"', routineDesc('teamSize') || 'Maximum team size (2-3 characters, API max 3)')}
         ${renderConfigSettingField('Repeat', fieldAttrs('repeat'), getConfigEditorPathValue(routineConfig, 'repeat', true) === true, 'checkbox', '', routineDesc('repeat'))}
         ${renderConfigSettingField('Max Fights', fieldAttrs('maxFights'), getConfigEditorPathValue(routineConfig, 'maxFights', 0), 'number', 'min="0" step="1"', routineDesc('maxFights') || 'Maximum fights per rally before stopping (0 = unlimited)')}
+        ${renderConfigSettingField('Order Driven', fieldAttrs('orderDriven'), getConfigEditorPathValue(routineConfig, 'orderDriven', false) === true, 'checkbox', '', routineDesc('orderDriven') || 'Only rally when order board needs boss drops')}
+      </div>
+      <div class="config-boss-list">
+        <div class="config-field-label" style="margin-bottom: 4px">${renderConfigFieldLabelMarkup('Bosses', routineDesc('bosses') || 'Per-boss enable/disable with individual min winrate')}</div>
+        ${bossRows}
       </div>
     `;
   } else if (routineMeta.type === 'completeTask') {
@@ -1271,6 +1299,23 @@ function handleConfigCombatMonsterType(element) {
   });
 }
 
+function handleConfigBossField(element) {
+  const characterName = safeText(element?.dataset?.configCharacter, '');
+  const bossIndex = parseInt(element?.dataset?.configBossIndex, 10);
+  const field = safeText(element?.dataset?.configField, '');
+  if (!characterName || isNaN(bossIndex) || !field) return false;
+
+  return applyConfigEditorMutation((draft) => {
+    const routine = ensureConfigEditorRoutineNode(draft, characterName, 'bossFight');
+    if (!routine) return false;
+    if (!Array.isArray(routine.bosses)) return false;
+    const boss = routine.bosses[bossIndex];
+    if (!boss) return false;
+    boss[field] = element.type === 'checkbox' ? element.checked : configEditorNumberValue(element, boss[field] ?? 0);
+    return true;
+  });
+}
+
 function handleConfigRoutineField(element) {
   const characterName = safeText(element?.dataset?.configCharacter, '');
   const routineType = safeText(element?.dataset?.configRoutine, '');
@@ -1477,6 +1522,11 @@ function handleConfigModalInput(event) {
   const combatMonsterType = closestFromEventTarget(event, '[data-config-scope="setting-combat-monster-type"]');
   if (combatMonsterType && modalRefs.content.contains(combatMonsterType)) {
     return handleConfigCombatMonsterType(combatMonsterType);
+  }
+
+  const bossField = closestFromEventTarget(event, '[data-config-scope="boss-field"]');
+  if (bossField && modalRefs.content.contains(bossField)) {
+    return handleConfigBossField(bossField);
   }
 
   const routineField = closestFromEventTarget(event, '[data-config-scope="routine-field"]');

@@ -466,29 +466,12 @@
           "default": 15,
           "description": "Execution priority (default 15)"
         },
-        "enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable/disable boss fight participation"
-        },
-        "bossCode": {
-          "type": "string",
-          "default": "king_slime",
-          "description": "Monster code of the boss to fight"
-        },
         "teamSize": {
           "type": "number",
           "default": 3,
           "minimum": 2,
-          "maximum": 5,
-          "description": "Maximum team size (2-5 characters)"
-        },
-        "minWinrate": {
-          "type": "number",
-          "default": 80,
-          "minimum": 0,
-          "maximum": 100,
-          "description": "Minimum simulated win rate to attempt the fight"
+          "maximum": 3,
+          "description": "Maximum team size (2-3 characters, API max is 3)"
         },
         "repeat": {
           "type": "boolean",
@@ -500,6 +483,48 @@
           "default": 0,
           "minimum": 0,
           "description": "Maximum fights per rally before stopping (0 = unlimited)"
+        },
+        "orderDriven": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, only rally a boss if the order board has an active order requiring its drops (directly or as crafting ingredients)"
+        },
+        "bosses": {
+          "type": "array",
+          "description": "Per-boss configuration. Each entry controls whether this character will fight that boss and the minimum winrate required.",
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["king_slime", "lich", "goblin_priestess", "cultist_emperor", "rosenblood", "duskworm", "sandwhisper_empress"],
+                "description": "Boss monster code"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Enable/disable fighting this boss"
+              },
+              "minWinrate": {
+                "type": "number",
+                "default": 80,
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Minimum simulated win rate to attempt this boss"
+              }
+            }
+          },
+          "default": [
+            { "code": "king_slime", "enabled": false, "minWinrate": 80 },
+            { "code": "lich", "enabled": false, "minWinrate": 80 },
+            { "code": "goblin_priestess", "enabled": false, "minWinrate": 80 },
+            { "code": "cultist_emperor", "enabled": false, "minWinrate": 80 },
+            { "code": "rosenblood", "enabled": false, "minWinrate": 80 },
+            { "code": "duskworm", "enabled": false, "minWinrate": 80 },
+            { "code": "sandwhisper_empress", "enabled": false, "minWinrate": 80 }
+          ]
         }
       }
     },

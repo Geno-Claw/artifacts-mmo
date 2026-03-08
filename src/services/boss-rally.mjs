@@ -14,6 +14,7 @@ const DEFAULT_LEASE_TTL_MS = 10 * 60_000; // 10 minutes
 
 // --- Context registry ---
 const contexts = new Map(); // name → CharacterContext
+const enabledBossesMap = new Map(); // name → Set<bossCode>
 
 export function registerContext(ctx) {
   contexts.set(ctx.name, ctx);
@@ -21,6 +22,7 @@ export function registerContext(ctx) {
 
 export function unregisterContext(name) {
   contexts.delete(name);
+  enabledBossesMap.delete(name);
 }
 
 export function getAllContexts() {
@@ -32,10 +34,23 @@ export function getContext(name) {
 }
 
 /**
+ * Register which bosses a character has enabled in their config.
+ * Called by BossFightRoutine.canRun() to keep the registry current.
+ */
+export function registerEnabledBosses(name, bossCodes) {
+  enabledBossesMap.set(name, new Set(bossCodes));
+}
+
+export function unregisterEnabledBosses(name) {
+  enabledBossesMap.delete(name);
+}
+
+/**
  * Get eligible contexts for a boss rally.
  * Eligible = not on cooldown, inventory not full, not already in an active rally.
+ * If bossCode is provided, also filters to characters with that boss enabled.
  */
-export function getEligibleContexts({ enabledNames }) {
+export function getEligibleContexts({ enabledNames, bossCode }) {
   cleanup();
   const eligible = [];
   const enabledSet = new Set(enabledNames);
@@ -44,6 +59,10 @@ export function getEligibleContexts({ enabledNames }) {
     if (ctx.cooldownRemainingMs() > 0) continue;
     if (ctx.inventoryFull()) continue;
     if (rally && isParticipantUnchecked(ctx.name)) continue;
+    if (bossCode) {
+      const charBosses = enabledBossesMap.get(ctx.name);
+      if (!charBosses || !charBosses.has(bossCode)) continue;
+    }
     eligible.push(ctx);
   }
   return eligible;
@@ -187,4 +206,5 @@ export function cancelRally(reason) {
 export function _resetForTests() {
   rally = null;
   contexts.clear();
+  enabledBossesMap.clear();
 }

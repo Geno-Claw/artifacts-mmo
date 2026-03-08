@@ -1462,6 +1462,35 @@ body::before {
   gap: 10px;
 }
 
+.config-boss-list {
+  margin-top: 10px;
+}
+
+.config-boss-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.config-checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 180px;
+  cursor: pointer;
+}
+
+.config-field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sandbox-input-sm {
+  width: 60px;
+}
+
 .config-field-block {
   display: flex;
   flex-direction: column;

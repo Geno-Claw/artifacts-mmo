@@ -14,6 +14,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import * as bossRally from '../services/boss-rally.mjs';
+import { getOrderBoardSnapshot } from '../services/order-board.mjs';
 import { optimizeForMonster } from '../services/gear-optimizer.mjs';
 import { applyGearLoadout } from '../services/gear-loadout.mjs';
 import { findBestTeam, buildFakeCharacterWithLoadout } from '../services/event-simulation.mjs';
@@ -27,6 +28,16 @@ import { logWithdrawalWarnings } from '../utils.mjs';
 const TAG = 'BossFight';
 const EVAL_COOLDOWN_MS = 5 * 60_000; // 5 minutes between evaluations
 
+const ALL_BOSS_CODES = [
+  'king_slime',
+  'lich',
+  'goblin_priestess',
+  'cultist_emperor',
+  'rosenblood',
+  'duskworm',
+  'sandwhisper_empress',
+];
+
 export class BossFightRoutine extends BaseRoutine {
   constructor(cfg) {
     super({
@@ -36,22 +47,41 @@ export class BossFightRoutine extends BaseRoutine {
       loop: true,
       urgent: false,
     });
-    this.enabled = cfg.enabled !== false;
-    this.bossCode = cfg.bossCode || 'king_slime';
     this.teamSize = cfg.teamSize || 3;
-    this.minWinrate = cfg.minWinrate ?? 80;
     this.repeat = cfg.repeat !== false;
     this.maxFights = cfg.maxFights || 0; // 0 = unlimited
-    this._evalCooldownUntil = 0;
+    this.orderDriven = cfg.orderDriven === true;
+    this.bosses = this._normalizeBosses(cfg);
+    this.enabledBossCodes = this.bosses.filter(b => b.enabled).map(b => b.code);
+    this._evalCooldownUntil = new Map(); // bossCode → timestamp
+  }
+
+  /**
+   * Normalize config into bosses array. Handles legacy single-bossCode format.
+   */
+  _normalizeBosses(cfg) {
+    if (Array.isArray(cfg.bosses)) return cfg.bosses;
+    // Legacy migration: single bossCode → bosses array
+    if (cfg.bossCode) {
+      return ALL_BOSS_CODES.map(code => ({
+        code,
+        enabled: code === cfg.bossCode ? (cfg.enabled !== false) : false,
+        minWinrate: code === cfg.bossCode ? (cfg.minWinrate ?? 80) : 80,
+      }));
+    }
+    // Default: all disabled
+    return ALL_BOSS_CODES.map(code => ({ code, enabled: false, minWinrate: 80 }));
   }
 
   updateConfig(cfg) {
-    if (cfg.enabled !== undefined) this.enabled = cfg.enabled !== false;
-    if (cfg.bossCode !== undefined) this.bossCode = cfg.bossCode;
     if (cfg.teamSize !== undefined) this.teamSize = cfg.teamSize;
-    if (cfg.minWinrate !== undefined) this.minWinrate = cfg.minWinrate;
     if (cfg.repeat !== undefined) this.repeat = cfg.repeat !== false;
     if (cfg.maxFights !== undefined) this.maxFights = cfg.maxFights || 0;
+    if (cfg.orderDriven !== undefined) this.orderDriven = cfg.orderDriven === true;
+    if (cfg.bosses !== undefined) {
+      this.bosses = Array.isArray(cfg.bosses) ? cfg.bosses : this._normalizeBosses(cfg);
+      this.enabledBossCodes = this.bosses.filter(b => b.enabled).map(b => b.code);
+    }
   }
 
   canBePreempted(ctx) {
@@ -73,26 +103,26 @@ export class BossFightRoutine extends BaseRoutine {
   }
 
   canRun(ctx) {
-    if (!this.enabled) return false;
+    if (this.enabledBossCodes.length === 0) return false;
+
+    // Register enabled bosses for team filtering
+    bossRally.registerEnabledBosses(ctx.name, this.enabledBossCodes);
 
     // 1. Active rally and this character is participant → join
     if (bossRally.isParticipant(ctx.name)) return true;
 
-    // 2. Eval cooldown gates only leader evaluation, not rally joins
-    if (Date.now() < this._evalCooldownUntil) {
-      log.debug(`[${TAG}] ${ctx.name}: skipped — eval cooldown (${Math.round((this._evalCooldownUntil - Date.now()) / 1000)}s remaining)`);
+    // 2. Check if ANY enabled boss is past eval cooldown
+    const now = Date.now();
+    const anyPastCooldown = this.enabledBossCodes.some(code =>
+      now >= (this._evalCooldownUntil.get(code) || 0),
+    );
+    if (!anyPastCooldown) {
+      log.debug(`[${TAG}] ${ctx.name}: skipped — all bosses on eval cooldown`);
       return false;
     }
 
     // 3. No rally → sync checks for potential leader evaluation
     if (bossRally.isRallyActive()) return false;
-
-    const monster = gameData.getMonster(this.bossCode);
-    if (!monster || monster.type !== 'boss') {
-      log.debug(`[${TAG}] ${ctx.name}: skipped — monster "${this.bossCode}" not found or type="${monster?.type}" (expected "boss")`);
-      return false;
-    }
-
     if (ctx.cooldownRemainingMs() > 0) return false;
     if (ctx.inventoryFull()) return false;
 
@@ -158,31 +188,95 @@ export class BossFightRoutine extends BaseRoutine {
   // --- EVALUATING (no rally yet) ---
 
   async _evaluate(ctx) {
+    const now = Date.now();
+    for (const boss of this.bosses) {
+      if (!boss.enabled) continue;
+      if (now < (this._evalCooldownUntil.get(boss.code) || 0)) continue;
+
+      // Order-driven check
+      if (this.orderDriven && !this._ordersRequireBoss(boss.code)) {
+        log.debug(`[${TAG}] ${ctx.name}: skipping ${boss.code} — no matching orders (order-driven mode)`);
+        continue;
+      }
+
+      const result = await this._evaluateBoss(ctx, boss.code, boss.minWinrate);
+      if (result) return result;
+      // _evaluateBoss sets per-boss cooldown on failure
+    }
+    return false;
+  }
+
+  /**
+   * Check if the order board has any active order requiring drops from this boss.
+   * Checks direct fight orders, orders for boss drop items, and craft orders
+   * whose recipe chain transitively requires boss drops.
+   */
+  _ordersRequireBoss(bossCode) {
+    const boss = gameData.getMonster(bossCode);
+    if (!boss?.drops) return false;
+
+    const bossDropCodes = new Set(boss.drops.map(d => d.code));
+    let snapshot;
+    try {
+      snapshot = getOrderBoardSnapshot();
+    } catch {
+      return false; // Order board not initialized
+    }
+    if (!snapshot?.orders) return false;
+
+    for (const order of snapshot.orders) {
+      if (order.status === 'fulfilled') continue;
+      if ((order.remainingQty || 0) <= 0) continue;
+
+      // Direct fight order for this boss
+      if (order.sourceType === 'fight' && order.sourceCode === bossCode) return true;
+
+      // Order for an item that IS a boss drop
+      if (bossDropCodes.has(order.itemCode)) return true;
+
+      // Craft order whose recipe needs a boss drop
+      if (order.sourceType === 'craft') {
+        const item = gameData.getItem(order.itemCode);
+        if (item?.craft) {
+          const chain = gameData.resolveRecipeChain(item.craft);
+          if (chain?.some(step => bossDropCodes.has(step.itemCode))) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Evaluate a specific boss: optimize gear, find best team, create rally.
+   * Returns truthy if a rally was created/joined, false otherwise.
+   * Sets per-boss eval cooldown on failure.
+   */
+  async _evaluateBoss(ctx, bossCode, minWinrate) {
     // Get boss location
-    const location = await gameData.getMonsterLocation(this.bossCode);
+    const location = await gameData.getMonsterLocation(bossCode);
     if (!location) {
-      log.warn(`[${TAG}] ${ctx.name}: No location found for ${this.bossCode}`);
-      this._evalCooldownUntil = Date.now() + EVAL_COOLDOWN_MS;
+      log.warn(`[${TAG}] ${ctx.name}: No location found for ${bossCode}`);
+      this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
 
-    // Get all eligible contexts for boss fight
+    // Get all eligible contexts for this boss
     const allContexts = bossRally.getAllContexts();
     const enabledNames = allContexts.map(c => c.name);
-    const eligible = bossRally.getEligibleContexts({ enabledNames });
+    const eligible = bossRally.getEligibleContexts({ enabledNames, bossCode });
 
     if (eligible.length < 2) {
-      log.info(`[${TAG}] ${ctx.name}: Not enough eligible characters (${eligible.length})`);
-      this._evalCooldownUntil = Date.now() + EVAL_COOLDOWN_MS;
+      log.info(`[${TAG}] ${ctx.name}: Not enough eligible characters for ${bossCode} (${eligible.length})`);
+      this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
 
     // Run gear optimization for each eligible character
-    log.info(`[${TAG}] ${ctx.name}: Evaluating team for ${this.bossCode} (${eligible.length} eligible)`);
+    log.info(`[${TAG}] ${ctx.name}: Evaluating team for ${bossCode} (${eligible.length} eligible)`);
     const optimized = new Map(); // name → { loadout, simResult }
     for (const c of eligible) {
       try {
-        const result = await optimizeForMonster(c, this.bossCode);
+        const result = await optimizeForMonster(c, bossCode);
         if (result) {
           optimized.set(c.name, result);
         }
@@ -192,8 +286,8 @@ export class BossFightRoutine extends BaseRoutine {
     }
 
     if (optimized.size < 2) {
-      log.info(`[${TAG}] ${ctx.name}: Not enough optimized characters (${optimized.size})`);
-      this._evalCooldownUntil = Date.now() + EVAL_COOLDOWN_MS;
+      log.info(`[${TAG}] ${ctx.name}: Not enough optimized characters for ${bossCode} (${optimized.size})`);
+      this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
 
@@ -216,24 +310,24 @@ export class BossFightRoutine extends BaseRoutine {
     }
 
     const eligibleForSim = eligible.filter(c => optimized.has(c.name));
-    const teamResult = await findBestTeam(eligibleForSim, this.bossCode, {
+    const teamResult = await findBestTeam(eligibleForSim, bossCode, {
       maxTeamSize: this.teamSize,
       minTeamSize: 2,
       fakeCharsByName,
     });
 
-    if (!teamResult || teamResult.winrate < this.minWinrate) {
-      log.info(`[${TAG}] ${ctx.name}: Team winrate ${teamResult?.winrate ?? 0}% < ${this.minWinrate}% threshold`);
-      this._evalCooldownUntil = Date.now() + EVAL_COOLDOWN_MS;
+    if (!teamResult || teamResult.winrate < minWinrate) {
+      log.info(`[${TAG}] ${ctx.name}: Team winrate ${teamResult?.winrate ?? 0}% < ${minWinrate}% threshold for ${bossCode}`);
+      this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
       return false;
     }
 
-    log.info(`[${TAG}] ${ctx.name}: Best team [${teamResult.team.map(c => c.name).join(', ')}] at ${teamResult.winrate}% winrate`);
+    log.info(`[${TAG}] ${ctx.name}: Best team [${teamResult.team.map(c => c.name).join(', ')}] at ${teamResult.winrate}% winrate for ${bossCode}`);
 
     const teamNames = teamResult.team.map(c => c.name);
 
     // Gear deconfliction for the winning team
-    const loadouts = await this._deconflictGear(teamNames, optimized);
+    const loadouts = await this._deconflictGear(teamNames, optimized, bossCode);
 
     // Re-sim with deconflicted loadouts if any changed
     let finalWinrate = teamResult.winrate;
@@ -256,14 +350,14 @@ export class BossFightRoutine extends BaseRoutine {
         }
       }
       const reResult = await findBestTeam(
-        teamResult.team, this.bossCode,
+        teamResult.team, bossCode,
         { maxTeamSize: teamNames.length, minTeamSize: teamNames.length, fakeCharsByName: reFakeChars },
       );
       if (reResult) {
         finalWinrate = reResult.winrate;
-        if (finalWinrate < this.minWinrate) {
-          log.info(`[${TAG}] ${ctx.name}: Deconflicted winrate ${finalWinrate}% < ${this.minWinrate}% threshold`);
-          this._evalCooldownUntil = Date.now() + EVAL_COOLDOWN_MS;
+        if (finalWinrate < minWinrate) {
+          log.info(`[${TAG}] ${ctx.name}: Deconflicted winrate ${finalWinrate}% < ${minWinrate}% threshold for ${bossCode}`);
+          this._evalCooldownUntil.set(bossCode, Date.now() + EVAL_COOLDOWN_MS);
           return false;
         }
       }
@@ -273,7 +367,7 @@ export class BossFightRoutine extends BaseRoutine {
     const leaderName = teamNames[0];
     const participants = teamNames.slice(1);
     const newRally = bossRally.tryCreateRally({
-      bossCode: this.bossCode,
+      bossCode,
       location,
       leaderName,
       participants,
@@ -298,7 +392,7 @@ export class BossFightRoutine extends BaseRoutine {
 
   // --- Gear deconfliction ---
 
-  async _deconflictGear(teamNames, optimized) {
+  async _deconflictGear(teamNames, optimized, bossCode) {
     const finalLoadouts = new Map();
     const excludeBank = new Map();
 
@@ -312,7 +406,7 @@ export class BossFightRoutine extends BaseRoutine {
         const ctx = bossRally.getContext(name);
         if (ctx) {
           try {
-            const reOpt = await optimizeForMonster(ctx, this.bossCode, { excludeBank });
+            const reOpt = await optimizeForMonster(ctx, bossCode, { excludeBank });
             loadout = this._extractLoadoutCodes(reOpt?.loadout || opt.loadout);
           } catch {
             loadout = this._extractLoadoutCodes(opt.loadout);
@@ -377,7 +471,7 @@ export class BossFightRoutine extends BaseRoutine {
     }
 
     // Withdraw food from bank and register keep-codes
-    await this._withdrawFood(ctx);
+    await this._withdrawFood(ctx, rally.bossCode);
 
     // Rest to full HP
     await restUntil(ctx, 100);
@@ -403,7 +497,7 @@ export class BossFightRoutine extends BaseRoutine {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  async _withdrawFood(ctx) {
+  async _withdrawFood(ctx, bossCode) {
     const bankSummary = getBankSummary({ includeItems: true });
     if (!bankSummary?.items) return;
 
@@ -430,7 +524,7 @@ export class BossFightRoutine extends BaseRoutine {
     if (toWithdraw.length === 0) return;
 
     const result = await withdrawBankItems(ctx, toWithdraw, {
-      reason: `boss fight food for ${this.bossCode}`,
+      reason: `boss fight food for ${bossCode}`,
       mode: 'partial',
       retryStaleOnce: true,
     });
