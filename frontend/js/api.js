@@ -297,6 +297,10 @@ async function fetchConfigDetail() {
     };
     modalState.configDraft = parsed.value;
     modalState.configEditorText = envelope.rawJson;
+    if (typeof materializeConfigEditorDraftRoutines === 'function'
+        && materializeConfigEditorDraftRoutines(modalState.configDraft)) {
+      modalState.configEditorText = stringifyConfigEditorDraft(modalState.configDraft);
+    }
     modalState.configOptions = typeof normalizeConfigEditorOptions === 'function'
       ? normalizeConfigEditorOptions(optionsPayloadRaw)
       : (optionsPayloadRaw || {});

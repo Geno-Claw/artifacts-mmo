@@ -328,6 +328,28 @@ function ensureConfigEditorRoutineNode(draft, characterName, type) {
   return created;
 }
 
+function materializeConfigEditorDraftRoutines(draft) {
+  const characters = Array.isArray(draft?.characters) ? draft.characters : [];
+  const metadata = getConfigEditorRoutineMetadata();
+  let added = false;
+  for (const character of characters) {
+    if (!isConfigEditorObject(character)) continue;
+    if (!Array.isArray(character.routines)) character.routines = [];
+    const existingTypes = new Set(
+      character.routines
+        .filter(isConfigEditorObject)
+        .map((r) => safeText(r.type, ''))
+        .filter(Boolean),
+    );
+    for (const meta of metadata) {
+      if (existingTypes.has(meta.type)) continue;
+      character.routines.push(buildDefaultRoutineConfig(meta.type));
+      added = true;
+    }
+  }
+  return added;
+}
+
 function ensureConfigEditorSettingsNode(draft, characterName) {
   const character = ensureConfigEditorCharacterNode(draft, characterName);
   if (!character) return null;
