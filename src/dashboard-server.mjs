@@ -155,6 +155,7 @@ const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
   'characters[].routines.event.cooldownMs': '#/$defs/eventRoutine/properties/cooldownMs',
   'characters[].routines.bossFight.priority': '#/$defs/bossFightRoutine/properties/priority',
   'characters[].routines.bossFight.teamSize': '#/$defs/bossFightRoutine/properties/teamSize',
+  'characters[].routines.bossFight.minTeamSize': '#/$defs/bossFightRoutine/properties/minTeamSize',
   'characters[].routines.bossFight.repeat': '#/$defs/bossFightRoutine/properties/repeat',
   'characters[].routines.bossFight.maxFights': '#/$defs/bossFightRoutine/properties/maxFights',
   'characters[].routines.bossFight.orderDriven': '#/$defs/bossFightRoutine/properties/orderDriven',

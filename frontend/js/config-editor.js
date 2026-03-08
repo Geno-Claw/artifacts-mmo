@@ -59,6 +59,7 @@ const CONFIG_EDITOR_FALLBACK_ROUTINES = Object.freeze([
       type: 'bossFight',
       priority: 15,
       teamSize: 3,
+      minTeamSize: 3,
       repeat: true,
       maxFights: 0,
       orderDriven: false,
@@ -990,6 +991,7 @@ function renderConfigRoutineCard(character, routineMeta) {
     body = `
       <div class="config-field-grid">
         ${renderConfigSettingField('Team Size', fieldAttrs('teamSize'), getConfigEditorPathValue(routineConfig, 'teamSize', 3), 'number', 'min="2" max="3" step="1"', routineDesc('teamSize') || 'Maximum team size (2-3 characters, API max 3)')}
+        ${renderConfigSettingField('Min Team Size', fieldAttrs('minTeamSize'), getConfigEditorPathValue(routineConfig, 'minTeamSize', getConfigEditorPathValue(routineConfig, 'teamSize', 3)), 'number', 'min="2" max="3" step="1"', routineDesc('minTeamSize') || 'Preferred team size — only uses more if winrate is strictly better')}
         ${renderConfigSettingField('Repeat', fieldAttrs('repeat'), getConfigEditorPathValue(routineConfig, 'repeat', true) === true, 'checkbox', '', routineDesc('repeat'))}
         ${renderConfigSettingField('Max Fights', fieldAttrs('maxFights'), getConfigEditorPathValue(routineConfig, 'maxFights', 0), 'number', 'min="0" step="1"', routineDesc('maxFights') || 'Maximum fights per rally before stopping (0 = unlimited)')}
         ${renderConfigSettingField('Order Driven', fieldAttrs('orderDriven'), getConfigEditorPathValue(routineConfig, 'orderDriven', false) === true, 'checkbox', '', routineDesc('orderDriven') || 'Only rally when order board needs boss drops')}
