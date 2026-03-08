@@ -63,6 +63,7 @@ const CONFIG_EDITOR_FALLBACK_ROUTINES = Object.freeze([
       repeat: true,
       maxFights: 0,
       orderDriven: false,
+      teamStrategy: 'fast',
       bosses: [
         { code: 'king_slime', enabled: false, minWinrate: 80 },
         { code: 'lich', enabled: false, minWinrate: 80 },
@@ -763,9 +764,21 @@ function renderConfigCharacterIdentity(character) {
   `;
 }
 
-function renderConfigSettingField(label, attrs, value, type = 'number', extra = '', description = '') {
+function renderConfigSettingField(label, attrs, value, type = 'number', extra = '', description = '', options = null) {
   if (type === 'checkbox') {
     return configEditorCheckboxTag(label, value === true, attrs, description);
+  }
+
+  if (type === 'select' && Array.isArray(options)) {
+    const optionsHtml = options.map(o =>
+      `<option value="${escapeHtml(o.value)}"${o.value === value ? ' selected' : ''}>${escapeHtml(o.label)}</option>`
+    ).join('');
+    return `
+      <label class="config-field-block">
+        <span class="config-field-label">${renderConfigFieldLabelMarkup(label, description)}</span>
+        <select class="sandbox-input" ${attrs} ${extra}>${optionsHtml}</select>
+      </label>
+    `;
   }
 
   return `
@@ -995,6 +1008,7 @@ function renderConfigRoutineCard(character, routineMeta) {
         ${renderConfigSettingField('Repeat', fieldAttrs('repeat'), getConfigEditorPathValue(routineConfig, 'repeat', true) === true, 'checkbox', '', routineDesc('repeat'))}
         ${renderConfigSettingField('Max Fights', fieldAttrs('maxFights'), getConfigEditorPathValue(routineConfig, 'maxFights', 0), 'number', 'min="0" step="1"', routineDesc('maxFights') || 'Maximum fights per rally before stopping (0 = unlimited)')}
         ${renderConfigSettingField('Order Driven', fieldAttrs('orderDriven'), getConfigEditorPathValue(routineConfig, 'orderDriven', false) === true, 'checkbox', '', routineDesc('orderDriven') || 'Only rally when order board needs boss drops')}
+        ${renderConfigSettingField('Team Strategy', fieldAttrs('teamStrategy'), getConfigEditorPathValue(routineConfig, 'teamStrategy', 'fast'), 'select', '', routineDesc('teamStrategy') || 'Tiebreaker when teams have equal winrate: fast = fewest turns, xp = lowest total level', [{ value: 'fast', label: 'Fast (fewest turns)' }, { value: 'xp', label: 'XP (lowest level team)' }])}
       </div>
       <div class="config-boss-list">
         <div class="config-field-label" style="margin-bottom: 4px">${renderConfigFieldLabelMarkup('Bosses', routineDesc('bosses') || 'Per-boss enable/disable with individual min winrate')}</div>
