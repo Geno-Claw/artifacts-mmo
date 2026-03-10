@@ -6,10 +6,18 @@
  *   execute(char) → boolean — for loop routines: true=continue, false=stop
  */
 export class BaseRoutine {
-  constructor({ name, priority = 0, loop = false }) {
+  constructor({ name, type, priority = 0, loop = false, urgent = false }) {
     this.name = name;
+    this.configType = type || null;
     this.priority = priority;
     this.loop = loop;
+    this.urgent = urgent;
+    this._lastYieldReason = null;
+  }
+
+  /** Hot-reload: patch config fields in-place, preserving runtime state. */
+  updateConfig(_cfg) {
+    // Subclasses override to accept new config values.
   }
 
   canRun(_char) {
@@ -20,7 +28,43 @@ export class BaseRoutine {
     return true;
   }
 
+  effectivePriority(_ctx) {
+    return this.priority;
+  }
+
+  isUrgent(_ctx) {
+    return this.urgent === true;
+  }
+
+  /** Check if an urgent higher-priority routine needs to run. */
+  _hasUrgentPreemption(ctx) {
+    if (!this._peerRoutines) return false;
+    const ownPriority = this.effectivePriority(ctx);
+    return this._peerRoutines.some(
+      r => r !== this && r.effectivePriority(ctx) > ownPriority && r.isUrgent(ctx) && r.canRun(ctx),
+    );
+  }
+
   async execute(_char) {
     throw new Error(`${this.name}: execute() not implemented`);
+  }
+
+  _setYieldReason(reasonCode, data = null) {
+    this._lastYieldReason = {
+      reasonCode: `${reasonCode || 'unspecified'}`,
+      data,
+      atMs: Date.now(),
+    };
+  }
+
+  _yield(reasonCode, data = null, keepGoing = false) {
+    this._setYieldReason(reasonCode, data);
+    return keepGoing;
+  }
+
+  consumeYieldReason() {
+    const out = this._lastYieldReason;
+    this._lastYieldReason = null;
+    return out;
   }
 }

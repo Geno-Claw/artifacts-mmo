@@ -10,6 +10,7 @@ const {
   recordCooldown,
   recordLog,
   recordRoutineState,
+  queryUiCharacterLogs,
 } = uiState;
 
 function wait(ms) {
@@ -74,6 +75,7 @@ function assertDetailShape(detail, expectedName) {
     'equipment',
     'stats',
     'logHistory',
+    'interruptionHistory',
     'updatedAtMs',
   ], 'detail payload');
 
@@ -87,6 +89,7 @@ function assertDetailShape(detail, expectedName) {
   assert.ok(Array.isArray(detail.inventory), 'detail.inventory must be an array');
   assert.ok(Array.isArray(detail.equipment), 'detail.equipment must be an array');
   assert.ok(Array.isArray(detail.logHistory), 'detail.logHistory must be an array');
+  assert.ok(Array.isArray(detail.interruptionHistory), 'detail.interruptionHistory must be an array');
 
   for (const [idx, skill] of detail.skills.entries()) {
     assertHasKeys(skill, ['code', 'level', 'xp', 'maxXp', 'pct'], `detail.skills[${idx}]`);
@@ -143,6 +146,7 @@ async function run() {
     max_hp: 200,
     xp: 5600,
     max_xp: 8000,
+    gold: 5000,
     x: 3,
     y: 9,
     layer: 'overworld',
@@ -160,6 +164,7 @@ async function run() {
   assert.equal(afterChar.maxHp, 200);
   assert.equal(afterChar.xp, 5600);
   assert.equal(afterChar.maxXp, 8000);
+  assert.equal(afterChar.gold, 5000, 'gold should be included in SSE snapshot');
   assert.equal(afterChar.position.x, 3);
   assert.equal(afterChar.position.y, 9);
   assert.equal(afterChar.position.layer, 'overworld');
@@ -225,6 +230,28 @@ async function run() {
   assert.equal(afterLogs.logHistory.length, 20);
   assert.equal(afterLogs.logHistory[0].line, 'line-5');
   assert.equal(afterLogs.logLatest, 'line-24');
+
+  recordLog('Alpha', {
+    level: 'info',
+    line: 'preempted-sample',
+    at: 999,
+    scope: 'scheduler',
+    event: 'routine.preempted',
+    reasonCode: 'preempted_by_higher_priority',
+    routine: 'Skill Rotation',
+    runId: 12,
+    tickId: 34,
+  });
+  const queryRes = queryUiCharacterLogs('Alpha', {
+    level: 'info',
+    scope: 'scheduler',
+    event: 'routine.preempted',
+    reasonCode: 'preempted_by_higher_priority',
+    limit: 5,
+  });
+  assert.ok(queryRes, 'queryUiCharacterLogs should return payload');
+  assert.equal(queryRes.logs.length, 1, 'query should return preempted entry');
+  assert.equal(queryRes.logs[0].line, 'preempted-sample');
 
   recordCharacterSnapshot('Beta', {
     level: 1,
@@ -303,9 +330,89 @@ async function run() {
   assert.equal(detail.skills.some(skill => skill.code === 'mining'), true);
   assert.equal(detail.inventory.some(item => item.code === 'copper_ore'), true);
   assert.equal(detail.equipment.some(item => item.slot === 'weapon'), true);
-  assert.equal(detail.logHistory.length, 50, 'detail.logHistory should be capped at 50 entries');
+  assert.equal(detail.logHistory.length, 75, 'detail.logHistory should retain all 75 entries (cap is 500)');
   assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-74'), true);
-  assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-0'), false);
+  assert.equal(detail.logHistory.some(entry => entry.line === 'detail-history-0'), true);
+
+  // --- Cooldown extraction from character snapshot ---
+
+  _resetUiStateForTests();
+  initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+
+  // Future cooldown_expiration sets cooldown.endsAtMs
+  {
+    const futureMs = Date.now() + 15_000;
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown: 15,
+      cooldown_expiration: new Date(futureMs).toISOString(),
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.ok(snap.cooldown.endsAtMs > Date.now(), 'endsAtMs should be in the future');
+    assert.equal(snap.cooldown.totalSeconds, 15);
+  }
+
+  // Past cooldown_expiration does NOT update cooldown
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown: 0,
+      cooldown_expiration: new Date(Date.now() - 5000).toISOString(),
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.equal(snap.cooldown.endsAtMs, 0, 'past expiration should not set endsAtMs');
+  }
+
+  // Missing cooldown_expiration is harmless
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.equal(snap.cooldown.endsAtMs, 0, 'missing expiration should leave default');
+  }
+
+  // Invalid cooldown_expiration is harmless
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown_expiration: 'not-a-date',
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.equal(snap.cooldown.endsAtMs, 0, 'invalid expiration should leave default');
+  }
+
+  // recordCooldown with later expiration is NOT clobbered by earlier snapshot
+  {
+    _resetUiStateForTests();
+    initializeUiState({ characterNames: ['CdChar'], staleAfterMs: 60_000 });
+
+    recordCooldown('CdChar', {
+      action: 'fight',
+      totalSeconds: 30,
+      remainingSeconds: 30,
+      observedAt: Date.now(),
+    });
+    const afterCd = getChar(getUiSnapshot(), 'CdChar');
+    const laterEndsAt = afterCd.cooldown.endsAtMs;
+
+    // Snapshot with an earlier expiration should not overwrite
+    const earlierMs = Date.now() + 10_000;
+    recordCharacterSnapshot('CdChar', {
+      level: 5, hp: 50, max_hp: 100, xp: 0, max_xp: 100,
+      cooldown: 10,
+      cooldown_expiration: new Date(earlierMs).toISOString(),
+    });
+    const snap = getChar(getUiSnapshot(), 'CdChar');
+    assert.ok(snap.cooldown.endsAtMs >= laterEndsAt - 100, 'should not clobber later cooldown');
+    assert.equal(snap.cooldown.action, 'fight', 'should preserve action from recordCooldown');
+  }
 
   console.log('test-ui-state: PASS');
 }

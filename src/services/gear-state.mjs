@@ -3,17 +3,26 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
 import { getBankRevision, globalCount } from './inventory-manager.mjs';
-import { EQUIPMENT_SLOTS } from './game-data.mjs';
+import { getBestToolForSkillAtLevel, resolveItemOrderSource } from './tool-policy.mjs';
+import { computeDesiredPotionsForMonsters } from './potion-manager.mjs';
+import {
+  mapToObject as _mapToObject,
+  equipmentCountsOnCharacter as _equipmentCountsOnCharacter,
+  isToolItem as _isToolItem,
+} from './equipment-utils.mjs';
+import {
+  computeCharacterRequirements as _computeCharacterRequirements,
+  maxMergeCounts as _maxMergeCounts,
+} from './gear-requirements.mjs';
+import { computeFallbackClaims as _computeFallbackClaims } from './gear-fallback.mjs';
 
 const DEFAULT_GEAR_STATE_PATH = './report/gear-state.json';
-const STATE_VERSION = 1;
-const RESERVED_FREE_SLOTS = 10;
-const CARRY_SLOT_PRIORITY = ['weapon', 'shield', 'helmet', 'body_armor', 'leg_armor', 'boots', 'amulet', 'ring1', 'ring2'];
-const UTILITY_SLOTS = ['utility1_slot', 'utility2_slot'];
+const STATE_VERSION = 2;
 
 let initialized = false;
 let gearStatePath = process.env.GEAR_STATE_PATH || DEFAULT_GEAR_STATE_PATH;
@@ -31,28 +40,31 @@ let persistTimer = null;
 let persistWritePromise = Promise.resolve();
 let persistQueued = false;
 
+function getBestToolForSkillAtLevelSafe(skill, level) {
+  try {
+    return getBestToolForSkillAtLevel(skill, level);
+  } catch {
+    return null;
+  }
+}
+
 let _deps = {
   gameDataSvc: gameData,
   optimizeForMonsterFn: optimizeForMonster,
+  getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
   createOrMergeOrderFn: createOrMergeOrder,
   getBankRevisionFn: getBankRevision,
   globalCountFn: globalCount,
+  resolveItemOrderSourceFn: resolveItemOrderSource,
+  computeDesiredPotionsFn: computeDesiredPotionsForMonsters,
 };
 
 function nowMs() {
   return Date.now();
 }
 
-function toPositiveInt(value, fallback = 0) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
-
 function mapToObject(map) {
-  const entries = [...map.entries()].filter(([, qty]) => qty > 0);
-  entries.sort(([a], [b]) => a.localeCompare(b));
-  return Object.fromEntries(entries);
+  return _mapToObject(map);
 }
 
 function objectToMap(value) {
@@ -68,8 +80,12 @@ function objectToMap(value) {
 }
 
 function cloneStateRow(row) {
+  const available = row.available || row.owned || new Map();
+  const assigned = row.assigned || new Map();
   return {
-    owned: mapToObject(row.owned || new Map()),
+    available: mapToObject(available),
+    assigned: mapToObject(assigned),
+    owned: mapToObject(available),
     desired: mapToObject(row.desired || new Map()),
     required: mapToObject(row.required || new Map()),
     selectedMonsters: Array.isArray(row.selectedMonsters) ? [...row.selectedMonsters] : [],
@@ -97,10 +113,17 @@ function extractCharacterConfig(charCfg = {}) {
   const potionEnabled = potionSettings.enabled !== false && combatPotions.enabled !== false;
   const potionTargetQty = potionEnabled ? toPositiveInt(combatPotions.targetQuantity, 0) : 0;
 
+  const potionPoisonBias = potionEnabled ? combatPotions.poisonBias !== false : false;
+  const potionMonsterTypes = potionEnabled && Array.isArray(combatPotions.monsterTypes)
+    ? combatPotions.monsterTypes
+    : null;
+
   return {
     createOrders,
     potionEnabled,
     potionTargetQty,
+    potionPoisonBias,
+    potionMonsterTypes,
   };
 }
 
@@ -169,8 +192,11 @@ function queuePersistWrite() {
 }
 
 function normalizeLoadedCharacterState(name, raw = {}) {
+  const hasAvailableField = Object.prototype.hasOwnProperty.call(raw, 'available');
+  const loadedAvailable = hasAvailableField ? objectToMap(raw.available) : objectToMap(raw.owned);
   const row = {
-    owned: objectToMap(raw.owned),
+    available: loadedAvailable,
+    assigned: objectToMap(raw.assigned),
     desired: objectToMap(raw.desired),
     required: objectToMap(raw.required),
     selectedMonsters: Array.isArray(raw.selectedMonsters)
@@ -216,7 +242,8 @@ async function loadPersistedState(targetPath, atMs) {
     stateByChar = new Map();
     for (const name of characterOrder) {
       stateByChar.set(name, {
-        owned: new Map(),
+        available: new Map(),
+        assigned: new Map(),
         desired: new Map(),
         required: new Map(),
         selectedMonsters: [],
@@ -236,286 +263,61 @@ async function loadPersistedState(targetPath, atMs) {
   }
 }
 
-function countMapTotal(map) {
-  let total = 0;
-  for (const qty of map.values()) total += qty;
-  return total;
+
+export function equipmentCountsOnCharacter(ctx) {
+  return _equipmentCountsOnCharacter(ctx);
 }
 
-function maxMergeCounts(target, source) {
-  for (const [code, qty] of source.entries()) {
-    const current = target.get(code) || 0;
-    if (qty > current) target.set(code, qty);
-  }
+function summarizeMap(map, limit = 8) {
+  if (!(map instanceof Map) || map.size === 0) return 'none';
+  const entries = [...map.entries()]
+    .filter(([, qty]) => (Number(qty) || 0) > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return 'none';
+  const head = entries
+    .slice(0, limit)
+    .map(([code, qty]) => `${code}x${qty}`)
+    .join(', ');
+  const rest = entries.length - Math.min(entries.length, limit);
+  return rest > 0 ? `${head}, +${rest} more` : head;
 }
 
-function incrementCount(map, code, qty = 1) {
-  const n = toPositiveInt(qty);
-  if (!code || n <= 0) return;
-  map.set(code, (map.get(code) || 0) + n);
-}
-
-function countsFromLoadout(loadout) {
-  const counts = new Map();
-  for (const slot of CARRY_SLOT_PRIORITY) {
-    const code = loadout?.get(slot) || null;
-    if (!code) continue;
-    incrementCount(counts, code, 1);
-  }
-  return counts;
-}
-
-function countsFromTrimmedLoadout(loadout, budget) {
-  const counts = new Map();
-  let used = 0;
-
-  for (const slot of CARRY_SLOT_PRIORITY) {
-    if (used >= budget) break;
-    const code = loadout?.get(slot) || null;
-    if (!code) continue;
-    incrementCount(counts, code, 1);
-    used += 1;
-  }
-
-  return counts;
-}
-
-function isCovered(required, owned) {
-  for (const [code, qty] of required.entries()) {
-    if ((owned.get(code) || 0) < qty) return false;
-  }
-  return true;
-}
-
-function extraNeeded(current, required) {
-  const extra = new Map();
-  for (const [code, qty] of required.entries()) {
-    const have = current.get(code) || 0;
-    if (have >= qty) continue;
-    extra.set(code, qty - have);
-  }
-  return extra;
-}
-
-function mergeExtra(current, extra) {
-  for (const [code, qty] of extra.entries()) {
-    current.set(code, (current.get(code) || 0) + qty);
-  }
-}
-
-function compareMonsterRecords(a, b) {
-  if (a.level !== b.level) return b.level - a.level;
-  if (a.turns !== b.turns) return a.turns - b.turns;
-  return b.remainingHp - a.remainingHp;
-}
-
-function computePotionRequirements(ctx, cfg) {
-  const required = new Map();
-  if (!cfg?.potionEnabled || !cfg?.potionTargetQty) return required;
-
-  const char = ctx.get();
-  for (const slot of UTILITY_SLOTS) {
-    const code = char[slot] || null;
-    if (!code) continue;
-    incrementCount(required, code, cfg.potionTargetQty);
-  }
-
-  return required;
-}
-
-function equipmentCountsOnCharacter(ctx) {
-  const char = ctx.get();
-  const counts = new Map();
-  for (const slot of EQUIPMENT_SLOTS) {
-    const code = char[`${slot}_slot`] || null;
-    if (!code || code === 'none') continue;
-    incrementCount(counts, code, 1);
-  }
-  for (const slot of UTILITY_SLOTS) {
-    const code = char[slot] || null;
-    if (!code || code === 'none') continue;
-    const qty = Math.max(1, toPositiveInt(char[`${slot}_quantity`], 1));
-    incrementCount(counts, code, qty);
-  }
-  return counts;
-}
-
-function carriedCountForCode(ctx, equipmentCounts, code) {
-  return (ctx.itemCount(code) || 0) + (equipmentCounts.get(code) || 0);
+function summarizeCategoryMap(map) {
+  if (!(map instanceof Map) || map.size === 0) return 'none';
+  const entries = [...map.entries()]
+    .filter(([, qty]) => (Number(qty) || 0) > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return 'none';
+  return entries.map(([category, qty]) => `${category}:${qty}`).join(', ');
 }
 
 async function computeCharacterRequirements(name, ctx) {
-  const cfg = characterConfig.get(name) || { potionEnabled: false, potionTargetQty: 0 };
-  const level = toPositiveInt(ctx.get().level);
-  const capacity = Math.max(0, toPositiveInt(ctx.inventoryCapacity()));
-  const carryBudget = Math.max(0, capacity - RESERVED_FREE_SLOTS);
-
-  const allRecords = [];
-  const monsters = _deps.gameDataSvc.findMonstersByLevel(level);
-  for (const monster of monsters) {
-    const result = await _deps.optimizeForMonsterFn(ctx, monster.code);
-    if (!result?.simResult?.win) continue;
-    if (result.simResult.hpLostPercent > 90) continue;
-
-    allRecords.push({
-      monsterCode: monster.code,
-      level: toPositiveInt(monster.level),
-      turns: toPositiveInt(result.simResult.turns),
-      remainingHp: Number(result.simResult.remainingHp) || 0,
-      loadout: result.loadout,
-      counts: countsFromLoadout(result.loadout),
-    });
-  }
-
-  allRecords.sort(compareMonsterRecords);
-
-  const required = new Map();
-  for (const record of allRecords) {
-    maxMergeCounts(required, record.counts);
-  }
-
-  const potionRequired = computePotionRequirements(ctx, cfg);
-  maxMergeCounts(required, potionRequired);
-
-  const selected = new Map();
-  const selectedMonsters = [];
-  let bestTarget = null;
-
-  if (allRecords.length > 0 && carryBudget > 0) {
-    const best = allRecords[0];
-    bestTarget = best.monsterCode;
-
-    const baseCounts = countMapTotal(best.counts) > carryBudget
-      ? countsFromTrimmedLoadout(best.loadout, carryBudget)
-      : new Map(best.counts);
-
-    maxMergeCounts(selected, baseCounts);
-
-    const covered = new Set();
-    for (const record of allRecords) {
-      if (isCovered(record.counts, selected)) covered.add(record.monsterCode);
-    }
-
-    while (true) {
-      const currentTotal = countMapTotal(selected);
-      if (currentTotal >= carryBudget) break;
-
-      let bestChoice = null;
-      let bestExtra = null;
-      let bestCoverage = -1;
-      let bestExtraCost = Number.POSITIVE_INFINITY;
-
-      for (const record of allRecords) {
-        if (covered.has(record.monsterCode)) continue;
-
-        const extra = extraNeeded(selected, record.counts);
-        const extraCost = countMapTotal(extra);
-        if (extraCost <= 0) {
-          covered.add(record.monsterCode);
-          continue;
-        }
-        if ((currentTotal + extraCost) > carryBudget) continue;
-
-        const trial = new Map(selected);
-        mergeExtra(trial, extra);
-
-        let coverageGain = 0;
-        for (const candidate of allRecords) {
-          if (covered.has(candidate.monsterCode)) continue;
-          if (isCovered(candidate.counts, trial)) coverageGain += 1;
-        }
-
-        const better =
-          coverageGain > bestCoverage ||
-          (coverageGain === bestCoverage && record.level > (bestChoice?.level || 0)) ||
-          (coverageGain === bestCoverage && record.level === (bestChoice?.level || 0) && extraCost < bestExtraCost);
-
-        if (better) {
-          bestChoice = record;
-          bestExtra = extra;
-          bestCoverage = coverageGain;
-          bestExtraCost = extraCost;
-        }
-      }
-
-      if (!bestChoice || !bestExtra) break;
-
-      mergeExtra(selected, bestExtra);
-      for (const record of allRecords) {
-        if (covered.has(record.monsterCode)) continue;
-        if (isCovered(record.counts, selected)) covered.add(record.monsterCode);
-      }
-    }
-
-    for (const record of allRecords) {
-      if (isCovered(record.counts, selected)) selectedMonsters.push(record.monsterCode);
-    }
-  }
-
-  // Potions are lower priority than gear but still part of desired ownership when room allows.
-  if (carryBudget > 0) {
-    const currentTotal = () => countMapTotal(selected);
-    const potionEntries = [...potionRequired.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    for (const [code, qty] of potionEntries) {
-      const have = selected.get(code) || 0;
-      const need = Math.max(0, qty - have);
-      if (need <= 0) continue;
-
-      const remaining = Math.max(0, carryBudget - currentTotal());
-      if (remaining <= 0) break;
-
-      const addQty = Math.min(need, remaining);
-      if (addQty <= 0) continue;
-      selected.set(code, have + addQty);
-    }
-  }
-
-  if (!bestTarget && allRecords.length > 0) {
-    bestTarget = allRecords[0].monsterCode;
-  }
-
-  return {
-    selected,
-    required,
-    selectedMonsters,
-    bestTarget,
-    level,
-  };
+  const cfg = characterConfig.get(name) || { potionEnabled: false, potionTargetQty: 0, potionPoisonBias: false };
+  return _computeCharacterRequirements(name, ctx, cfg, {
+    gameDataSvc: _deps.gameDataSvc,
+    optimizeForMonsterFn: _deps.optimizeForMonsterFn,
+    getBestToolForSkillAtLevelFn: _deps.getBestToolForSkillAtLevelFn,
+    computeDesiredPotionsFn: cfg.potionEnabled ? _deps.computeDesiredPotionsFn : null,
+    logFn: (...args) => log.warn(...args),
+  });
 }
 
 function resolveDesiredOrderSource(itemCode) {
+  // Try craft source first (most common for gear and potions).
   const item = _deps.gameDataSvc.getItem(itemCode);
-
   if (item?.craft?.skill) {
     return {
       sourceType: 'craft',
       sourceCode: itemCode,
       sourceLevel: toPositiveInt(item.craft.level || item.level),
-      gatherSkill: null,
       craftSkill: item.craft.skill,
-    };
-  }
-
-  const resource = _deps.gameDataSvc.getResourceForDrop(itemCode);
-  if (resource) {
-    return {
-      sourceType: 'gather',
-      sourceCode: resource.code,
-      sourceLevel: toPositiveInt(resource.level),
-      gatherSkill: resource.skill,
-      craftSkill: null,
-    };
-  }
-
-  const monsterDrop = _deps.gameDataSvc.getMonsterForDrop(itemCode);
-  if (monsterDrop?.monster?.code) {
-    return {
-      sourceType: 'fight',
-      sourceCode: monsterDrop.monster.code,
-      sourceLevel: toPositiveInt(monsterDrop.monster.level),
       gatherSkill: null,
-      craftSkill: null,
     };
+  }
+
+  // Fallback to gather/fight sources via general resolver.
+  if (_deps.resolveItemOrderSourceFn) {
+    return _deps.resolveItemOrderSourceFn(itemCode);
   }
 
   return null;
@@ -551,7 +353,8 @@ export async function initializeGearState(opts = {}) {
   for (const name of characterOrder) {
     if (!stateByChar.has(name)) {
       stateByChar.set(name, {
-        owned: new Map(),
+        available: new Map(),
+        assigned: new Map(),
         desired: new Map(),
         required: new Map(),
         selectedMonsters: [],
@@ -597,6 +400,13 @@ export async function refreshGearState(opts = {}) {
   if (!initialized) return getGearStateSnapshot();
   if (!opts.force && !shouldRecompute()) return getGearStateSnapshot();
 
+  const previousAvailableByChar = new Map();
+  for (const name of characterOrder) {
+    const row = stateByChar.get(name);
+    const available = row?.available || row?.owned || new Map();
+    previousAvailableByChar.set(name, new Map(available));
+  }
+
   const selectedByChar = new Map();
   const requiredByChar = new Map();
   const selectedMonstersByChar = new Map();
@@ -631,8 +441,10 @@ export async function refreshGearState(opts = {}) {
   for (const name of characterOrder) {
     const selected = selectedByChar.get(name) || new Map();
     const required = requiredByChar.get(name) || new Map();
+    const ctx = contexts.get(name) || null;
+    const previousAvailable = previousAvailableByChar.get(name) || new Map();
 
-    const owned = new Map();
+    const assigned = new Map();
     const desired = new Map();
 
     for (const [code, qty] of selected.entries()) {
@@ -640,17 +452,55 @@ export async function refreshGearState(opts = {}) {
       if (need <= 0) continue;
 
       const available = availability.get(code) || 0;
-      const assigned = Math.min(need, available);
-      if (assigned > 0) owned.set(code, assigned);
+      const assignQty = Math.min(need, available);
+      if (assignQty > 0) assigned.set(code, assignQty);
 
-      const missing = need - assigned;
+      const missing = need - assignQty;
       if (missing > 0) desired.set(code, missing);
 
-      availability.set(code, Math.max(0, available - assigned));
+      availability.set(code, Math.max(0, available - assignQty));
+    }
+
+    // Filter out desired items the character already has equipped —
+    // no point ordering duplicates of what you're already wearing.
+    // But only when the optimizer's total selected qty <= equipped qty,
+    // meaning the character doesn't genuinely need extras (e.g. 2 ring slots).
+    if (ctx) {
+      const eqCounts = _equipmentCountsOnCharacter(ctx);
+      for (const [code, desiredQty] of [...desired.entries()]) {
+        const equippedQty = eqCounts.get(code) || 0;
+        if (equippedQty <= 0) continue;
+        const selectedQty = selected.get(code) || 0;
+        if (selectedQty > equippedQty) continue; // genuinely needs more than equipped
+        const reducedQty = desiredQty - equippedQty;
+        if (reducedQty <= 0) desired.delete(code);
+        else desired.set(code, reducedQty);
+      }
+    }
+
+    const {
+      fallbackClaims,
+      missingByCategory,
+      addedByCategory,
+    } = _computeFallbackClaims(ctx, desired, assigned, previousAvailable, availability, {
+      getItemFn: (code) => _deps.gameDataSvc.getItem(code),
+      globalCountFn: _deps.globalCountFn,
+    });
+
+    const available = new Map(assigned);
+    _maxMergeCounts(available, fallbackClaims);
+
+    if (ctx) {
+      log.info(
+        `[GearState] ${name}: assigned=${summarizeMap(assigned)} desired=${summarizeMap(desired)} ` +
+        `fallbackClaims=${summarizeMap(fallbackClaims)} missingByCategory=${summarizeCategoryMap(missingByCategory)} ` +
+        `fallbackByCategory=${summarizeCategoryMap(addedByCategory)}`,
+      );
     }
 
     stateByChar.set(name, {
-      owned,
+      available,
+      assigned,
       desired,
       required,
       selectedMonsters: selectedMonstersByChar.get(name) || [],
@@ -687,6 +537,10 @@ export function getGearStateSnapshot() {
   };
 }
 
+export function getTrackedCharacterNames() {
+  return [...characterOrder];
+}
+
 export function getCharacterGearState(name) {
   if (!name) return null;
   const row = stateByChar.get(name);
@@ -698,7 +552,21 @@ export function getOwnedMap(name) {
   if (!name) return new Map();
   const row = stateByChar.get(name);
   if (!row) return new Map();
-  return new Map(row.owned);
+  return new Map(row.available || row.owned || new Map());
+}
+
+export function getAvailableMap(name) {
+  if (!name) return new Map();
+  const row = stateByChar.get(name);
+  if (!row) return new Map();
+  return new Map(row.available || row.owned || new Map());
+}
+
+export function getAssignedMap(name) {
+  if (!name) return new Map();
+  const row = stateByChar.get(name);
+  if (!row) return new Map();
+  return new Map(row.assigned || new Map());
 }
 
 export function getDesiredMap(name) {
@@ -734,7 +602,7 @@ export function getOwnedDeficitRequests(ctx) {
   const requests = [];
 
   for (const [code, qty] of owned.entries()) {
-    const carried = carriedCountForCode(ctx, eqCounts, code);
+    const carried = (ctx.itemCount(code) || 0) + (eqCounts.get(code) || 0);
     const missing = Math.max(0, qty - carried);
     if (missing <= 0) continue;
     requests.push({ code, quantity: missing });
@@ -747,7 +615,7 @@ export function getClaimedTotal(code) {
   if (!code) return 0;
   let total = 0;
   for (const row of stateByChar.values()) {
-    total += row.owned.get(code) || 0;
+    total += (row.available || row.owned || new Map()).get(code) || 0;
   }
   return total;
 }
@@ -755,7 +623,8 @@ export function getClaimedTotal(code) {
 export function getClaimedTotalsMap() {
   const totals = new Map();
   for (const row of stateByChar.values()) {
-    for (const [code, qty] of row.owned.entries()) {
+    const available = row.available || row.owned || new Map();
+    for (const [code, qty] of available.entries()) {
       totals.set(code, (totals.get(code) || 0) + qty);
     }
   }
@@ -778,25 +647,47 @@ export function publishDesiredOrdersForCharacter(name) {
   let created = 0;
 
   for (const [itemCode, qty] of row.desired.entries()) {
+    const missingQty = toPositiveInt(qty);
+    if (missingQty <= 0) continue;
+    const item = _deps.gameDataSvc.getItem(itemCode);
+    if (_isToolItem(item)) continue;
+
     const source = resolveDesiredOrderSource(itemCode);
     if (!source) continue;
 
     try {
-      _deps.createOrMergeOrderFn({
+      const order = _deps.createOrMergeOrderFn({
         requesterName: name,
         recipeCode: `gear_state:${name}:${itemCode}`,
         itemCode,
         sourceType: source.sourceType,
         sourceCode: source.sourceCode,
-        gatherSkill: source.gatherSkill,
-        craftSkill: source.craftSkill,
+        craftSkill: source.craftSkill || null,
+        gatherSkill: source.gatherSkill || null,
         sourceLevel: source.sourceLevel,
-        quantity: qty,
+        quantity: missingQty,
       });
-      created += 1;
+      if (order) created += 1;
     } catch (err) {
       log.warn(`[GearState] Could not create desired order for ${name} ${itemCode}: ${err?.message || String(err)}`);
     }
+  }
+
+  return created;
+}
+
+export function publishDesiredOrdersForTrackedCharacters(names = null) {
+  if (!initialized) return 0;
+
+  const sourceNames = Array.isArray(names) ? names : characterOrder;
+  const seen = new Set();
+  let created = 0;
+
+  for (const rawName of sourceNames) {
+    const name = `${rawName || ''}`.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    created += publishDesiredOrdersForCharacter(name);
   }
 
   return created;
@@ -809,6 +700,36 @@ export async function flushGearState() {
     persistTimer = null;
   }
   await queuePersistWrite();
+}
+
+export function clearGearState(reason = 'manual_clear') {
+  if (!initialized) return { cleared: 0 };
+
+  let cleared = 0;
+  for (const name of characterOrder) {
+    if (!stateByChar.has(name)) continue;
+    cleared += 1;
+    stateByChar.set(name, {
+      available: new Map(),
+      assigned: new Map(),
+      desired: new Map(),
+      required: new Map(),
+      selectedMonsters: [],
+      bestTarget: null,
+      levelSnapshot: 0,
+      bankRevisionSnapshot: 0,
+    });
+  }
+
+  lastBankRevision = -1;
+  for (const name of characterOrder) {
+    lastLevelSnapshot.set(name, 0);
+  }
+
+  markUpdated();
+  schedulePersist();
+  log.info(`[GearState] Cleared state for ${cleared} character(s): ${reason}`);
+  return { cleared };
 }
 
 export function _resetGearStateForTests() {
@@ -834,9 +755,12 @@ export function _resetGearStateForTests() {
   _deps = {
     gameDataSvc: gameData,
     optimizeForMonsterFn: optimizeForMonster,
+    getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
     createOrMergeOrderFn: createOrMergeOrder,
     getBankRevisionFn: getBankRevision,
     globalCountFn: globalCount,
+    resolveItemOrderSourceFn: resolveItemOrderSource,
+    computeDesiredPotionsFn: computeDesiredPotionsForMonsters,
   };
 }
 

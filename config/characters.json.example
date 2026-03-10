@@ -1,0 +1,499 @@
+{
+  "$schema": "./characters.schema.json",
+  "combat": {
+    "winRateThreshold": 90
+  },
+  "npcBuyList": {
+    "_any": [
+      {
+        "code": "recall_potion",
+        "maxTotal": 5
+      },
+      {
+        "code": "forest_bank_potion",
+        "maxTotal": 5
+      }
+    ],
+    "nomadic_merchant": [
+      {
+        "code": "minor_health_potion",
+        "maxTotal": 1
+      },
+      {
+        "code": "small_antidote",
+        "maxTotal": 1
+      }
+    ],
+    "herbal_merchant": [
+      {
+        "code": "glowstem_leaf",
+        "maxTotal": 10
+      }
+    ],
+    "gemstone_merchant": [
+      {
+        "code": "coal",
+        "maxTotal": 10
+      }
+    ],
+    "timber_merchant": [],
+    "fish_merchant": []
+  },
+  "npcSellList": {
+    "nomadic_merchant": [
+      {
+        "code": "old_boots",
+        "keepInBank": 0
+      }
+    ]
+  },
+  "events": {
+    "gatherResources": []
+  },
+  "characters": [
+    {
+      "name": "GenoClaw",
+      "routines": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0,
+          "sellToVendor": true,
+          "sellOnGE": true,
+          "depositGold": true
+        },
+        {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
+          "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true,
+          "npcEvents": true
+        },
+        {
+          "type": "completeTask"
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 1,
+            "alchemy": 0,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 0,
+            "npc_task": 1,
+            "item_task": 0,
+            "achievement": 2
+          },
+          "goals": {
+            "mining": 100,
+            "woodcutting": 100,
+            "fishing": 100,
+            "cooking": 100,
+            "alchemy": 20,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 50,
+            "npc_task": 50,
+            "item_task": 50,
+            "achievement": 30
+          },
+          "orderBoard": {
+            "enabled": true
+          },
+          "craftBlacklist": {},
+          "taskCollection": {}
+        }
+      ],
+      "settings": {
+        "potions": {
+          "enabled": true,
+          "combat": {
+            "enabled": true,
+            "refillBelow": 1,
+            "targetQuantity": 20,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "GenoClaw2",
+      "routines": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0,
+          "sellToVendor": true,
+          "sellOnGE": true,
+          "depositGold": true
+        },
+        {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
+          "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true,
+          "npcEvents": true
+        },
+        {
+          "type": "completeTask"
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 1,
+            "alchemy": 2,
+            "weaponcrafting": 0,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 0,
+            "npc_task": 0,
+            "item_task": 0,
+            "achievement": 1
+          },
+          "goals": {
+            "mining": 50,
+            "woodcutting": 50,
+            "fishing": 50,
+            "cooking": 50,
+            "alchemy": 50,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 50,
+            "item_task": 50,
+            "achievement": 30
+          },
+          "orderBoard": {
+            "enabled": true
+          },
+          "craftBlacklist": {},
+          "taskCollection": {}
+        }
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "GenoClaw3",
+      "routines": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0,
+          "sellToVendor": true,
+          "sellOnGE": true,
+          "depositGold": true
+        },
+        {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
+          "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true,
+          "npcEvents": true
+        },
+        {
+          "type": "completeTask"
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 0,
+            "alchemy": 0,
+            "weaponcrafting": 5,
+            "gearcrafting": 0,
+            "jewelrycrafting": 0,
+            "combat": 1,
+            "npc_task": 0,
+            "item_task": 0,
+            "achievement": 1
+          },
+          "goals": {
+            "mining": 20,
+            "woodcutting": 20,
+            "fishing": 50,
+            "cooking": 50,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 1,
+            "achievement": 30
+          },
+          "orderBoard": {
+            "enabled": true
+          },
+          "craftBlacklist": {}
+        }
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "GenoClaw4",
+      "routines": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0,
+          "sellToVendor": true,
+          "sellOnGE": true,
+          "depositGold": true
+        },
+        {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
+          "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true,
+          "npcEvents": true
+        },
+        {
+          "type": "completeTask"
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 0,
+            "alchemy": 0,
+            "weaponcrafting": 5,
+            "gearcrafting": 0,
+            "jewelrycrafting": 1,
+            "combat": 0,
+            "npc_task": 0,
+            "item_task": 0,
+            "achievement": 0
+          },
+          "goals": {
+            "mining": 20,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 10,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 1,
+            "achievement": 30
+          },
+          "orderBoard": {
+            "enabled": true
+          },
+          "craftBlacklist": {}
+        }
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "GenoClaw5",
+      "routines": [
+        {
+          "type": "rest",
+          "triggerPct": 40,
+          "targetPct": 80
+        },
+        {
+          "type": "depositBank",
+          "threshold": 0,
+          "sellToVendor": true,
+          "sellOnGE": true,
+          "depositGold": true
+        },
+        {
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.9,
+          "type": "bankExpansion"
+        },
+        {
+          "type": "event",
+          "enabled": true,
+          "monsterEvents": true,
+          "resourceEvents": true,
+          "npcEvents": true
+        },
+        {
+          "type": "completeTask"
+        },
+        {
+          "type": "skillRotation",
+          "weights": {
+            "mining": 0,
+            "woodcutting": 0,
+            "fishing": 0,
+            "cooking": 0,
+            "alchemy": 0,
+            "weaponcrafting": 1,
+            "gearcrafting": 1,
+            "jewelrycrafting": 0,
+            "combat": 0,
+            "npc_task": 0,
+            "item_task": 0,
+            "achievement": 0
+          },
+          "goals": {
+            "mining": 50,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 10,
+            "alchemy": 10,
+            "weaponcrafting": 5,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "combat": 25,
+            "npc_task": 25,
+            "achievement": 30
+          },
+          "orderBoard": {
+            "enabled": true
+          },
+          "craftBlacklist": {}
+        }
+      ],
+      "settings": {
+        "potions": {
+          "enabled": false,
+          "combat": {
+            "enabled": false,
+            "refillBelow": 2,
+            "targetQuantity": 5,
+            "poisonBias": true,
+            "respectNonPotionUtility": true
+          },
+          "bankTravel": {
+            "enabled": false,
+            "mode": "smart",
+            "allowRecall": true,
+            "allowForestBank": true,
+            "minSavingsSeconds": 60,
+            "includeReturnToOrigin": true,
+            "moveSecondsPerTile": 5,
+            "itemUseSeconds": 3
+          }
+        }
+      }
+    }
+  ]
+}

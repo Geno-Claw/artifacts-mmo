@@ -2,13 +2,76 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Artifacts MMO Bot Characters Config",
   "type": "object",
-  "required": ["characters"],
+  "required": [
+    "characters"
+  ],
   "properties": {
+    "combat": {
+      "$ref": "#/$defs/combatConfig"
+    },
+    "events": {
+      "$ref": "#/$defs/eventsConfig"
+    },
+    "npcBuyList": {
+      "type": "object",
+      "description": "Items to buy from NPC merchants during events. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for all NPCs. Currency is detected from NPC catalog metadata and may be gold or another item code.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "code",
+            "maxTotal"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Item code to purchase"
+            },
+            "maxTotal": {
+              "type": "number",
+              "minimum": 1,
+              "description": "Maximum total quantity across bank + all inventories. Stops buying when globalCount >= this."
+            }
+          }
+        }
+      }
+    },
+    "npcSellList": {
+      "type": "object",
+      "description": "Items to sell to NPC merchants. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for best-offer routing. `keepInBank` preserves a bank reserve and sells the rest to NPC vendors when available.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Item code to sell"
+            },
+            "keepInBank": {
+              "type": "number",
+              "minimum": 0,
+              "default": 0,
+              "description": "Quantity to retain in bank before selling the surplus"
+            }
+          }
+        }
+      }
+    },
     "characters": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "routines"],
+        "required": [
+          "name",
+          "routines"
+        ],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -28,17 +91,51 @@
             "description": "Routines in priority order (highest priority = checked first)",
             "items": {
               "oneOf": [
-                { "$ref": "#/$defs/restRoutine" },
-                { "$ref": "#/$defs/depositBankRoutine" },
-                { "$ref": "#/$defs/skillRotationRoutine" },
-                { "$ref": "#/$defs/fightMonstersRoutine" },
-                { "$ref": "#/$defs/gatherResourceRoutine" },
-                { "$ref": "#/$defs/gatherMaterialsRoutine" },
-                { "$ref": "#/$defs/craftGearRoutine" },
-                { "$ref": "#/$defs/acceptNpcTaskRoutine" },
-                { "$ref": "#/$defs/completeNpcTaskRoutine" },
-                { "$ref": "#/$defs/fightTaskMonsterRoutine" },
-                { "$ref": "#/$defs/cancelNpcTaskRoutine" }
+                {
+                  "$ref": "#/$defs/restRoutine"
+                },
+                {
+                  "$ref": "#/$defs/depositBankRoutine"
+                },
+                {
+                  "$ref": "#/$defs/bankExpansionRoutine"
+                },
+                {
+                  "$ref": "#/$defs/eventRoutine"
+                },
+                {
+                  "$ref": "#/$defs/bossFightRoutine"
+                },
+                {
+                  "$ref": "#/$defs/skillRotationRoutine"
+                },
+                {
+                  "$ref": "#/$defs/orderFulfillmentRoutine"
+                },
+                {
+                  "$ref": "#/$defs/fightMonstersRoutine"
+                },
+                {
+                  "$ref": "#/$defs/gatherResourceRoutine"
+                },
+                {
+                  "$ref": "#/$defs/gatherMaterialsRoutine"
+                },
+                {
+                  "$ref": "#/$defs/craftGearRoutine"
+                },
+                {
+                  "$ref": "#/$defs/acceptNpcTaskRoutine"
+                },
+                {
+                  "$ref": "#/$defs/completeTaskRoutine"
+                },
+                {
+                  "$ref": "#/$defs/fightTaskMonsterRoutine"
+                },
+                {
+                  "$ref": "#/$defs/cancelNpcTaskRoutine"
+                }
               ]
             }
           }
@@ -47,132 +144,555 @@
     }
   },
   "$defs": {
+    "combatConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Global combat simulation settings shared across all characters",
+      "properties": {
+        "winRateThreshold": {
+          "type": "number",
+          "default": 90,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimum combat simulation win rate percentage required to consider a fight viable"
+        }
+      }
+    },
+    "eventsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Global event settings shared across all characters",
+      "properties": {
+        "gatherResources": {
+          "type": "array",
+          "description": "Resource content codes to gather from events. All characters with event routine enabled will respond. Empty = gather all resource events.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
     "characterSettings": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "potions": { "$ref": "#/$defs/potionSettings" }
+        "potions": {
+          "$ref": "#/$defs/potionSettings"
+        }
       }
     },
-
     "potionSettings": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": true, "description": "Global potion automation toggle" },
-        "combat": { "$ref": "#/$defs/combatPotionSettings" },
-        "bankTravel": { "$ref": "#/$defs/bankTravelPotionSettings" }
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Global potion automation toggle"
+        },
+        "combat": {
+          "$ref": "#/$defs/combatPotionSettings"
+        },
+        "bankTravel": {
+          "$ref": "#/$defs/bankTravelPotionSettings"
+        }
       }
     },
-
     "combatPotionSettings": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": false, "description": "Enable combat utility potion prep" },
-        "refillBelow": { "type": "number", "minimum": 0, "default": 2, "description": "Refill a utility slot when quantity drops below this value" },
-        "targetQuantity": { "type": "number", "minimum": 1, "maximum": 100, "default": 5, "description": "Target utility quantity per equipped potion slot" },
-        "poisonBias": { "type": "boolean", "default": true, "description": "Prefer antidotes against poison monsters when scores are close" },
-        "respectNonPotionUtility": { "type": "boolean", "default": true, "description": "Avoid replacing non-potion utility items automatically" }
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable combat utility potion prep"
+        },
+        "refillBelow": {
+          "type": "number",
+          "minimum": 0,
+          "default": 2,
+          "description": "Refill a utility slot when quantity drops below this value"
+        },
+        "targetQuantity": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 5,
+          "description": "Target utility quantity per equipped potion slot"
+        },
+        "poisonBias": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefer antidotes against poison monsters when scores are close"
+        },
+        "respectNonPotionUtility": {
+          "type": "boolean",
+          "default": true,
+          "description": "Avoid replacing non-potion utility items automatically"
+        },
+        "monsterTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "elite",
+              "boss"
+            ]
+          },
+          "default": [
+            "elite",
+            "boss"
+          ],
+          "description": "Monster types to use combat potions against"
+        }
       }
     },
-
     "bankTravelPotionSettings": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": false, "description": "Enable smart travel potion usage for bank trips" },
-        "mode": { "type": "string", "enum": ["smart"], "default": "smart", "description": "Travel potion strategy mode" },
-        "allowRecall": { "type": "boolean", "default": true, "description": "Allow recall_potion as a travel option" },
-        "allowForestBank": { "type": "boolean", "default": true, "description": "Allow forest_bank_potion as a travel option" },
-        "minSavingsSeconds": { "type": "number", "minimum": 0, "default": 60, "description": "Minimum modeled seconds saved before using a potion" },
-        "includeReturnToOrigin": { "type": "boolean", "default": true, "description": "Include return-to-origin movement in travel optimization model" },
-        "moveSecondsPerTile": { "type": "number", "minimum": 0, "default": 5, "description": "Estimated move cooldown seconds per tile" },
-        "itemUseSeconds": { "type": "number", "minimum": 0, "default": 3, "description": "Estimated cooldown seconds for using a travel potion" }
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable smart travel potion usage for bank trips"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "smart"
+          ],
+          "default": "smart",
+          "description": "Travel potion strategy mode"
+        },
+        "allowRecall": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow recall_potion as a travel option"
+        },
+        "allowForestBank": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow forest_bank_potion as a travel option"
+        },
+        "minSavingsSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 60,
+          "description": "Minimum modeled seconds saved before using a potion"
+        },
+        "includeReturnToOrigin": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include return-to-origin movement in travel optimization model"
+        },
+        "moveSecondsPerTile": {
+          "type": "number",
+          "minimum": 0,
+          "default": 5,
+          "description": "Estimated move cooldown seconds per tile"
+        },
+        "itemUseSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 3,
+          "description": "Estimated cooldown seconds for using a travel potion"
+        }
       }
     },
-
     "skillName": {
       "type": "string",
       "enum": [
-        "mining", "woodcutting", "fishing",
-        "cooking", "alchemy", "weaponcrafting", "gearcrafting", "jewelrycrafting",
-        "combat", "npc_task", "item_task"
+        "mining",
+        "woodcutting",
+        "fishing",
+        "cooking",
+        "alchemy",
+        "weaponcrafting",
+        "gearcrafting",
+        "jewelrycrafting",
+        "combat",
+        "npc_task",
+        "item_task",
+        "achievement"
       ]
     },
-
     "restRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "rest" },
-        "priority": { "type": "number", "default": 100, "description": "Execution priority (default 100)" },
-        "triggerPct": { "type": "number", "default": 40, "description": "HP % below which to start resting" },
-        "targetPct": { "type": "number", "default": 80, "description": "HP % to rest up to" }
+        "type": {
+          "const": "rest"
+        },
+        "priority": {
+          "type": "number",
+          "default": 100,
+          "description": "Execution priority (default 100)"
+        },
+        "triggerPct": {
+          "type": "number",
+          "default": 40,
+          "description": "HP % below which to start resting"
+        },
+        "targetPct": {
+          "type": "number",
+          "default": 80,
+          "description": "HP % to rest up to"
+        }
       }
     },
-
     "depositBankRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "depositBank" },
-        "priority": { "type": "number", "default": 50, "description": "Execution priority (default 50)" },
-        "threshold": { "type": "number", "default": 0.8, "minimum": 0, "description": "Inventory fullness ratio to trigger deposit (0.0-1.0); 0 = deposit after every action" },
-        "sellOnGE": { "type": "boolean", "default": true, "description": "Sell whitelisted items on Grand Exchange during deposit (alwaysSell rules only)" },
-        "recycleEquipment": { "type": "boolean", "default": true, "description": "Recycle surplus equipment at workshops during deposit" },
-        "depositGold": { "type": "boolean", "default": true, "description": "Deposit gold to bank" }
+        "type": {
+          "const": "depositBank"
+        },
+        "priority": {
+          "type": "number",
+          "default": 50,
+          "description": "Execution priority (default 50)"
+        },
+        "threshold": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0,
+          "description": "Inventory fullness ratio to trigger deposit (0.0-1.0); 0 = deposit after every action"
+        },
+        "sellOnGE": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sell GE candidates during deposit, including duplicate gear disposal plus any alwaysSell overrides"
+        },
+        "sellToVendor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sell NPC-eligible items to vendors during deposit before considering GE"
+        },
+        "recycleEquipment": {
+          "type": "boolean",
+          "default": true,
+          "description": "Recycle surplus equipment at workshops during deposit"
+        },
+        "depositGold": {
+          "type": "boolean",
+          "default": true,
+          "description": "Deposit gold to bank"
+        }
       }
     },
-
-    "skillRotationRoutine": {
+    "bankExpansionRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "skillRotation" },
-        "priority": { "type": "number", "default": 5, "description": "Execution priority (default 5, lowest)" },
-        "maxLosses": { "type": "number", "default": 2, "description": "Consecutive combat losses before rotating to another skill" },
+        "type": {
+          "const": "bankExpansion"
+        },
+        "priority": {
+          "type": "number",
+          "default": 45,
+          "description": "Execution priority (default 45, between depositBank and skillRotation)"
+        },
+        "checkIntervalMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 10000,
+          "description": "Minimum milliseconds between bank capacity checks (default 5 min)"
+        },
+        "maxGoldPct": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Only buy expansion if cost <= this fraction of total gold (bank + character)"
+        },
+        "goldBuffer": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Minimum gold to keep after purchase (bank + character). 0 = no minimum."
+        }
+      }
+    },
+    "eventRoutine": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "event"
+        },
+        "priority": {
+          "type": "number",
+          "default": 90,
+          "description": "Execution priority (default 90, between rest and bank)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable event participation"
+        },
+        "monsterEvents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Participate in monster spawn events"
+        },
+        "resourceEvents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Participate in resource node events"
+        },
+        "npcEvents": {
+          "type": "boolean",
+          "default": false,
+          "description": "Participate in NPC merchant events"
+        },
+        "minTimeRemainingMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 10000,
+          "description": "Minimum event time remaining (ms) before participating"
+        },
+        "maxMonsterType": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "elite"
+          ],
+          "default": "elite",
+          "description": "Maximum monster type to attempt solo (boss requires group, deferred)"
+        },
+        "cooldownMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 0,
+          "description": "Per-event cooldown (ms) between participation attempts"
+        }
+      }
+    },
+    "bossFightRoutine": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "bossFight"
+        },
+        "priority": {
+          "type": "number",
+          "default": 15,
+          "description": "Execution priority (default 15)"
+        },
+        "teamSize": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "maximum": 3,
+          "description": "Maximum team size (2-3 characters, API max is 3)"
+        },
+        "minTeamSize": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "maximum": 3,
+          "description": "Minimum team size required to start a boss fight (won't attempt with fewer)"
+        },
+        "repeat": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to repeat the fight after completion"
+        },
+        "maxFights": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Maximum fights per rally before stopping (0 = unlimited)"
+        },
+        "orderDriven": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, only rally a boss if the order board has an active order requiring its drops (directly or as crafting ingredients)"
+        },
+        "teamStrategy": {
+          "type": "string",
+          "enum": ["fast", "xp"],
+          "default": "fast",
+          "description": "Tiebreaker when teams have equal winrate. 'fast' picks fewest avg turns, 'xp' picks lowest total team level (to maximize XP from level-gated rewards)"
+        },
+        "bosses": {
+          "type": "array",
+          "description": "Per-boss configuration. Each entry controls whether this character will fight that boss and the minimum winrate required.",
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["king_slime", "lich", "goblin_priestess", "cultist_emperor", "rosenblood", "duskworm", "sandwhisper_empress"],
+                "description": "Boss monster code"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Enable/disable fighting this boss"
+              },
+              "minWinrate": {
+                "type": "number",
+                "default": 80,
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Minimum simulated win rate to attempt this boss"
+              }
+            }
+          },
+          "default": [
+            { "code": "king_slime", "enabled": false, "minWinrate": 80 },
+            { "code": "lich", "enabled": false, "minWinrate": 80 },
+            { "code": "goblin_priestess", "enabled": false, "minWinrate": 80 },
+            { "code": "cultist_emperor", "enabled": false, "minWinrate": 80 },
+            { "code": "rosenblood", "enabled": false, "minWinrate": 80 },
+            { "code": "duskworm", "enabled": false, "minWinrate": 80 },
+            { "code": "sandwhisper_empress", "enabled": false, "minWinrate": 80 }
+          ]
+        }
+      }
+    },
+    "skillRotationRoutine": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "skillRotation"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable skill rotation for this character"
+        },
+        "priority": {
+          "type": "number",
+          "default": 5,
+          "description": "Execution priority (default 5, lowest)"
+        },
+        "maxLosses": {
+          "type": "number",
+          "default": 2,
+          "description": "Consecutive combat losses before rotating to another skill"
+        },
         "skills": {
           "type": "array",
           "description": "Skills to rotate between (ignored if weights is set)",
-          "items": { "$ref": "#/$defs/skillName" }
+          "items": {
+            "$ref": "#/$defs/skillName"
+          }
         },
         "weights": {
           "type": "object",
           "description": "Weighted skill selection. Keys are skill names, values are relative weights. Higher weight = picked more often. Skills not listed are disabled. Overrides 'skills' array. Note: alchemy is hybrid (crafting first, gathering fallback when no viable recipe is available).",
-          "propertyNames": { "$ref": "#/$defs/skillName" },
-          "additionalProperties": { "type": "number", "minimum": 0 }
+          "propertyNames": {
+            "$ref": "#/$defs/skillName"
+          },
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
         },
         "goals": {
           "type": "object",
           "description": "Target count per skill before rotating. Gathering/combat = action count, crafting = items crafted. Alchemy may progress from both gathered resources and crafted outputs depending on mode.",
-          "propertyNames": { "$ref": "#/$defs/skillName" },
-          "additionalProperties": { "type": "number", "minimum": 1 },
+          "propertyNames": {
+            "$ref": "#/$defs/skillName"
+          },
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 1
+          },
           "default": {
-            "mining": 20, "woodcutting": 20, "fishing": 20,
-            "cooking": 5, "alchemy": 5,
-            "weaponcrafting": 2, "gearcrafting": 2, "jewelrycrafting": 2,
-            "combat": 10, "npc_task": 1
+            "mining": 20,
+            "woodcutting": 20,
+            "fishing": 20,
+            "cooking": 5,
+            "alchemy": 5,
+            "weaponcrafting": 2,
+            "gearcrafting": 2,
+            "jewelrycrafting": 2,
+            "combat": 10,
+            "npc_task": 1
           }
         },
         "craftBlacklist": {
           "type": "object",
           "description": "Per-skill item blacklists. Item codes to never craft for XP grinding (upgrades are unaffected).",
-          "propertyNames": { "$ref": "#/$defs/skillName" },
+          "propertyNames": {
+            "$ref": "#/$defs/skillName"
+          },
           "additionalProperties": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "default": {}
         },
         "taskCollection": {
           "type": "object",
           "description": "Target quantities for task exchange reward items. Keys are item codes, values are desired quantities to accumulate in bank. Also works dynamically — crafting recipes with unmet bank deps that are task rewards will auto-trigger exchanges. Empty object enables dynamic-only mode.",
-          "additionalProperties": { "type": "number", "minimum": 1 },
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 1
+          },
           "default": {}
+        },
+        "achievementTypes": {
+          "type": "array",
+          "description": "Achievement objective types to pursue. Default: combat_kill, gathering, combat_drop, crafting, task. Types like use, recycling, npc_buy, npc_sell complete naturally and are excluded by default.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "combat_kill",
+              "gathering",
+              "crafting",
+              "combat_drop",
+              "use",
+              "recycling",
+              "task",
+              "npc_buy",
+              "npc_sell"
+            ]
+          },
+          "default": [
+            "combat_kill",
+            "gathering",
+            "combat_drop",
+            "crafting",
+            "task"
+          ]
+        },
+        "achievementBlacklist": {
+          "type": "array",
+          "description": "Achievement codes to never pursue (e.g., achievements requiring inaccessible content).",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         },
         "orderBoard": {
           "type": "object",
@@ -187,12 +707,12 @@
             "createOrders": {
               "type": "boolean",
               "default": false,
-              "description": "Allow posting orders when this character cannot self-obtain required gather/fight crafting dependencies"
+              "description": "Allow posting orders when this character cannot self-obtain required gather/fight/task-exchange crafting dependencies"
             },
             "fulfillOrders": {
               "type": "boolean",
               "default": false,
-              "description": "Allow claiming and fulfilling board orders during gather/combat rotation loops"
+              "description": "Allow claiming and fulfilling board orders during gather/combat/task-exchange rotation loops"
             },
             "leaseMs": {
               "type": "number",
@@ -217,89 +737,239 @@
         }
       }
     },
-
+    "orderFulfillmentRoutine": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "orderFulfillment"
+        },
+        "priority": {
+          "type": "number",
+          "default": 8,
+          "description": "Execution priority (default 8, above skillRotation)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable dedicated order fulfillment behavior for this character"
+        },
+        "maxLosses": {
+          "type": "number",
+          "default": 2,
+          "description": "Consecutive combat losses before blocking a fight/craft claim"
+        },
+        "craftScanLimit": {
+          "type": "number",
+          "minimum": 1,
+          "default": 1,
+          "description": "Max number of blocked craft orders expanded into prerequisites per execute cycle"
+        },
+        "orderBoard": {
+          "type": "object",
+          "description": "Order board settings for dedicated order fulfillment.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Legacy master toggle; when true, both createOrders and fulfillOrders default to true unless explicitly overridden"
+            },
+            "createOrders": {
+              "type": "boolean",
+              "default": true,
+              "description": "Allow posting prerequisite board orders when blocked craft orders cannot be fulfilled directly"
+            },
+            "fulfillOrders": {
+              "type": "boolean",
+              "default": true,
+              "description": "Allow claiming and fulfilling board orders in this routine"
+            },
+            "leaseMs": {
+              "type": "number",
+              "minimum": 1000,
+              "default": 120000,
+              "description": "How long a claimed order lease lasts before another character can claim it"
+            },
+            "blockedRetryMs": {
+              "type": "number",
+              "minimum": 1000,
+              "default": 600000,
+              "description": "How long a character is blocked from retrying an order after marking it blocked"
+            }
+          },
+          "default": {
+            "enabled": true,
+            "createOrders": true,
+            "fulfillOrders": true,
+            "leaseMs": 120000,
+            "blockedRetryMs": 600000
+          }
+        }
+      }
+    },
     "fightMonstersRoutine": {
       "type": "object",
-      "required": ["type", "monster"],
+      "required": [
+        "type",
+        "monster"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "fightMonsters" },
-        "priority": { "type": "number", "default": 10, "description": "Execution priority (default 10)" },
-        "monster": { "type": "string", "description": "Monster code (e.g. 'chicken', 'goblin', 'wolf')" }
+        "type": {
+          "const": "fightMonsters"
+        },
+        "priority": {
+          "type": "number",
+          "default": 10,
+          "description": "Execution priority (default 10)"
+        },
+        "monster": {
+          "type": "string",
+          "description": "Monster code (e.g. 'chicken', 'goblin', 'wolf')"
+        }
       }
     },
-
     "gatherResourceRoutine": {
       "type": "object",
-      "required": ["type", "resource"],
+      "required": [
+        "type",
+        "resource"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "gatherResource" },
-        "priority": { "type": "number", "default": 10, "description": "Execution priority (default 10)" },
-        "resource": { "type": "string", "description": "Resource code (e.g. 'copper_rocks', 'ash_tree', 'gudgeon_fishing_spot')" }
+        "type": {
+          "const": "gatherResource"
+        },
+        "priority": {
+          "type": "number",
+          "default": 10,
+          "description": "Execution priority (default 10)"
+        },
+        "resource": {
+          "type": "string",
+          "description": "Resource code (e.g. 'copper_rocks', 'ash_tree', 'gudgeon_fishing_spot')"
+        }
       }
     },
-
     "gatherMaterialsRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "gatherMaterials" },
-        "priority": { "type": "number", "default": 11, "description": "Execution priority (default 11)" }
+        "type": {
+          "const": "gatherMaterials"
+        },
+        "priority": {
+          "type": "number",
+          "default": 11,
+          "description": "Execution priority (default 11)"
+        }
       }
     },
-
     "craftGearRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "craftGear" },
-        "priority": { "type": "number", "default": 12, "description": "Execution priority (default 12)" },
-        "checkInterval": { "type": "number", "default": 600000, "description": "Milliseconds between upgrade target checks (default 10min)" }
+        "type": {
+          "const": "craftGear"
+        },
+        "priority": {
+          "type": "number",
+          "default": 12,
+          "description": "Execution priority (default 12)"
+        },
+        "checkInterval": {
+          "type": "number",
+          "default": 600000,
+          "description": "Milliseconds between upgrade target checks (default 10min)"
+        }
       }
     },
-
     "acceptNpcTaskRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "acceptNpcTask" },
-        "priority": { "type": "number", "default": 15, "description": "Execution priority (default 15)" }
+        "type": {
+          "const": "acceptNpcTask"
+        },
+        "priority": {
+          "type": "number",
+          "default": 15,
+          "description": "Execution priority (default 15)"
+        }
       }
     },
-
-    "completeNpcTaskRoutine": {
+    "completeTaskRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "completeNpcTask" },
-        "priority": { "type": "number", "default": 60, "description": "Execution priority (default 60)" }
+        "type": {
+          "const": "completeTask"
+        },
+        "priority": {
+          "type": "number",
+          "default": 45,
+          "description": "Execution priority (default 45)"
+        }
       }
     },
-
     "fightTaskMonsterRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "fightTaskMonster" },
-        "priority": { "type": "number", "default": 20, "description": "Execution priority (default 20)" },
-        "maxLosses": { "type": "number", "default": 2, "description": "Consecutive losses before giving up on task monster" }
+        "type": {
+          "const": "fightTaskMonster"
+        },
+        "priority": {
+          "type": "number",
+          "default": 20,
+          "description": "Execution priority (default 20)"
+        },
+        "maxLosses": {
+          "type": "number",
+          "default": 2,
+          "description": "Consecutive losses before giving up on task monster"
+        }
       }
     },
-
     "cancelNpcTaskRoutine": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "cancelNpcTask" },
-        "priority": { "type": "number", "default": 55, "description": "Execution priority (default 55)" },
-        "maxLosses": { "type": "number", "default": 2, "description": "Consecutive losses before cancelling task (costs 1 task coin)" }
+        "type": {
+          "const": "cancelNpcTask"
+        },
+        "priority": {
+          "type": "number",
+          "default": 55,
+          "description": "Execution priority (default 55)"
+        },
+        "maxLosses": {
+          "type": "number",
+          "default": 2,
+          "description": "Consecutive losses before cancelling task (costs 1 task coin)"
+        }
       }
     }
   }

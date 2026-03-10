@@ -21,6 +21,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details.
 2. Configure characters in `config/characters.json`
 3. `npm start` to run the bot
 
+## Logging
+
+The runtime now emits structured, correlated logs for scheduler decisions, routine yields/preemption, and API/cooldown behavior.
+
+- Default outputs: console + JSONL
+- JSONL path: `./report/logs/runtime-YYYY-MM-DD.jsonl`
+- Core env controls:
+  - `LOG_LEVEL=info|debug|warn|error|stat`
+  - `LOG_OUTPUT=console,jsonl`
+  - `LOG_DIR=./report/logs`
+  - `LOG_DEBUG_SCOPES=scheduler,api,...`
+
+See [docs/logging.md](docs/logging.md) for schema, reason codes, and interruption troubleshooting.
+
 ## Account
 
 - **Username:** Geno-Claw

@@ -5,12 +5,11 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
-import { BANK } from '../data/locations.mjs';
-import { canUseItem } from './item-conditions.mjs';
-import * as gameData from './game-data.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import { recordDeposits } from './order-board.mjs';
 import {
   applyBankDelta,
+  applyBankGoldDelta,
   availableBankCount,
   getBankItems,
   invalidateBank,
@@ -18,36 +17,18 @@ import {
   reserve,
   reserveMany,
 } from './inventory-manager.mjs';
+import {
+  ensureAtBank,
+  _setApiClient as _setBankTravelApiClient,
+  _resetForTests as _resetBankTravelForTests,
+} from './bank-travel.mjs';
+
+const bankLog = log.createLogger({ scope: 'service.bank-ops' });
 
 let _api = api;
 let _forcedBatchReserveFailures = 0;
-let _bankTilesCache = null;
-let _bankTilesFetchedAt = 0;
 
-const BANK_TILE_CACHE_TTL = 5 * 60_000;
-
-const TRAVEL_POTIONS = Object.freeze({
-  recall_potion: { x: 0, y: 0 },
-  forest_bank_potion: { x: 7, y: 13 },
-});
-
-const DEFAULT_BANK_TRAVEL_SETTINGS = Object.freeze({
-  enabled: true,
-  mode: 'smart',
-  allowRecall: true,
-  allowForestBank: true,
-  minSavingsSeconds: 10,
-  includeReturnToOrigin: true,
-  moveSecondsPerTile: 5,
-  itemUseSeconds: 3,
-});
-
-function toPositiveInt(value) {
-  const n = Number(value) || 0;
-  return Number.isFinite(n) ? Math.floor(n) : 0;
-}
-
-function normalizeItemRows(items = []) {
+function _normalizeByCode(items, qtyField) {
   const totals = new Map();
   const order = [];
 
@@ -59,22 +40,15 @@ function normalizeItemRows(items = []) {
     totals.set(code, (totals.get(code) || 0) + qty);
   }
 
-  return order.map(code => ({ code, quantity: totals.get(code) }));
+  return order.map(code => ({ code, [qtyField]: totals.get(code) }));
+}
+
+function normalizeItemRows(items = []) {
+  return _normalizeByCode(items, 'quantity');
 }
 
 function normalizeRequests(requests = []) {
-  const totals = new Map();
-  const order = [];
-
-  for (const req of requests) {
-    const code = req?.code;
-    const qty = toPositiveInt(req?.qty ?? req?.quantity);
-    if (!code || qty <= 0) continue;
-    if (!totals.has(code)) order.push(code);
-    totals.set(code, (totals.get(code) || 0) + qty);
-  }
-
-  return order.map(code => ({ code, requested: totals.get(code) }));
+  return _normalizeByCode(requests, 'requested');
 }
 
 function normalizeKeepByCode(keepByCode = {}) {
@@ -95,8 +69,15 @@ function buildPlan(ctx, normalized, mode) {
   const skipped = [];
 
   let remainingSpace = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
+  let remainingSlots = Math.max(0, ctx.inventoryEmptySlots());
+  // Track which items we've already planned to withdraw (they'll occupy a slot)
+  const plannedCodes = new Set(
+    (ctx.get().inventory || []).filter(s => s.code && s.quantity > 0).map(s => s.code),
+  );
+
   for (const req of normalized) {
-    if (remainingSpace <= 0) {
+    const needsNewSlot = !plannedCodes.has(req.code);
+    if (remainingSpace <= 0 || (needsNewSlot && remainingSlots <= 0)) {
       skipped.push({ code: req.code, requested: req.requested, reason: 'inventory full' });
       continue;
     }
@@ -126,6 +107,7 @@ function buildPlan(ctx, normalized, mode) {
       }
       plan.push({ code: req.code, requested: req.requested, quantity: req.requested });
       remainingSpace -= req.requested;
+      if (needsNewSlot) { remainingSlots--; plannedCodes.add(req.code); }
       continue;
     }
 
@@ -141,6 +123,7 @@ function buildPlan(ctx, normalized, mode) {
 
     plan.push({ code: req.code, requested: req.requested, quantity: qty });
     remainingSpace -= qty;
+    if (needsNewSlot) { remainingSlots--; plannedCodes.add(req.code); }
   }
 
   return { plan, skipped };
@@ -173,203 +156,6 @@ function tryReserveMany(requests, charName) {
   return reserveMany(requests, charName);
 }
 
-function getBankTravelSettings(ctx) {
-  const globalEnabled = ctx?.settings?.()?.potions?.enabled !== false;
-  const cfg = ctx?.settings?.()?.potions?.bankTravel || {};
-  const merged = { ...DEFAULT_BANK_TRAVEL_SETTINGS, ...cfg };
-  if (!globalEnabled) merged.enabled = false;
-  return merged;
-}
-
-function charPosition(ctx) {
-  if (!ctx || typeof ctx.get !== 'function') return null;
-  try {
-    const c = ctx.get();
-    if (!Number.isFinite(c?.x) || !Number.isFinite(c?.y)) return null;
-    return { x: c.x, y: c.y };
-  } catch {
-    return null;
-  }
-}
-
-function manhattan(a, b) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-}
-
-function isAtAnyBank(pos, bankTiles) {
-  if (!pos) return false;
-  return bankTiles.some(tile => tile.x === pos.x && tile.y === pos.y);
-}
-
-function nearestBankFrom(pos, bankTiles) {
-  if (!bankTiles || bankTiles.length === 0) return { x: BANK.x, y: BANK.y, source: 'fallback' };
-  let best = bankTiles[0];
-  let bestDist = manhattan(pos, best);
-  for (let i = 1; i < bankTiles.length; i++) {
-    const tile = bankTiles[i];
-    const d = manhattan(pos, tile);
-    if (d < bestDist) {
-      best = tile;
-      bestDist = d;
-    }
-  }
-  return best;
-}
-
-function isAccessibleBankTile(tile) {
-  if (!tile) return false;
-  if (!Number.isFinite(tile.x) || !Number.isFinite(tile.y)) return false;
-  const conditions = tile.access?.conditions;
-  return !Array.isArray(conditions) || conditions.length === 0;
-}
-
-async function getAccessibleBankTiles(forceRefresh = false) {
-  const now = Date.now();
-  if (!forceRefresh && _bankTilesCache && (now - _bankTilesFetchedAt) < BANK_TILE_CACHE_TTL) {
-    return _bankTilesCache;
-  }
-
-  try {
-    const maps = await _api.getMaps({ content_type: 'bank', size: 100 });
-    const list = Array.isArray(maps) ? maps : [];
-    const tiles = list.filter(isAccessibleBankTile).map(tile => ({
-      x: tile.x,
-      y: tile.y,
-      map_id: tile.map_id || null,
-      name: tile.name || 'bank',
-    }));
-    if (tiles.length > 0) {
-      _bankTilesCache = tiles;
-      _bankTilesFetchedAt = now;
-      return tiles;
-    }
-  } catch (err) {
-    log.warn(`[BankTravel] Could not discover bank tiles (${err.message}); falling back to default bank`);
-  }
-
-  _bankTilesCache = [{ x: BANK.x, y: BANK.y, map_id: null, name: 'default_bank' }];
-  _bankTilesFetchedAt = now;
-  return _bankTilesCache;
-}
-
-function canUseTravelPotion(ctx, potionCode) {
-  if (typeof ctx?.hasItem !== 'function') return false;
-  if (!ctx.hasItem(potionCode, 1)) return false;
-  const item = gameData.getItem(potionCode);
-  if (!item) return true;
-  return canUseItem(item, ctx.get());
-}
-
-function chooseTravelMethod(ctx, origin, bankTiles, settings) {
-  const moveSec = Math.max(0, Number(settings.moveSecondsPerTile) || 0);
-  const useSec = Math.max(0, Number(settings.itemUseSeconds) || 0);
-  const includeReturn = settings.includeReturnToOrigin === true;
-  const minSavings = Math.max(0, Number(settings.minSavingsSeconds) || 0);
-
-  const directTarget = nearestBankFrom(origin, bankTiles);
-  const directInbound = manhattan(origin, directTarget) * moveSec;
-  const directReturn = includeReturn ? (manhattan(directTarget, origin) * moveSec) : 0;
-  const directTotal = directInbound + directReturn;
-
-  const methods = [{
-    type: 'direct',
-    potion: null,
-    totalSeconds: directTotal,
-    inboundSeconds: directInbound,
-    bankTarget: directTarget,
-  }];
-
-  const allowRecall = settings.allowRecall !== false;
-  const allowForestBank = settings.allowForestBank !== false;
-  const candidates = [];
-  if (allowRecall) candidates.push('recall_potion');
-  if (allowForestBank) candidates.push('forest_bank_potion');
-
-  for (const code of candidates) {
-    if (!canUseTravelPotion(ctx, code)) continue;
-    const destination = TRAVEL_POTIONS[code];
-    if (!destination) continue;
-
-    const bankTarget = nearestBankFrom(destination, bankTiles);
-    const inbound = useSec + (manhattan(destination, bankTarget) * moveSec);
-    const outbound = includeReturn ? (manhattan(bankTarget, origin) * moveSec) : 0;
-    methods.push({
-      type: 'teleport',
-      potion: code,
-      totalSeconds: inbound + outbound,
-      inboundSeconds: inbound,
-      bankTarget,
-    });
-  }
-
-  let best = methods[0];
-  for (let i = 1; i < methods.length; i++) {
-    if (methods[i].totalSeconds < best.totalSeconds) best = methods[i];
-  }
-
-  const savings = directTotal - best.totalSeconds;
-  if (best.type === 'teleport' && savings >= minSavings) {
-    return {
-      ...best,
-      savingsSeconds: savings,
-      directSeconds: directTotal,
-    };
-  }
-
-  return {
-    ...methods[0],
-    savingsSeconds: 0,
-    directSeconds: directTotal,
-  };
-}
-
-async function moveToBankTile(ctx, bankTile) {
-  const pos = charPosition(ctx);
-  if (pos) {
-    log.info(`[${ctx.name}] Moving (${pos.x},${pos.y}) → (${bankTile.x},${bankTile.y})`);
-  } else {
-    log.info(`[${ctx.name}] Moving to bank (${bankTile.x},${bankTile.y})`);
-  }
-  const action = await _api.move(bankTile.x, bankTile.y, ctx.name);
-  await _api.waitForCooldown(action);
-  await ctx.refresh();
-}
-
-async function ensureAtBank(ctx) {
-  const bankTiles = await getAccessibleBankTiles();
-  const origin = charPosition(ctx);
-  if (origin && isAtAnyBank(origin, bankTiles)) return;
-
-  const settings = getBankTravelSettings(ctx);
-  const fallbackTarget = nearestBankFrom(origin || { x: BANK.x, y: BANK.y }, bankTiles);
-  if (!settings.enabled || settings.mode !== 'smart' || !origin) {
-    await moveToBankTile(ctx, fallbackTarget);
-    return;
-  }
-
-  const chosen = chooseTravelMethod(ctx, origin, bankTiles, settings);
-  if (chosen.type === 'teleport' && chosen.potion) {
-    log.info(`[${ctx.name}] BankTravel: using ${chosen.potion} (save ~${chosen.savingsSeconds}s, direct ${chosen.directSeconds}s)`);
-    try {
-      const useResult = await _api.useItem(chosen.potion, 1, ctx.name);
-      await _api.waitForCooldown(useResult);
-      await ctx.refresh();
-      const afterTeleport = charPosition(ctx) || origin;
-      const target = nearestBankFrom(afterTeleport, bankTiles);
-      if (!isAtAnyBank(afterTeleport, bankTiles)) {
-        await moveToBankTile(ctx, target);
-      }
-      return;
-    } catch (err) {
-      log.warn(`[${ctx.name}] BankTravel: ${chosen.potion} failed (${err.message}), falling back to direct move`);
-      await moveToBankTile(ctx, fallbackTarget);
-      return;
-    }
-  }
-
-  await moveToBankTile(ctx, chosen.bankTarget || fallbackTarget);
-}
-
 async function executeReservedWithdraw(ctx, req, reservationId, reason, result) {
   let localReservationId = reservationId || null;
   const requested = toPositiveInt(req.requested || req.quantity);
@@ -392,19 +178,39 @@ async function executeReservedWithdraw(ctx, req, reservationId, reason, result) 
   }
 
   if (qty < requested) {
-    log.info(`[${ctx.name}] Withdrawing ${req.code}: requested ${requested}, only ${qty} available`);
+    bankLog.info(`[${ctx.name}] Withdrawing ${req.code}: requested ${requested}, only ${qty} available`, {
+      event: 'bank.withdraw.partial',
+      reasonCode: 'bank_unavailable',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        code: req.code,
+        requested,
+        quantity: qty,
+      },
+    });
   } else {
-    log.info(`[${ctx.name}] Withdrawing ${req.code} x${qty}`);
+    bankLog.info(`[${ctx.name}] Withdrawing ${req.code} x${qty}`, {
+      event: 'bank.withdraw.start',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        code: req.code,
+        quantity: qty,
+      },
+    });
   }
 
   try {
     const action = await _api.withdrawBank([{ code: req.code, quantity: qty }], ctx.name);
+    ctx.applyActionResult(action);
     await _api.waitForCooldown(action);
     applyBankDelta([{ code: req.code, quantity: qty }], 'withdraw', {
       charName: ctx.name,
       reason,
     });
-    await ctx.refresh();
     result.withdrawn.push({ code: req.code, quantity: qty });
   } catch (err) {
     if (isBankAvailabilityError(err)) {
@@ -487,7 +293,16 @@ export async function withdrawBankItems(ctx, requests, opts = {}) {
     }
   } else {
     const reserveReason = batch.reason || 'reservation failed';
-    log.warn(`[${ctx.name}] Could not reserve full withdrawal batch (${reserveReason}), falling back to per-item reservations`);
+    bankLog.warn(`[${ctx.name}] Could not reserve full withdrawal batch (${reserveReason}), falling back to per-item reservations`, {
+      event: 'bank.withdraw.reserve_fallback',
+      reasonCode: 'bank_unavailable',
+      context: {
+        character: ctx.name,
+      },
+      data: {
+        reserveReason,
+      },
+    });
     for (const req of plan) {
       await executeReservedWithdraw(ctx, req, null, reason, result);
     }
@@ -533,17 +348,40 @@ export async function depositBankItems(ctx, items, opts = {}) {
   await ensureAtBank(ctx);
   try {
     const action = await _api.depositBank(normalized, ctx.name);
+    ctx.applyActionResult(action);
     await _api.waitForCooldown(action);
     applyBankDelta(normalized, 'deposit', {
       charName: ctx.name,
       reason,
     });
     try {
-      recordDeposits({ charName: ctx.name, items: normalized });
+      const contributions = recordDeposits({ charName: ctx.name, items: normalized });
+      for (const entry of contributions) {
+        if (entry.opportunistic) {
+          bankLog.info(`[${ctx.name}] Opportunistic order contribution: ${entry.itemCode} x${entry.quantity} -> order ${entry.orderId} (${entry.status})`, {
+            event: 'bank.deposit.order_contribution',
+            context: {
+              character: ctx.name,
+            },
+            data: {
+              itemCode: entry.itemCode,
+              quantity: entry.quantity,
+              orderId: entry.orderId,
+              status: entry.status,
+            },
+          });
+        }
+      }
     } catch (err) {
-      log.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`);
+      bankLog.warn(`[${ctx.name}] Order board deposit hook failed: ${err?.message || String(err)}`, {
+        event: 'bank.deposit.order_contribution_failed',
+        reasonCode: 'request_failed',
+        context: {
+          character: ctx.name,
+        },
+        error: err,
+      });
     }
-    await ctx.refresh();
     return normalized;
   } catch (err) {
     invalidateBank(`[${ctx.name}] deposit failed: ${err.message}`);
@@ -575,7 +413,16 @@ export async function depositAllInventory(ctx, opts = {}) {
 
   if (items.length === 0) return [];
 
-  log.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`);
+  bankLog.info(`[${ctx.name}] Depositing ${items.length} item(s): ${items.map(i => `${i.code} x${i.quantity}`).join(', ')}`, {
+    event: 'bank.deposit.start',
+    context: {
+      character: ctx.name,
+    },
+    data: {
+      count: items.length,
+      items,
+    },
+  });
   return depositBankItems(ctx, items, {
     reason: opts.reason || 'bank-ops depositAllInventory',
   });
@@ -589,8 +436,9 @@ export async function withdrawGoldFromBank(ctx, quantity, _opts = {}) {
   if (qty <= 0) return null;
   await ensureAtBank(ctx);
   const action = await _api.withdrawGold(qty, ctx.name);
+  ctx.applyActionResult(action);
+  applyBankGoldDelta(qty, 'withdraw');
   await _api.waitForCooldown(action);
-  await ctx.refresh();
   return action;
 }
 
@@ -602,21 +450,23 @@ export async function depositGoldToBank(ctx, quantity, _opts = {}) {
   if (qty <= 0) return null;
   await ensureAtBank(ctx);
   const action = await _api.depositGold(qty, ctx.name);
+  ctx.applyActionResult(action);
+  applyBankGoldDelta(qty, 'deposit');
   await _api.waitForCooldown(action);
-  await ctx.refresh();
   return action;
 }
 
 // Test helpers.
 export function _setApiClientForTests(client) {
   _api = client || api;
+  _setBankTravelApiClient(client || api);
 }
 
 export function _resetForTests() {
   _api = api;
   _forcedBatchReserveFailures = 0;
-  _bankTilesCache = null;
-  _bankTilesFetchedAt = 0;
+  _setBankTravelApiClient(api);
+  _resetBankTravelForTests();
 }
 
 export function _setForcedBatchReserveFailuresForTests(count) {

@@ -48,10 +48,23 @@ function makeCtx(name = 'Recycler', capacity = 100) {
       };
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 
-function installAnalyzeDeps({ sellRules, itemsByCode, claimedByCode, globalByCode, bankByCode }) {
+function installAnalyzeDeps({
+  sellRules,
+  itemsByCode,
+  claimedByCode,
+  openOrderByCode = new Map(),
+  globalByCode,
+  bankByCode,
+  levelsByChar = {},
+  trackedCharNames = Object.keys(levelsByChar || {}),
+  needsByCode = new Map(),
+  latestBySkill = new Map(),
+  targetsByCode = new Map(),
+}) {
   _setDepsForTests({
     getSellRulesFn: () => sellRules,
     gameDataSvc: {
@@ -59,12 +72,29 @@ function installAnalyzeDeps({ sellRules, itemsByCode, claimedByCode, globalByCod
         return itemsByCode.get(code) || null;
       },
       isEquipmentType(item) {
-        return item?.type === 'weapon' || item?.type === 'ring' || item?.type === 'amulet';
+        return item?.type === 'weapon'
+          || item?.type === 'shield'
+          || item?.type === 'helmet'
+          || item?.type === 'body_armor'
+          || item?.type === 'leg_armor'
+          || item?.type === 'boots'
+          || item?.type === 'ring'
+          || item?.type === 'amulet'
+          || item?.type === 'artifact'
+          || item?.type === 'bag'
+          || item?.type === 'rune';
       },
     },
     getClaimedTotalFn: (code) => claimedByCode.get(code) || 0,
+    getOpenOrderDemandByCodeFn: () => openOrderByCode,
     globalCountFn: (code) => globalByCode.get(code) || 0,
     bankCountFn: (code) => bankByCode.get(code) || 0,
+    getCharacterToolProfilesSnapshotFn: () => levelsByChar,
+    getCharacterLevelsSnapshotFn: () => levelsByChar,
+    getTrackedCharacterNamesFn: () => trackedCharNames,
+    computeToolNeedsByCodeFn: () => needsByCode,
+    computeLatestToolBySkillFn: () => latestBySkill,
+    computeToolTargetsByCodeFn: () => targetsByCode,
   });
 }
 
@@ -113,6 +143,219 @@ async function testAnalyzeUsesClaimBasedProtection() {
       { code: 'free_ring', quantity: 2 },
     ],
     'candidates should exclude never-sell and keep claimed quantities',
+  );
+}
+
+async function testAnalyzeTreatsFallbackClaimsAsProtected() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['sticky_sword', 1],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['sticky_sword', { code: 'sticky_sword', type: 'weapon', craft: { skill: 'gearcrafting' } }],
+    ]),
+    // Simulates transition-safe "available" claim while upgrade is still desired.
+    claimedByCode: new Map([
+      ['sticky_sword', 1],
+    ]),
+    globalByCode: new Map([
+      ['sticky_sword', 1],
+    ]),
+    bankByCode: bankItems,
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  assert.equal(rows.length, 0, 'fully-claimed fallback gear should not be selected for recycle');
+}
+
+async function testAnalyzeProtectsOpenOrderDemand() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['skeleton_pants', 2],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['skeleton_pants', { code: 'skeleton_pants', type: 'leg_armor', craft: { skill: 'gearcrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['skeleton_pants', 1],
+    ]),
+    openOrderByCode: new Map([
+      ['skeleton_pants', 1],
+    ]),
+    globalByCode: new Map([
+      ['skeleton_pants', 2],
+    ]),
+    bankByCode: bankItems,
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  assert.deepEqual(rows, [], 'open order demand should reserve duplicate craftable gear before recycle');
+}
+
+async function testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['stone_pick', 4],
+    ['iron_pick', 9],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['stone_pick', { code: 'stone_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+      ['iron_pick', { code: 'iron_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['stone_pick', 0],
+      ['iron_pick', 0],
+    ]),
+    globalByCode: new Map([
+      ['stone_pick', 4],
+      ['iron_pick', 9],
+    ]),
+    bankByCode: bankItems,
+    levelsByChar: {
+      Low: 5,
+      High: 25,
+    },
+    trackedCharNames: ['Low', 'High'],
+    needsByCode: new Map([
+      ['stone_pick', 1],
+      ['iron_pick', 2],
+    ]),
+    latestBySkill: new Map([
+      ['mining', { code: 'iron_pick', level: 10 }],
+    ]),
+    targetsByCode: new Map([
+      ['stone_pick', 1],
+      ['iron_pick', 5],
+    ]),
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  rows.sort((a, b) => a.code.localeCompare(b.code));
+
+  assert.deepEqual(
+    rows.map(row => ({ code: row.code, quantity: row.quantity })),
+    [
+      { code: 'iron_pick', quantity: 4 },
+      { code: 'stone_pick', quantity: 3 },
+    ],
+    'tool candidates should keep lower-tier needs and reserve 5 latest-tier copies in bank',
+  );
+}
+
+async function testAnalyzeToolSurplusStillHonorsClaimedProtection() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['iron_pick', 7],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['iron_pick', { code: 'iron_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['iron_pick', 6],
+    ]),
+    globalByCode: new Map([
+      ['iron_pick', 7],
+    ]),
+    bankByCode: bankItems,
+    levelsByChar: {
+      Miner: 20,
+    },
+    trackedCharNames: ['Miner'],
+    needsByCode: new Map([
+      ['iron_pick', 2],
+    ]),
+    latestBySkill: new Map([
+      ['mining', { code: 'iron_pick', level: 10 }],
+    ]),
+    targetsByCode: new Map([
+      ['iron_pick', 5],
+    ]),
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  assert.equal(rows.length, 1, 'tool should still be recyclable when above claimed quantity');
+  assert.equal(rows[0].code, 'iron_pick');
+  assert.equal(rows[0].quantity, 1, 'claimed tool quantities must be protected before recycling');
+}
+
+async function testAnalyzeSkipsToolRecycleOnIncompleteLevelSnapshot() {
+  _resetForTests();
+
+  const bankItems = new Map([
+    ['stone_pick', 8],
+    ['free_amulet', 2],
+  ]);
+
+  installAnalyzeDeps({
+    sellRules: {
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    },
+    itemsByCode: new Map([
+      ['stone_pick', { code: 'stone_pick', type: 'weapon', subtype: 'tool', craft: { skill: 'weaponcrafting' } }],
+      ['free_amulet', { code: 'free_amulet', type: 'amulet', craft: { skill: 'jewelrycrafting' } }],
+    ]),
+    claimedByCode: new Map([
+      ['stone_pick', 0],
+      ['free_amulet', 0],
+    ]),
+    globalByCode: new Map([
+      ['stone_pick', 8],
+      ['free_amulet', 2],
+    ]),
+    bankByCode: bankItems,
+    levelsByChar: {
+      Alpha: 25,
+    },
+    trackedCharNames: ['Alpha', 'Beta'],
+    needsByCode: new Map([
+      ['stone_pick', 1],
+    ]),
+    latestBySkill: new Map([
+      ['mining', { code: 'stone_pick', level: 20 }],
+    ]),
+    targetsByCode: new Map([
+      ['stone_pick', 5],
+    ]),
+  });
+
+  const rows = analyzeRecycleCandidates({ name: 'Recycler' }, bankItems);
+  rows.sort((a, b) => a.code.localeCompare(b.code));
+
+  assert.deepEqual(
+    rows.map(row => ({ code: row.code, quantity: row.quantity })),
+    [
+      { code: 'free_amulet', quantity: 2 },
+    ],
+    'tool candidates should be skipped when tracked level snapshot is incomplete',
   );
 }
 
@@ -267,6 +510,11 @@ async function testClaimedEquipmentIsProtectedFromRecycle() {
 
 async function run() {
   await testAnalyzeUsesClaimBasedProtection();
+  await testAnalyzeTreatsFallbackClaimsAsProtected();
+  await testAnalyzeProtectsOpenOrderDemand();
+  await testAnalyzeToolSurplusRespectsReservesAndLowerTierNeeds();
+  await testAnalyzeToolSurplusStillHonorsClaimedProtection();
+  await testAnalyzeSkipsToolRecycleOnIncompleteLevelSnapshot();
   await testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget();
   await testClaimedEquipmentIsProtectedFromRecycle();
   _resetForTests();

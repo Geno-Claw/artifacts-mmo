@@ -1,9 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, watch as fsWatch } from 'node:fs';
+import { resolve as pathResolve } from 'node:path';
 import { dirname } from 'node:path';
 import { Scheduler } from './scheduler.mjs';
 import { CharacterContext } from './context.mjs';
 import { buildRoutines } from './routines/factory.mjs';
 import * as log from './log.mjs';
+import { toPositiveInt } from './utils.mjs';
+import { abortAllCooldowns, resetCooldownAbort } from './api.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
 import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
@@ -16,22 +19,48 @@ import {
 import {
   flushGearState,
   initializeGearState,
+  publishDesiredOrdersForTrackedCharacters,
   refreshGearState,
   registerContext,
   unregisterContext,
 } from './services/gear-state.mjs';
+import {
+  registerContext as registerBossRallyContext,
+  unregisterContext as unregisterBossRallyContext,
+} from './services/boss-rally.mjs';
 import { createCharacter, subscribeActionEvents } from './api.mjs';
-import { initializeUiState, recordCooldown, recordLog } from './services/ui-state.mjs';
+import { initializeUiState, recordCooldown, recordLog, recordGameLog } from './services/ui-state.mjs';
+import {
+  initialize as initWebSocket,
+  cleanup as cleanupWebSocket,
+  getState as getWebSocketState,
+  subscribe as wsSubscribe,
+} from './services/websocket-client.mjs';
+import {
+  initialize as initEventManager,
+  cleanup as cleanupEventManager,
+  getNpcEventCodes,
+  setGatherResources,
+} from './services/event-manager.mjs';
+import { loadNpcCatalogs } from './services/game-data.mjs';
+import { loadNpcBuyList } from './services/npc-buy-config.mjs';
+import { loadNpcSellList } from './services/npc-sell-config.mjs';
+import { loadCombatConfig } from './services/combat-config.mjs';
+import { normalizeConfig, hashCanonicalJson, saveConfigAtomically } from './services/config-store.mjs';
+import { runWithLogContext } from './log-context.mjs';
+import { extractAccountLogDetail } from './action-log.mjs';
+
+const runtimeLog = log.createLogger({ scope: 'runtime' });
+
+function extractCharacterNameFromMessage(message) {
+  const match = `${message || ''}`.match(/^\[([^\]]+)\]/);
+  return match ? match[1] : '';
+}
 
 const DEFAULT_CONFIG_PATH = './config/characters.json';
 const DEFAULT_STOP_TIMEOUT_MS = 120_000;
 const ORDER_BOARD_ROLLOUT_MARKER = './report/.order-board-v2-rollout';
-
-function toPositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
+const CONFIG_WATCH_DEBOUNCE_MS = 1_000;
 
 function withTimeout(promise, timeoutMs) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -105,6 +134,9 @@ export class RuntimeManager {
     this.updatedAtMs = Date.now();
     this.runSeq = 0;
     this.lastConfigPath = process.env.BOT_CONFIG || DEFAULT_CONFIG_PATH;
+    this._configWatcher = null;
+    this._configWatchDebounce = null;
+    this._lastSavedHash = null;
   }
 
   _setState(nextState) {
@@ -209,16 +241,26 @@ export class RuntimeManager {
       startedAt: Date.now(),
     });
 
+    // Internal bot logs — kept for detail modal only (not card display).
     const unsubscribeLogEvents = log.subscribeLogEvents((entry) => {
-      const match = entry.msg.match(/^\[([^\]]+)\]/);
-      if (!match) return;
-      const name = match[1];
+      const fromContext = `${entry?.context?.character || ''}`.trim();
+      const rendered = log.formatEntryMessage(entry);
+      const name = fromContext || extractCharacterNameFromMessage(entry.message) || extractCharacterNameFromMessage(rendered);
       if (!configuredNameSet.has(name)) return;
 
       recordLog(name, {
         level: entry.level,
-        line: entry.msg,
-        at: entry.at,
+        line: rendered,
+        at: entry.atMs,
+        scope: entry.scope || null,
+        event: entry.event || null,
+        reasonCode: entry.reasonCode || null,
+        routine: entry?.context?.routine || null,
+        runId: entry?.context?.runId ?? null,
+        tickId: entry?.context?.tickId ?? null,
+        traceId: entry?.context?.traceId || null,
+        requestId: entry?.context?.requestId || null,
+        data: entry.data ?? null,
       });
     });
 
@@ -230,18 +272,47 @@ export class RuntimeManager {
         totalSeconds: cooldown.total_seconds ?? cooldown.remaining_seconds ?? 0,
         remainingSeconds: cooldown.remaining_seconds ?? cooldown.total_seconds ?? 0,
         observedAt: entry.observedAt,
+        requestId: entry.requestId || null,
       });
+
+      if (entry.status === 'success' && entry.result?.summary) {
+        recordGameLog(entry.name, {
+          line: entry.result.summary,
+          type: entry.result.type || null,
+          at: entry.observedAt,
+          detail: entry.result.detail ?? null,
+        });
+      }
     });
+
+    // Game account log via WebSocket — drives the card LOG display.
+    let unsubscribeAccountLog = null;
+    if (process.env.WEBSOCKET_URL) {
+      unsubscribeAccountLog = wsSubscribe('account_log', (data) => {
+        if (!data?.character || !configuredNameSet.has(data.character)) return;
+        recordGameLog(data.character, {
+          line: data.description || `${data.type || 'action'}`,
+          type: data.type || null,
+          at: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
+          detail: extractAccountLogDetail(data.type, data.content, {
+            characterName: data.character,
+            description: data.description,
+          }),
+        });
+      });
+    }
 
     return {
       runId: ++this.runSeq,
       configPath,
+      config,
       characterNames: configuredNames,
       characterConfigs: config.characters,
       schedulerEntries: [],
       loopPromises: [],
       unsubscribeLogEvents,
       unsubscribeActionEvents,
+      unsubscribeAccountLog,
       startedAtMs: Date.now(),
     };
   }
@@ -255,7 +326,13 @@ export class RuntimeManager {
     } catch (err) {
       if (err.code === 404 || err.code === 498) {
         const skin = charCfg.skin || 'men1';
-        log.info(`[${charCfg.name}] Character not found - creating with skin "${skin}"`);
+        runtimeLog.info(`[${charCfg.name}] Character not found - creating with skin "${skin}"`, {
+          event: 'runtime.character.auto_create',
+          context: {
+            character: charCfg.name,
+          },
+          data: { skin },
+        });
         await createCharacter(charCfg.name, skin);
         await ctx.refresh();
       } else {
@@ -264,7 +341,22 @@ export class RuntimeManager {
     }
 
     const char = ctx.get();
-    log.info(`[${char.name}] Lv${char.level} | ${char.hp}/${char.max_hp} HP | ${char.gold}g | (${char.x},${char.y})`);
+    const cdRemaining = ctx.cooldownRemainingMs();
+    runtimeLog.info(`[${char.name}] Lv${char.level} | ${char.hp}/${char.max_hp} HP | ${char.gold}g | (${char.x},${char.y}) | cd=${cdRemaining > 0 ? (cdRemaining / 1000).toFixed(1) + 's' : 'none'}`, {
+      event: 'runtime.character.snapshot',
+      context: {
+        character: char.name,
+      },
+      data: {
+        level: char.level,
+        hp: char.hp,
+        maxHp: char.max_hp,
+        gold: char.gold,
+        x: char.x,
+        y: char.y,
+        cooldownMs: cdRemaining,
+      },
+    });
 
     return {
       scheduler: new Scheduler(ctx, routines),
@@ -282,7 +374,27 @@ export class RuntimeManager {
       `${JSON.stringify({ clearedAtMs: Date.now() }, null, 2)}\n`,
       'utf-8',
     );
-    log.info('[Runtime] Order-board rollout hard-clear completed');
+    runtimeLog.info('[Runtime] Order-board rollout hard-clear completed', {
+      event: 'runtime.order_board.rollout_reset',
+    });
+  }
+
+  _republishDesiredOrdersForCharacters(charNames = [], reason = 'runtime_refresh') {
+    const names = Array.isArray(charNames)
+      ? charNames.map(name => `${name || ''}`.trim()).filter(Boolean)
+      : [];
+    const republished = publishDesiredOrdersForTrackedCharacters(names);
+
+    runtimeLog.info('[Runtime] Republished desired orders', {
+      event: 'runtime.order_board.republish_desired',
+      data: {
+        reason,
+        characterCount: names.length,
+        republished,
+      },
+    });
+
+    return republished;
   }
 
   _handleSchedulerFailure(runId, charName, err) {
@@ -293,32 +405,71 @@ export class RuntimeManager {
     const detail = err?.message || 'Scheduler loop crashed';
     this._recordError('scheduler_crash', `[${charName}] ${detail}`);
     this._setState('error');
-    log.error(`[Runtime] Scheduler loop crashed for ${charName}`, detail);
+    runtimeLog.error(`[Runtime] Scheduler loop crashed for ${charName}`, {
+      event: 'runtime.scheduler.crash',
+      reasonCode: 'scheduler_crash',
+      context: {
+        character: charName,
+        runId,
+      },
+      error: err,
+      detail,
+    });
   }
 
   async _cleanupRun(run) {
     if (!run) return;
 
+    this._stopConfigWatcher();
+
     try {
       releaseClaimsForChars(run.characterNames, 'runtime_cleanup');
     } catch (err) {
-      log.warn(`[Runtime] Could not release order claims during cleanup: ${err?.message || String(err)}`);
+      runtimeLog.warn(`[Runtime] Could not release order claims during cleanup: ${err?.message || String(err)}`, {
+        event: 'runtime.cleanup.release_claims_failed',
+        error: err,
+      });
     }
 
     try {
       await flushOrderBoard();
     } catch (err) {
-      log.warn(`[Runtime] Could not flush order board during cleanup: ${err?.message || String(err)}`);
+      runtimeLog.warn(`[Runtime] Could not flush order board during cleanup: ${err?.message || String(err)}`, {
+        event: 'runtime.cleanup.flush_order_board_failed',
+        error: err,
+      });
     }
 
     try {
       await flushGearState();
     } catch (err) {
-      log.warn(`[Runtime] Could not flush gear-state during cleanup: ${err?.message || String(err)}`);
+      runtimeLog.warn(`[Runtime] Could not flush gear-state during cleanup: ${err?.message || String(err)}`, {
+        event: 'runtime.cleanup.flush_gear_state_failed',
+        error: err,
+      });
+    }
+
+    try {
+      await cleanupEventManager();
+    } catch (err) {
+      runtimeLog.warn(`[Runtime] Event manager cleanup failed: ${err?.message || String(err)}`, {
+        event: 'runtime.cleanup.event_manager_failed',
+        error: err,
+      });
+    }
+
+    try {
+      await cleanupWebSocket();
+    } catch (err) {
+      runtimeLog.warn(`[Runtime] WebSocket cleanup failed: ${err?.message || String(err)}`, {
+        event: 'runtime.cleanup.websocket_failed',
+        error: err,
+      });
     }
 
     for (const entry of run.schedulerEntries) {
       unregisterContext(entry.name);
+      unregisterBossRallyContext(entry.name);
     }
 
     if (typeof run.unsubscribeActionEvents === 'function') {
@@ -338,6 +489,15 @@ export class RuntimeManager {
       }
       run.unsubscribeLogEvents = null;
     }
+
+    if (typeof run.unsubscribeAccountLog === 'function') {
+      try {
+        run.unsubscribeAccountLog();
+      } catch {
+        // No-op
+      }
+      run.unsubscribeAccountLog = null;
+    }
   }
 
   async _startInternal() {
@@ -353,13 +513,40 @@ export class RuntimeManager {
     }
 
     this._setState('starting');
+    resetCooldownAbort();
     let run = null;
 
     try {
-      const { configPath, config } = this._loadRuntimeConfig();
+      const { configPath, config: rawConfig } = this._loadRuntimeConfig();
+
+      // Fill missing fields with schema defaults; write back if anything was added
+      const { config, changed: configNormalized } = await normalizeConfig(rawConfig);
+      if (configNormalized) {
+        try {
+          const saved = await saveConfigAtomically(config);
+          this._lastSavedHash = saved.hash;
+          runtimeLog.info('[Runtime] Config normalized — defaults written to disk', {
+            event: 'runtime.config.normalized',
+          });
+        } catch (err) {
+          runtimeLog.warn(`[Runtime] Could not save normalized config: ${err.message}`, {
+            event: 'runtime.config.normalization_save_failed',
+            error: err,
+          });
+        }
+      }
+
       run = this._buildRunContext(configPath, config);
 
-      log.info(`Bot starting - ${config.characters.length} character(s)`);
+      runtimeLog.info(`Bot starting - ${config.characters.length} character(s)`, {
+        event: 'runtime.starting',
+        context: {
+          runId: run.runId,
+        },
+        data: {
+          characterCount: config.characters.length,
+        },
+      });
 
       await initGameData();
       await initInventoryManager();
@@ -368,9 +555,38 @@ export class RuntimeManager {
       await initializeGearState({ characters: config.characters });
       loadSellRules();
 
+      const wsUrl = process.env.WEBSOCKET_URL;
+      if (wsUrl) {
+        await initWebSocket({
+          url: wsUrl,
+          token: process.env.ARTIFACTS_TOKEN,
+          subscriptions: ['event_spawn', 'event_removed', 'account_log'],
+        });
+      }
+
+      await initEventManager();
+      setGatherResources(config.events?.gatherResources || []);
+
+      const npcCodes = [
+        'tasks_trader', 'tailor', 'fish_merchant', 'gemstone_merchant',
+        'herbal_merchant', 'timber_merchant', 'rune_vendor', 'sandwhisper_trader',
+        'archaeologist', 'nomadic_merchant', 'cultist_wizard',
+        ...getNpcEventCodes(),
+      ];
+      await loadNpcCatalogs(npcCodes);
+
+      loadNpcBuyList(config);
+      loadNpcSellList(config);
+      loadCombatConfig(config);
+
       for (const charCfg of config.characters) {
-        const { scheduler, ctx } = await this._createScheduler(charCfg);
+        const { scheduler, ctx } = await runWithLogContext({
+          runId: run.runId,
+          character: charCfg.name,
+        }, async () => this._createScheduler(charCfg));
+        scheduler.setRunContext({ runId: run.runId });
         registerContext(ctx);
+        registerBossRallyContext(ctx);
         run.schedulerEntries.push({
           name: charCfg.name,
           scheduler,
@@ -379,6 +595,7 @@ export class RuntimeManager {
       }
 
       await refreshGearState({ force: true });
+      this._republishDesiredOrdersForCharacters(run.characterNames, 'startup');
 
       run.loopPromises = run.schedulerEntries.map((entry) => {
         return entry.scheduler.run().catch((err) => {
@@ -387,8 +604,19 @@ export class RuntimeManager {
       });
 
       this.activeRun = run;
+      this._startConfigWatcher(run.configPath);
       this._clearError();
       this._setState('running');
+      runtimeLog.info(`[Runtime] Running ${run.schedulerEntries.length} scheduler loop(s)`, {
+        event: 'runtime.running',
+        context: {
+          runId: run.runId,
+        },
+        data: {
+          schedulerCount: run.schedulerEntries.length,
+          configPath: run.configPath,
+        },
+      });
       return this.getStatus();
     } catch (err) {
       if (run) {
@@ -402,6 +630,14 @@ export class RuntimeManager {
       const wrapped = this._wrapRuntimeError(err, 'runtime_start_failed', 'Runtime start failed');
       this._recordError(wrapped.code || 'runtime_start_failed', wrapped.detail || wrapped.message);
       this._setState('error');
+      runtimeLog.error('[Runtime] Start failed', {
+        event: 'runtime.start_failed',
+        reasonCode: 'runtime_start_failed',
+        context: {
+          runId: run?.runId ?? null,
+        },
+        error: wrapped,
+      });
       throw wrapped;
     }
   }
@@ -416,16 +652,37 @@ export class RuntimeManager {
     }
 
     this._setState('stopping');
+    runtimeLog.info('[Runtime] Stopping schedulers', {
+      event: 'runtime.stopping',
+      context: {
+        runId: run.runId,
+      },
+      data: {
+        schedulerCount: run.schedulerEntries.length,
+        timeoutMs,
+      },
+    });
 
     for (const entry of run.schedulerEntries) {
       entry.scheduler.stop();
     }
+    abortAllCooldowns();
 
     const waitResult = await withTimeout(Promise.allSettled(run.loopPromises), timeoutMs);
     if (waitResult.timedOut) {
       const detail = `Graceful stop timed out after ${timeoutMs}ms`;
       this._recordError('graceful_stop_timeout', detail);
       this._setState('error');
+      runtimeLog.error('[Runtime] Graceful stop timed out', {
+        event: 'runtime.stop_timeout',
+        reasonCode: 'graceful_stop_timeout',
+        context: {
+          runId: run.runId,
+        },
+        data: {
+          timeoutMs,
+        },
+      });
       throw new RuntimeManagerError(detail, {
         status: 504,
         error: 'runtime_stop_timeout',
@@ -440,6 +697,12 @@ export class RuntimeManager {
     await this._cleanupRun(run);
     this.activeRun = null;
     this._setState('stopped');
+    runtimeLog.info('[Runtime] Stopped', {
+      event: 'runtime.stopped',
+      context: {
+        runId: run.runId,
+      },
+    });
     return this.getStatus();
   }
 
@@ -492,6 +755,7 @@ export class RuntimeManager {
         characterCount: run?.characterNames?.length || 0,
         characterNames: run?.characterNames ? [...run.characterNames] : [],
       },
+      websocket: getWebSocketState(),
       lastError: this.lastError ? { ...this.lastError } : null,
       updatedAtMs: this.updatedAtMs,
     };
@@ -503,6 +767,104 @@ export class RuntimeManager {
 
   async stop(gracefulTimeoutMs = this.defaultStopTimeoutMs) {
     return this._runOperation('stop', () => this._stopInternal(gracefulTimeoutMs));
+  }
+
+  /**
+   * Hot-reload: re-read config from disk and push updates to running
+   * schedulers without stopping them.  Only patches existing routine
+   * instances (adding/removing routine types still needs a full restart).
+   */
+  hotReloadConfig() {
+    const run = this.activeRun;
+    if (!run || this.state !== 'running') return;
+
+    let config;
+    try {
+      ({ config } = this._loadRuntimeConfig());
+    } catch (err) {
+      runtimeLog.warn(`[Runtime] Hot-reload failed to read config: ${err.message}`, {
+        event: 'runtime.hot_reload.read_failed',
+        error: err,
+      });
+      return;
+    }
+
+    // Skip reload if this file change was our own normalization write-back
+    if (this._lastSavedHash) {
+      const currentHash = hashCanonicalJson(config);
+      if (currentHash === this._lastSavedHash) {
+        this._lastSavedHash = null;
+        return;
+      }
+      this._lastSavedHash = null;
+    }
+
+    loadNpcBuyList(config);
+    loadNpcSellList(config);
+    loadCombatConfig(config);
+    setGatherResources(config.events?.gatherResources || []);
+    run.config = config;
+    run.characterConfigs = config.characters;
+
+    for (const entry of run.schedulerEntries) {
+      const charCfg = config.characters.find(c => c.name === entry.name);
+      if (charCfg) {
+        entry.scheduler.setPendingConfig(charCfg.routines, charCfg.settings);
+      }
+    }
+    runtimeLog.info(`[Runtime] Config hot-reload queued for ${run.schedulerEntries.length} character(s)`, {
+      event: 'runtime.hot_reload.queued',
+      context: {
+        runId: run.runId,
+      },
+      data: {
+        schedulerCount: run.schedulerEntries.length,
+      },
+    });
+  }
+
+  _startConfigWatcher(configPath) {
+    this._stopConfigWatcher();
+
+    const absPath = pathResolve(configPath);
+    try {
+      this._configWatcher = fsWatch(absPath, () => {
+        clearTimeout(this._configWatchDebounce);
+        this._configWatchDebounce = setTimeout(() => {
+          runtimeLog.info('[Runtime] Config file changed on disk — hot-reloading', {
+            event: 'runtime.config.changed',
+          });
+          this.hotReloadConfig();
+        }, CONFIG_WATCH_DEBOUNCE_MS);
+      });
+
+      this._configWatcher.on('error', (err) => {
+        runtimeLog.warn(`[Runtime] Config file watcher error: ${err.message}`, {
+          event: 'runtime.config.watch_error',
+          error: err,
+        });
+      });
+      runtimeLog.info(`[Runtime] Watching config file for changes: ${absPath}`, {
+        event: 'runtime.config.watch_started',
+        data: {
+          path: absPath,
+        },
+      });
+    } catch (err) {
+      runtimeLog.warn(`[Runtime] Could not watch config file: ${err.message}`, {
+        event: 'runtime.config.watch_failed',
+        error: err,
+      });
+    }
+  }
+
+  _stopConfigWatcher() {
+    clearTimeout(this._configWatchDebounce);
+    this._configWatchDebounce = null;
+    if (this._configWatcher) {
+      this._configWatcher.close();
+      this._configWatcher = null;
+    }
   }
 
   async reloadConfig() {

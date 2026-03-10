@@ -1,22 +1,55 @@
 import { createServer } from 'http';
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, extname } from 'path';
 import * as log from './log.mjs';
-import { getCachedAccountAchievements, getCachedAccountDetails } from './services/account-cache.mjs';
 import {
+  getCachedAccountAchievements,
+  getCachedAccountDetails,
+  getCachedAchievementDefinitions,
+} from './services/account-cache.mjs';
+import {
+  analyzeConfigRestartRequirements,
+  CONFIG_EDITOR_ACHIEVEMENT_TYPES,
+  CONFIG_EDITOR_SKILL_NAMES,
   ConfigStoreError,
+  getCharactersSchema,
+  getRoutineEditorMetadata,
   loadConfigSnapshot,
+  normalizeConfig,
+  prepareConfigForSave,
   saveConfigAtomically,
   validateBotConfig,
 } from './services/config-store.mjs';
-import { getUiCharacterDetail, getUiSnapshot, subscribeUiEvents } from './services/ui-state.mjs';
-import { getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
-
-function toPositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
+import {
+  getUiCharacterDetail,
+  getUiSnapshot,
+  queryUiCharacterLogs,
+  subscribeUiEvents,
+} from './services/ui-state.mjs';
+import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
+import {
+  clearGearState,
+  publishDesiredOrdersForTrackedCharacters,
+  refreshGearState,
+} from './services/gear-state.mjs';
+import { getBankSummary } from './services/inventory-manager.mjs';
+import { getNpcEventCodes } from './services/event-manager.mjs';
+import {
+  findItems,
+  getAllResources,
+  getNpcBuyableItems,
+  getNpcCatalogCodes,
+  getNpcSellableItems,
+} from './services/game-data.mjs';
+import { toPositiveInt } from './utils.mjs';
+import {
+  isSandbox,
+  sandboxGiveGold,
+  sandboxGiveItem,
+  sandboxGiveXp,
+  sandboxSpawnEvent,
+  sandboxResetAccount,
+} from './api.mjs';
 
 function toPort(value, fallback) {
   const num = Number(value);
@@ -63,6 +96,138 @@ function statusFromError(err, fallback = 502) {
   if (Number.isInteger(numCode) && numCode >= 400 && numCode <= 599) return numCode;
   if (err?.code === 'account_required') return 400;
   return fallback;
+}
+
+function isRuntimeActive(runtimeManager) {
+  if (!runtimeManager) return false;
+
+  try {
+    const status = typeof runtimeManager.getStatus === 'function'
+      ? runtimeManager.getStatus()
+      : (typeof runtimeManager.status === 'function' ? runtimeManager.status() : null);
+
+    if (!status || typeof status !== 'object') return false;
+    if (status.runtime?.active === true) return true;
+    if (status.state === 'running') return true;
+    if (status.lifecycle === 'running') return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
+  combat: '#/$defs/combatConfig',
+  'combat.winRateThreshold': '#/$defs/combatConfig/properties/winRateThreshold',
+  events: '#/$defs/eventsConfig',
+  'events.gatherResources': '#/$defs/eventsConfig/properties/gatherResources',
+  npcBuyList: '#/properties/npcBuyList',
+  'npcBuyList[].code': '#/properties/npcBuyList/additionalProperties/items/properties/code',
+  'npcBuyList[].maxTotal': '#/properties/npcBuyList/additionalProperties/items/properties/maxTotal',
+  npcSellList: '#/properties/npcSellList',
+  'npcSellList[].code': '#/properties/npcSellList/additionalProperties/items/properties/code',
+  'npcSellList[].keepInBank': '#/properties/npcSellList/additionalProperties/items/properties/keepInBank',
+  'characters[].settings.potions.enabled': '#/$defs/potionSettings/properties/enabled',
+  'characters[].settings.potions.combat.enabled': '#/$defs/combatPotionSettings/properties/enabled',
+  'characters[].settings.potions.combat.refillBelow': '#/$defs/combatPotionSettings/properties/refillBelow',
+  'characters[].settings.potions.combat.targetQuantity': '#/$defs/combatPotionSettings/properties/targetQuantity',
+  'characters[].settings.potions.combat.poisonBias': '#/$defs/combatPotionSettings/properties/poisonBias',
+  'characters[].settings.potions.combat.respectNonPotionUtility': '#/$defs/combatPotionSettings/properties/respectNonPotionUtility',
+  'characters[].settings.potions.combat.monsterTypes': '#/$defs/combatPotionSettings/properties/monsterTypes',
+  'characters[].settings.potions.bankTravel.enabled': '#/$defs/bankTravelPotionSettings/properties/enabled',
+  'characters[].settings.potions.bankTravel.mode': '#/$defs/bankTravelPotionSettings/properties/mode',
+  'characters[].settings.potions.bankTravel.allowRecall': '#/$defs/bankTravelPotionSettings/properties/allowRecall',
+  'characters[].settings.potions.bankTravel.allowForestBank': '#/$defs/bankTravelPotionSettings/properties/allowForestBank',
+  'characters[].settings.potions.bankTravel.minSavingsSeconds': '#/$defs/bankTravelPotionSettings/properties/minSavingsSeconds',
+  'characters[].settings.potions.bankTravel.includeReturnToOrigin': '#/$defs/bankTravelPotionSettings/properties/includeReturnToOrigin',
+  'characters[].settings.potions.bankTravel.moveSecondsPerTile': '#/$defs/bankTravelPotionSettings/properties/moveSecondsPerTile',
+  'characters[].settings.potions.bankTravel.itemUseSeconds': '#/$defs/bankTravelPotionSettings/properties/itemUseSeconds',
+  'characters[].routines.rest.priority': '#/$defs/restRoutine/properties/priority',
+  'characters[].routines.rest.triggerPct': '#/$defs/restRoutine/properties/triggerPct',
+  'characters[].routines.rest.targetPct': '#/$defs/restRoutine/properties/targetPct',
+  'characters[].routines.depositBank.priority': '#/$defs/depositBankRoutine/properties/priority',
+  'characters[].routines.depositBank.threshold': '#/$defs/depositBankRoutine/properties/threshold',
+  'characters[].routines.depositBank.sellToVendor': '#/$defs/depositBankRoutine/properties/sellToVendor',
+  'characters[].routines.depositBank.sellOnGE': '#/$defs/depositBankRoutine/properties/sellOnGE',
+  'characters[].routines.depositBank.recycleEquipment': '#/$defs/depositBankRoutine/properties/recycleEquipment',
+  'characters[].routines.depositBank.depositGold': '#/$defs/depositBankRoutine/properties/depositGold',
+  'characters[].routines.bankExpansion.priority': '#/$defs/bankExpansionRoutine/properties/priority',
+  'characters[].routines.bankExpansion.checkIntervalMs': '#/$defs/bankExpansionRoutine/properties/checkIntervalMs',
+  'characters[].routines.bankExpansion.maxGoldPct': '#/$defs/bankExpansionRoutine/properties/maxGoldPct',
+  'characters[].routines.bankExpansion.goldBuffer': '#/$defs/bankExpansionRoutine/properties/goldBuffer',
+  'characters[].routines.event.priority': '#/$defs/eventRoutine/properties/priority',
+  'characters[].routines.event.enabled': '#/$defs/eventRoutine/properties/enabled',
+  'characters[].routines.event.monsterEvents': '#/$defs/eventRoutine/properties/monsterEvents',
+  'characters[].routines.event.resourceEvents': '#/$defs/eventRoutine/properties/resourceEvents',
+  'characters[].routines.event.npcEvents': '#/$defs/eventRoutine/properties/npcEvents',
+  'characters[].routines.event.minTimeRemainingMs': '#/$defs/eventRoutine/properties/minTimeRemainingMs',
+  'characters[].routines.event.maxMonsterType': '#/$defs/eventRoutine/properties/maxMonsterType',
+  'characters[].routines.event.cooldownMs': '#/$defs/eventRoutine/properties/cooldownMs',
+  'characters[].routines.bossFight.priority': '#/$defs/bossFightRoutine/properties/priority',
+  'characters[].routines.bossFight.teamSize': '#/$defs/bossFightRoutine/properties/teamSize',
+  'characters[].routines.bossFight.minTeamSize': '#/$defs/bossFightRoutine/properties/minTeamSize',
+  'characters[].routines.bossFight.repeat': '#/$defs/bossFightRoutine/properties/repeat',
+  'characters[].routines.bossFight.maxFights': '#/$defs/bossFightRoutine/properties/maxFights',
+  'characters[].routines.bossFight.orderDriven': '#/$defs/bossFightRoutine/properties/orderDriven',
+  'characters[].routines.bossFight.bosses': '#/$defs/bossFightRoutine/properties/bosses',
+  'characters[].routines.bossFight.bosses[].code': '#/$defs/bossFightRoutine/properties/bosses/items/properties/code',
+  'characters[].routines.bossFight.bosses[].enabled': '#/$defs/bossFightRoutine/properties/bosses/items/properties/enabled',
+  'characters[].routines.bossFight.bosses[].minWinrate': '#/$defs/bossFightRoutine/properties/bosses/items/properties/minWinrate',
+  'characters[].routines.completeTask.priority': '#/$defs/completeTaskRoutine/properties/priority',
+  'characters[].routines.skillRotation.enabled': '#/$defs/skillRotationRoutine/properties/enabled',
+  'characters[].routines.skillRotation.priority': '#/$defs/skillRotationRoutine/properties/priority',
+  'characters[].routines.skillRotation.maxLosses': '#/$defs/skillRotationRoutine/properties/maxLosses',
+  'characters[].routines.skillRotation.weights': '#/$defs/skillRotationRoutine/properties/weights',
+  'characters[].routines.skillRotation.goals': '#/$defs/skillRotationRoutine/properties/goals',
+  'characters[].routines.skillRotation.achievementTypes': '#/$defs/skillRotationRoutine/properties/achievementTypes',
+  'characters[].routines.skillRotation.orderBoard': '#/$defs/skillRotationRoutine/properties/orderBoard',
+  'characters[].routines.skillRotation.orderBoard.enabled': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/enabled',
+  'characters[].routines.skillRotation.orderBoard.createOrders': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/createOrders',
+  'characters[].routines.skillRotation.orderBoard.fulfillOrders': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/fulfillOrders',
+  'characters[].routines.skillRotation.orderBoard.leaseMs': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/leaseMs',
+  'characters[].routines.skillRotation.orderBoard.blockedRetryMs': '#/$defs/skillRotationRoutine/properties/orderBoard/properties/blockedRetryMs',
+  'characters[].routines.orderFulfillment.priority': '#/$defs/orderFulfillmentRoutine/properties/priority',
+  'characters[].routines.orderFulfillment.enabled': '#/$defs/orderFulfillmentRoutine/properties/enabled',
+  'characters[].routines.orderFulfillment.maxLosses': '#/$defs/orderFulfillmentRoutine/properties/maxLosses',
+  'characters[].routines.orderFulfillment.craftScanLimit': '#/$defs/orderFulfillmentRoutine/properties/craftScanLimit',
+  'characters[].routines.orderFulfillment.orderBoard': '#/$defs/orderFulfillmentRoutine/properties/orderBoard',
+  'characters[].routines.orderFulfillment.orderBoard.enabled': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/enabled',
+  'characters[].routines.orderFulfillment.orderBoard.createOrders': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/createOrders',
+  'characters[].routines.orderFulfillment.orderBoard.fulfillOrders': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/fulfillOrders',
+  'characters[].routines.orderFulfillment.orderBoard.leaseMs': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/leaseMs',
+  'characters[].routines.orderFulfillment.orderBoard.blockedRetryMs': '#/$defs/orderFulfillmentRoutine/properties/orderBoard/properties/blockedRetryMs',
+});
+
+function decodeJsonPointerSegment(text) {
+  return `${text ?? ''}`.replace(/~1/g, '/').replace(/~0/g, '~');
+}
+
+function getNodeAtJsonPointer(root, pointer) {
+  if (!root || typeof root !== 'object' || typeof pointer !== 'string' || !pointer.startsWith('#/')) {
+    return null;
+  }
+
+  const segments = pointer.slice(2).split('/').map((segment) => decodeJsonPointerSegment(segment));
+  let node = root;
+  for (const segment of segments) {
+    if (!node || typeof node !== 'object' || !Object.hasOwn(node, segment)) {
+      return null;
+    }
+    node = node[segment];
+  }
+  return node;
+}
+
+async function buildConfigDescriptionPayload() {
+  const schema = await getCharactersSchema();
+  const descriptions = {};
+  for (const [path, pointer] of Object.entries(CONFIG_EDITOR_DESCRIPTION_POINTERS)) {
+    const node = getNodeAtJsonPointer(schema, pointer);
+    const description = firstText(node?.description, '');
+    if (!description) continue;
+    descriptions[path] = description;
+  }
+  return descriptions;
 }
 
 function sendStructuredError(res, err, fallbackCode) {
@@ -117,6 +282,64 @@ function isObject(value) {
 
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function compareByCode(a, b) {
+  return `${a?.code ?? ''}`.localeCompare(`${b?.code ?? ''}`);
+}
+
+async function buildConfigOptionsPayload() {
+  const resourceOptions = getAllResources()
+    .map((resource) => ({
+      code: `${resource?.code ?? ''}`.trim(),
+      name: `${resource?.name ?? resource?.code ?? ''}`.trim(),
+      skill: `${resource?.skill ?? ''}`.trim(),
+      level: Number(resource?.level) || 0,
+    }))
+    .filter((resource) => resource.code)
+    .sort(compareByCode);
+
+  const npcCodes = [...new Set(getNpcEventCodes().filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const npcEvents = npcCodes.map((code) => ({
+    code,
+    buyableItems: getNpcBuyableItems(code)
+      .map((item) => ({
+        code: `${item?.code ?? ''}`.trim(),
+        name: `${item?.name ?? item?.code ?? ''}`.trim(),
+        type: `${item?.type ?? ''}`.trim(),
+        level: Number(item?.level) || 0,
+        currency: `${item?.currency ?? ''}`.trim(),
+        buyPrice: Number(item?.buy_price) || 0,
+      }))
+      .filter((item) => item.code)
+      .sort(compareByCode),
+  }));
+
+  const npcVendorCodes = [...new Set(getNpcCatalogCodes().filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const npcVendors = npcVendorCodes.map((code) => ({
+    code,
+    sellableItems: getNpcSellableItems(code)
+      .map((item) => ({
+        code: `${item?.code ?? ''}`.trim(),
+        name: `${item?.name ?? item?.code ?? ''}`.trim(),
+        type: `${item?.type ?? ''}`.trim(),
+        level: Number(item?.level) || 0,
+        currency: `${item?.currency ?? ''}`.trim(),
+        sellPrice: Number(item?.sell_price) || 0,
+      }))
+      .filter((item) => item.code)
+      .sort(compareByCode),
+  }));
+
+  return {
+    resources: resourceOptions,
+    npcEvents,
+    npcVendors,
+    skillNames: [...CONFIG_EDITOR_SKILL_NAMES],
+    achievementTypes: [...CONFIG_EDITOR_ACHIEVEMENT_TYPES],
+    routines: await getRoutineEditorMetadata(),
+    descriptions: await buildConfigDescriptionPayload(),
+  };
 }
 
 async function readJsonBody(req) {
@@ -237,6 +460,20 @@ function classifyAchievement(item) {
   );
   if (completedAt) return 'completed';
 
+  if (Array.isArray(safe.objectives) && safe.objectives.length > 0) {
+    const objs = safe.objectives;
+    const completedCount = objs.filter(o => {
+      const cur = firstFiniteNumber(o.current, o.progress, o.value);
+      const tot = firstFiniteNumber(o.total, o.target);
+      return cur != null && tot != null && tot > 0 && cur >= tot;
+    }).length;
+    if (completedCount === objs.length) return 'completed';
+    if (completedCount > 0 || objs.some(o => firstFiniteNumber(o.current, o.progress, o.value) > 0)) {
+      return 'inProgress';
+    }
+    return 'notStarted';
+  }
+
   const current = firstFiniteNumber(
     safe.current,
     safe.current_progress,
@@ -289,6 +526,80 @@ function summarizeAchievements(list, totalHint = null) {
   return counts;
 }
 
+function normalizeObjectives(item) {
+  if (Array.isArray(item.objectives) && item.objectives.length > 0) {
+    return item.objectives.map(obj => ({
+      type: obj.type ?? null,
+      target: obj.target ?? null,
+      total: toFiniteIntOrNull(obj.total) ?? 0,
+      current: toFiniteIntOrNull(obj.current ?? obj.progress) ?? 0,
+    }));
+  }
+  if (item.type || item.total != null) {
+    return [{
+      type: item.type ?? null,
+      target: item.target ?? null,
+      total: toFiniteIntOrNull(item.total) ?? 0,
+      current: toFiniteIntOrNull(item.current ?? item.progress ?? item.value) ?? 0,
+    }];
+  }
+  return [];
+}
+
+function normalizeRewards(item) {
+  const rewards = item.rewards && typeof item.rewards === 'object' ? item.rewards : {};
+  return {
+    gold: toFiniteIntOrNull(rewards.gold) ?? 0,
+    items: Array.isArray(rewards.items)
+      ? rewards.items
+          .map(ri => ({
+            code: firstText(ri?.code, ''),
+            quantity: toFiniteIntOrNull(ri?.quantity) ?? 0,
+          }))
+          .filter(ri => ri.code)
+      : [],
+  };
+}
+
+function mergeAchievementData(accountList, definitionsList) {
+  const defMap = new Map();
+  for (const def of definitionsList) {
+    const code = firstText(def.code, def.name, '');
+    if (code) defMap.set(code, def);
+  }
+
+  return accountList.map(acct => {
+    const code = firstText(acct.code, acct.name, '');
+    const def = defMap.get(code) || {};
+
+    const objectives = normalizeObjectives(acct.objectives ? acct : def);
+
+    if (Array.isArray(acct.objectives)) {
+      for (let i = 0; i < acct.objectives.length && i < objectives.length; i++) {
+        const acctObj = acct.objectives[i];
+        const acctProgress = acctObj.current ?? acctObj.progress;
+        if (acctProgress != null) {
+          objectives[i].current = toFiniteIntOrNull(acctProgress) ?? objectives[i].current;
+        }
+      }
+    }
+
+    return {
+      code,
+      name: firstText(acct.name, def.name, code),
+      description: firstText(acct.description, def.description, ''),
+      points: toFiniteIntOrNull(acct.points ?? def.points) ?? 0,
+      objectives,
+      rewards: normalizeRewards(acct.rewards ? acct : def),
+      completed: acct.completed,
+      completed_at: acct.completed_at,
+      current: toFiniteIntOrNull(acct.current),
+      total: toFiniteIntOrNull(acct.total),
+      status: acct.status,
+    };
+  });
+}
+
 function normalizeAccountIdentity(details) {
   const safe = details && typeof details === 'object' ? details : {};
   const account = firstText(safe.account, safe.username, safe.name, safe.code) || null;
@@ -309,7 +620,7 @@ export async function startDashboardServer({
   port = process.env.DASHBOARD_PORT || 8091,
   basePath = process.env.DASHBOARD_BASE_PATH || '',
   rootDir = process.cwd(),
-  htmlFile = 'frontend/dashboard-phase1.html',
+  htmlFile = 'frontend/dashboard.html',
   heartbeatMs = 15_000,
   broadcastDebounceMs = 200,
   runtimeManager = null,
@@ -318,19 +629,35 @@ export async function startDashboardServer({
   const resolvedHeartbeatMs = toPositiveInt(heartbeatMs, 15_000);
   const resolvedDebounceMs = toPositiveInt(broadcastDebounceMs, 200);
   const htmlPath = resolve(rootDir, htmlFile);
+  const frontendDir = resolve(rootDir, 'frontend');
+
+  const STATIC_CONTENT_TYPES = {
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+  };
 
   if (!existsSync(htmlPath)) {
     throw new Error(`Dashboard HTML file not found: ${htmlPath}`);
   }
 
   const clients = new Set();
+  const sockets = new Set();
   let broadcastTimer = null;
+  let closing = false;
+  let closePromise = null;
+  let realtimeResourcesCleaned = false;
+  const closeFallbackMs = 2_000;
   function buildSnapshotPayload() {
     const snapshot = getUiSnapshot();
     const orderBoard = getOrderBoardSnapshot();
     return {
       ...snapshot,
       orders: Array.isArray(orderBoard.orders) ? orderBoard.orders : [],
+      bank: getBankSummary(),
     };
   }
 
@@ -371,6 +698,28 @@ export async function startDashboardServer({
     }
   }, resolvedHeartbeatMs);
 
+  function cleanupRealtimeResources() {
+    if (realtimeResourcesCleaned) return;
+    realtimeResourcesCleaned = true;
+
+    if (broadcastTimer) {
+      clearTimeout(broadcastTimer);
+      broadcastTimer = null;
+    }
+    clearInterval(heartbeatTimer);
+    unsubscribeUiEvents();
+    unsubscribeOrderBoardEvents();
+
+    for (const client of clients) {
+      try {
+        client.res.end();
+      } catch {
+        // No-op
+      }
+    }
+    clients.clear();
+  }
+
   const server = createServer(async (req, res) => {
     try {
       const method = req.method || 'GET';
@@ -390,6 +739,7 @@ export async function startDashboardServer({
               path: snapshot.path,
               hash: snapshot.hash,
               config: snapshot.config,
+              updatedAtMs: Date.now(),
             });
           } catch (err) {
             sendConfigError(res, err, 'config_get_failed');
@@ -422,7 +772,10 @@ export async function startDashboardServer({
           }
 
           try {
-            const validation = await validateBotConfig(body.config);
+            const { config: preparedConfig } = await prepareConfigForSave(body.config);
+            const { config: normalizedSubmitted } = await normalizeConfig(body.config);
+
+            const validation = await validateBotConfig(preparedConfig);
             if (!validation.ok) {
               sendError(
                 res,
@@ -448,11 +801,33 @@ export async function startDashboardServer({
               return;
             }
 
-            const saved = await saveConfigAtomically(body.config);
+            const { config: normalizedCurrent } = await normalizeConfig(current.config);
+            const restartReasons = [];
+            const seenRestartReasons = new Set();
+            for (const candidate of [
+              analyzeConfigRestartRequirements(normalizedCurrent, normalizedSubmitted),
+              analyzeConfigRestartRequirements(normalizedCurrent, preparedConfig),
+            ]) {
+              for (const reason of candidate.restartReasons) {
+                if (seenRestartReasons.has(reason)) continue;
+                seenRestartReasons.add(reason);
+                restartReasons.push(reason);
+              }
+            }
+
+            const restartInfo = {
+              requiresRestart: restartReasons.length > 0,
+              restartReasons,
+            };
+            const saved = await saveConfigAtomically(preparedConfig);
             sendJson(res, 200, {
               ok: true,
+              path: saved.path,
               hash: saved.hash,
               savedAtMs: saved.savedAtMs,
+              config: preparedConfig,
+              requiresRestart: restartInfo.requiresRestart,
+              restartReasons: restartInfo.restartReasons,
             });
           } catch (err) {
             sendConfigError(res, err, 'config_put_failed');
@@ -461,6 +836,21 @@ export async function startDashboardServer({
         }
 
         sendJson(res, 405, { error: 'method_not_allowed' });
+        return;
+      }
+
+      if (pathname === '/api/config/options') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { error: 'method_not_allowed' });
+          return;
+        }
+
+        try {
+          const optionsPayload = await buildConfigOptionsPayload();
+          sendJson(res, 200, optionsPayload);
+        } catch (err) {
+          sendConfigError(res, err, 'config_options_failed');
+        }
         return;
       }
 
@@ -488,7 +878,8 @@ export async function startDashboardServer({
         }
 
         try {
-          const result = await validateBotConfig(body.config);
+          const { config: preparedConfig } = await prepareConfigForSave(body.config);
+          const result = await validateBotConfig(preparedConfig);
           sendJson(res, 200, result);
         } catch (err) {
           sendConfigError(res, err, 'config_validate_failed');
@@ -501,7 +892,12 @@ export async function startDashboardServer({
           sendError(res, 405, 'method_not_allowed', 'Only GET is allowed', 'method_not_allowed');
           return;
         }
-        if (!runtimeManager || typeof runtimeManager.getStatus !== 'function') {
+        const getStatus = runtimeManager && typeof runtimeManager.getStatus === 'function'
+          ? runtimeManager.getStatus.bind(runtimeManager)
+          : (runtimeManager && typeof runtimeManager.status === 'function'
+            ? runtimeManager.status.bind(runtimeManager)
+            : null);
+        if (!getStatus) {
           sendError(
             res,
             503,
@@ -512,7 +908,7 @@ export async function startDashboardServer({
           return;
         }
 
-        sendJson(res, 200, runtimeManager.getStatus());
+        sendJson(res, 200, getStatus());
         return;
       }
 
@@ -521,7 +917,20 @@ export async function startDashboardServer({
           sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
           return;
         }
-        if (!runtimeManager || typeof runtimeManager.reloadConfig !== 'function') {
+        const hotReload = runtimeManager && typeof runtimeManager.hotReloadConfig === 'function'
+          ? runtimeManager.hotReloadConfig.bind(runtimeManager)
+          : (runtimeManager && typeof runtimeManager.reloadConfig === 'function'
+            ? runtimeManager.reloadConfig.bind(runtimeManager)
+            : (runtimeManager && typeof runtimeManager.reload === 'function'
+              ? runtimeManager.reload.bind(runtimeManager)
+              : null));
+        const getStatus = runtimeManager && typeof runtimeManager.getStatus === 'function'
+          ? runtimeManager.getStatus.bind(runtimeManager)
+          : (runtimeManager && typeof runtimeManager.status === 'function'
+            ? runtimeManager.status.bind(runtimeManager)
+            : null);
+
+        if (!hotReload) {
           sendError(
             res,
             503,
@@ -533,11 +942,11 @@ export async function startDashboardServer({
         }
 
         try {
-          const status = await runtimeManager.reloadConfig();
+          const operationResult = await hotReload();
           sendJson(res, 200, {
             ok: true,
-            operation: 'reload_config',
-            status,
+            operation: 'hot_reload_config',
+            status: getStatus ? getStatus() : operationResult,
           });
         } catch (err) {
           sendRuntimeControlError(res, err, 'reload_config_failed');
@@ -574,6 +983,142 @@ export async function startDashboardServer({
         return;
       }
 
+      if (pathname === '/api/control/clear-order-board') {
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+        try {
+          const result = clearOrderBoard('dashboard_manual_clear');
+          if (isRuntimeActive(runtimeManager)) {
+            await refreshGearState({ force: true });
+          }
+          const republished = publishDesiredOrdersForTrackedCharacters();
+          sendJson(res, 200, {
+            ok: true,
+            operation: 'clear_order_board',
+            cleared: result.cleared,
+            republished,
+          });
+        } catch (err) {
+          sendError(res, 500, 'service_error', err?.message || 'Failed to clear order board', 'clear_order_board_failed');
+        }
+        return;
+      }
+
+      if (pathname === '/api/control/clear-gear-state') {
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+        try {
+          const result = clearGearState('dashboard_manual_clear');
+          sendJson(res, 200, {
+            ok: true,
+            operation: 'clear_gear_state',
+            cleared: result.cleared,
+          });
+        } catch (err) {
+          sendError(res, 500, 'service_error', err?.message || 'Failed to clear gear state', 'clear_gear_state_failed');
+        }
+        return;
+      }
+
+      // --- Sandbox endpoints (only available on sandbox server) ---
+
+      if (pathname === '/api/sandbox/status') {
+        if (method !== 'GET') {
+          sendError(res, 405, 'method_not_allowed', 'Only GET is allowed', 'method_not_allowed');
+          return;
+        }
+        const sandbox = isSandbox();
+        const characters = sandbox
+          ? (getUiSnapshot()?.characters || []).map(c => c?.name).filter(Boolean)
+          : [];
+        sendJson(res, 200, { sandbox, characters });
+        return;
+      }
+
+      if (pathname.startsWith('/api/sandbox/') && pathname !== '/api/sandbox/status') {
+        if (!isSandbox()) {
+          sendJson(res, 404, { error: 'not_found' });
+          return;
+        }
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+
+        const sandboxAction = pathname.slice('/api/sandbox/'.length);
+
+        let body = null;
+        if (sandboxAction !== 'reset-account') {
+          try {
+            body = await readJsonBody(req);
+          } catch (err) {
+            sendError(res, 400, 'bad_request', err?.detail || 'Invalid JSON body', 'bad_json');
+            return;
+          }
+          if (!isObject(body)) {
+            sendError(res, 400, 'bad_request', 'Body must be a JSON object', 'invalid_payload');
+            return;
+          }
+        }
+
+        try {
+          let result;
+          switch (sandboxAction) {
+            case 'give-gold': {
+              const { character, quantity } = body;
+              if (!character || !quantity) {
+                sendError(res, 400, 'bad_request', 'character and quantity are required', 'missing_fields');
+                return;
+              }
+              result = await sandboxGiveGold(character, Number(quantity));
+              break;
+            }
+            case 'give-item': {
+              const { character, code, quantity } = body;
+              if (!character || !code || !quantity) {
+                sendError(res, 400, 'bad_request', 'character, code, and quantity are required', 'missing_fields');
+                return;
+              }
+              result = await sandboxGiveItem(character, code, Number(quantity));
+              break;
+            }
+            case 'give-xp': {
+              const { character, type, amount } = body;
+              if (!character || !type || !amount) {
+                sendError(res, 400, 'bad_request', 'character, type, and amount are required', 'missing_fields');
+                return;
+              }
+              result = await sandboxGiveXp(character, type, Number(amount));
+              break;
+            }
+            case 'spawn-event': {
+              const { code } = body;
+              if (!code) {
+                sendError(res, 400, 'bad_request', 'code is required', 'missing_fields');
+                return;
+              }
+              result = await sandboxSpawnEvent(code);
+              break;
+            }
+            case 'reset-account': {
+              result = await sandboxResetAccount();
+              break;
+            }
+            default:
+              sendJson(res, 404, { error: 'not_found' });
+              return;
+          }
+          sendJson(res, 200, { ok: true, data: result });
+        } catch (err) {
+          sendStructuredError(res, err, 'sandbox_action_failed');
+        }
+        return;
+      }
+
       if (method !== 'GET') {
         sendJson(res, 405, { error: 'method_not_allowed' });
         return;
@@ -582,8 +1127,37 @@ export async function startDashboardServer({
       if (pathname === '/') {
         try {
           let html = readFileSync(htmlPath, 'utf-8');
-          // Inject basePath so frontend API calls use the correct prefix
-          html = html.replace('</head>', `<script>window.__BASE_PATH__ = ${JSON.stringify(prefix)};</script>\n</head>`);
+
+          // Inline CSS files referenced by relative href (skip external CDN links)
+          html = html.replace(
+            /<link\s+rel="stylesheet"\s+href="((?:css\/)[^"]+)"[^>]*>/g,
+            (match, relPath) => {
+              try {
+                const content = readFileSync(resolve(frontendDir, relPath), 'utf-8');
+                return `<style>\n${content}\n</style>`;
+              } catch {
+                return match;
+              }
+            }
+          );
+
+          // Inline JS files referenced by relative src
+          html = html.replace(
+            /<script\s+defer\s+src="((?:js\/)[^"]+)"><\/script>/g,
+            (match, relPath) => {
+              try {
+                const content = readFileSync(resolve(frontendDir, relPath), 'utf-8');
+                return `<script>\n${content}\n</script>`;
+              } catch {
+                return match;
+              }
+            }
+          );
+
+          // Only inject __BASE_PATH__ for API fetch calls (no <base> tag needed)
+          html = html.replace('</head>',
+            `<script>window.__BASE_PATH__ = ${JSON.stringify(prefix)};</script>\n</head>`);
+
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -602,6 +1176,24 @@ export async function startDashboardServer({
 
       if (pathname === '/api/ui/orders') {
         sendJson(res, 200, getOrderBoardSnapshot());
+        return;
+      }
+
+      if (pathname === '/api/ui/bank') {
+        sendJson(res, 200, getBankSummary({ includeItems: true }));
+        return;
+      }
+
+      if (pathname === '/api/items') {
+        let items;
+        try {
+          items = findItems({});
+        } catch {
+          items = [];
+        }
+        const slim = items.map(i => ({ code: i.code, name: i.name, type: i.type, level: i.level }));
+        slim.sort((a, b) => a.code.localeCompare(b.code));
+        sendJson(res, 200, slim);
         return;
       }
 
@@ -664,19 +1256,25 @@ export async function startDashboardServer({
           }
 
           const params = parseAchievementQuery(url.searchParams);
-          const achievementsResult = await getCachedAccountAchievements(identity.account, params);
+          const [achievementsResult, definitionsResult] = await Promise.all([
+            getCachedAccountAchievements(identity.account, params),
+            getCachedAchievementDefinitions(),
+          ]);
+
           const page = normalizeAchievementPage(achievementsResult.data);
-          const counts = summarizeAchievements(page.list, page.meta.total);
+          const defPage = normalizeAchievementPage(definitionsResult.data);
+          const merged = mergeAchievementData(page.list, defPage.list);
+          const counts = summarizeAchievements(merged, page.meta.total);
 
           sendJson(res, 200, {
             account: identity.account,
-            achievements: page.list,
+            achievements: merged,
             metadata: {
               page: page.meta.page,
               size: page.meta.size,
               total: page.meta.total,
               pages: page.meta.pages,
-              returned: page.list.length,
+              returned: merged.length,
               counts,
               query: params,
               detailsFetchedAtMs: detailsResult.fetchedAtMs,
@@ -716,7 +1314,43 @@ export async function startDashboardServer({
         return;
       }
 
+      const logMatch = pathname.match(/^\/api\/ui\/character\/([^/]+)\/logs$/);
+      if (logMatch) {
+        let decodedName = '';
+        try {
+          decodedName = decodeURIComponent(logMatch[1]).trim();
+        } catch {
+          sendError(res, 400, 'bad_request', 'Invalid character name encoding', 'bad_character_name');
+          return;
+        }
+
+        if (!decodedName) {
+          sendError(res, 400, 'bad_request', 'Character name is required', 'character_name_required');
+          return;
+        }
+
+        const payload = queryUiCharacterLogs(decodedName, {
+          level: firstText(url.searchParams.get('level')),
+          scope: firstText(url.searchParams.get('scope')),
+          event: firstText(url.searchParams.get('event')),
+          reasonCode: firstText(url.searchParams.get('reasonCode')),
+          limit: firstText(url.searchParams.get('limit')),
+          beforeAt: firstText(url.searchParams.get('beforeAt')),
+        });
+        if (!payload) {
+          sendError(res, 404, 'character_not_found', `Unknown character "${decodedName}"`);
+          return;
+        }
+        sendJson(res, 200, payload);
+        return;
+      }
+
       if (pathname === '/api/ui/events') {
+        if (closing) {
+          sendError(res, 503, 'server_shutting_down', 'Dashboard is shutting down', 'server_shutting_down');
+          return;
+        }
+
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -741,29 +1375,49 @@ export async function startDashboardServer({
         return;
       }
 
+      // Static file serving for CSS/JS assets
+      if (pathname.startsWith('/css/') || pathname.startsWith('/js/')) {
+        const filePath = resolve(frontendDir, pathname.slice(1));
+        // Path traversal protection
+        if (!filePath.startsWith(frontendDir + '/')) {
+          sendJson(res, 403, { error: 'forbidden' });
+          return;
+        }
+        const ext = extname(filePath);
+        const contentType = STATIC_CONTENT_TYPES[ext];
+        if (!contentType) {
+          sendJson(res, 404, { error: 'not_found' });
+          return;
+        }
+        try {
+          const content = readFileSync(filePath);
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          });
+          res.end(content);
+        } catch {
+          sendJson(res, 404, { error: 'not_found' });
+        }
+        return;
+      }
+
       sendJson(res, 404, { error: 'not_found' });
     } catch (err) {
       sendStructuredError(res, err, 'dashboard_server_error');
     }
   });
 
-  server.on('close', () => {
-    if (broadcastTimer) {
-      clearTimeout(broadcastTimer);
-      broadcastTimer = null;
-    }
-    clearInterval(heartbeatTimer);
-    unsubscribeUiEvents();
-    unsubscribeOrderBoardEvents();
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => {
+      sockets.delete(socket);
+    });
+  });
 
-    for (const client of clients) {
-      try {
-        client.res.end();
-      } catch {
-        // No-op
-      }
-    }
-    clients.clear();
+  server.on('close', () => {
+    cleanupRealtimeResources();
+    sockets.clear();
   });
 
   await new Promise((resolveStart, rejectStart) => {
@@ -781,9 +1435,39 @@ export async function startDashboardServer({
     port: boundPort,
     server,
     async close() {
-      await new Promise((resolveClose) => {
-        server.close(() => resolveClose());
+      if (closePromise) return closePromise;
+      closing = true;
+      cleanupRealtimeResources();
+
+      closePromise = new Promise((resolveClose) => {
+        const fallbackTimer = setTimeout(() => {
+          try {
+            server.closeAllConnections?.();
+          } catch {
+            // No-op
+          }
+          for (const socket of sockets) {
+            try {
+              socket.destroy();
+            } catch {
+              // No-op
+            }
+          }
+        }, closeFallbackMs);
+        fallbackTimer.unref?.();
+
+        try {
+          server.close(() => {
+            clearTimeout(fallbackTimer);
+            resolveClose();
+          });
+        } catch {
+          clearTimeout(fallbackTimer);
+          resolveClose();
+        }
       });
+
+      return closePromise;
     },
   };
 }

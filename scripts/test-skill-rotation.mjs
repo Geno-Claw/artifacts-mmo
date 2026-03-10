@@ -1,12 +1,34 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
 
+const { CharacterContext } = await import('../src/context.mjs');
 const { SkillRotation } = await import('../src/services/skill-rotation.mjs');
-const { SkillRotationRoutine } = await import('../src/routines/skill-rotation.mjs');
+const { SkillRotationRoutine } = await import('../src/routines/skill-rotation/index.mjs');
+const gameData = await import('../src/services/game-data.mjs');
+const gearOptimizer = await import('../src/services/gear-optimizer.mjs');
+const orderBoard = await import('../src/services/order-board.mjs');
+const orderPriority = await import('../src/services/order-priority.mjs');
 const bankOps = await import('../src/services/bank-ops.mjs');
 const inventoryManager = await import('../src/services/inventory-manager.mjs');
+const { fulfillNpcBuyOrderClaim } = await import('../src/routines/skill-rotation/order-claims.mjs');
+
+const {
+  _resetOrderBoardForTests: resetOrderBoardForTests,
+  createOrMergeOrder,
+  getOrderBoardSnapshot,
+  initializeOrderBoard,
+  listClaimableOrders,
+} = orderBoard;
+
+const {
+  _setDepsForTests: setOrderPriorityDepsForTests,
+  _resetForTests: resetOrderPriorityForTests,
+} = orderPriority;
 
 const {
   _setApiClientForTests: setBankOpsApiForTests,
@@ -15,9 +37,20 @@ const {
 
 const {
   getBankItems,
+  applyBankGoldDelta,
   _setApiClientForTests: setInventoryApiForTests,
   _resetForTests: resetInventoryForTests,
 } = inventoryManager;
+
+const {
+  _setCachesForTests: setGameDataCachesForTests,
+  _resetForTests: resetGameDataForTests,
+} = gameData;
+
+const {
+  _setDepsForTests: setGearOptimizerDepsForTests,
+  _resetDepsForTests: resetGearOptimizerDepsForTests,
+} = gearOptimizer;
 
 function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
   return {
@@ -33,6 +66,84 @@ function makeCtx({ alchemyLevel = 1, skillLevels = {}, itemCounts = {} } = {}) {
   };
 }
 
+function makeCombatCtx({
+  hp = 100,
+  maxHp = 100,
+  attackFire = 50,
+  initiative = 10,
+  itemCounts = {},
+} = {}) {
+  let character = {
+    name: 'Tester',
+    hp,
+    max_hp: maxHp,
+    attack_fire: attackFire,
+    initiative,
+    inventory: [],
+  };
+
+  return {
+    name: 'Tester',
+    get() {
+      return character;
+    },
+    hpPercent() {
+      return Math.floor((character.hp / character.max_hp) * 100);
+    },
+    applyActionResult(result) {
+      if (result?.character && typeof result.character === 'object') {
+        character = { ...character, ...result.character };
+      }
+    },
+    itemCount(code) {
+      return itemCounts[code] || 0;
+    },
+    inventoryCount() {
+      return 1;
+    },
+    inventoryCapacity() {
+      return 20;
+    },
+    inventoryFull() {
+      return false;
+    },
+    skillLevel() {
+      return 10;
+    },
+    settings() {
+      return {
+        potions: {
+          combat: {
+            enabled: false,
+          },
+        },
+      };
+    },
+  };
+}
+
+async function withMonsterCache(monsters, testFn) {
+  resetGameDataForTests();
+  setGameDataCachesForTests({
+    monsters: monsters.map(monster => [monster.code, monster]),
+  });
+  try {
+    return await testFn();
+  } finally {
+    resetGameDataForTests();
+  }
+}
+
+async function withMockFetch(fetchImpl, testFn) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  try {
+    return await testFn();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 function makeGameDataStub(overrides = {}) {
   return {
     findResourcesBySkill() { return []; },
@@ -41,6 +152,7 @@ function makeGameDataStub(overrides = {}) {
     async getBankItems() { return new Map(); },
     resolveRecipeChain() { return null; },
     canFulfillPlan() { return false; },
+    canFulfillPlanWithBank() { return { ok: false, deficits: [] }; },
     isTaskReward() { return false; },
     ...overrides,
   };
@@ -67,6 +179,44 @@ function makeRecipe(code, skill, level) {
       _testCode: code,
     },
   };
+}
+
+function installOrderPriorityDeps(itemsByCode = new Map()) {
+  const equipmentTypes = new Set([
+    'weapon',
+    'shield',
+    'helmet',
+    'body_armor',
+    'leg_armor',
+    'boots',
+    'ring',
+    'amulet',
+    'bag',
+  ]);
+
+  setOrderPriorityDepsForTests({
+    gameDataSvc: {
+      getItem(code) {
+        return itemsByCode.get(code) || null;
+      },
+      isEquipmentType(item) {
+        return item != null && equipmentTypes.has(item.type);
+      },
+    },
+  });
+}
+
+async function withTempOrderBoard(testFn) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'skill-rotation-order-board-'));
+  const boardPath = join(tempDir, 'order-board.json');
+  try {
+    resetOrderBoardForTests();
+    await initializeOrderBoard({ path: boardPath });
+    await testFn({ boardPath });
+  } finally {
+    resetOrderBoardForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function testAlchemyFallbackToGatherAtLevel1() {
@@ -106,6 +256,7 @@ async function testAlchemyCraftingSelectsViableRecipe() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -136,6 +287,7 @@ async function testAlchemyCraftingNonViableFallsBackToGathering() {
       craftSkill === 'alchemy' && maxLevel >= 5 ? [recipe] : [],
     resolveRecipeChain: () => impossiblePlan,
     canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
     findResourcesBySkill: () => [gatherFallback],
     getResourceLocation: async () => ({ x: 2, y: 2 }),
   });
@@ -176,6 +328,7 @@ async function testCraftingXpPrefersBankOnlyRecipe() {
     getBankItems: async () => new Map([['raw_shrimp', 20]]),
     resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -216,6 +369,7 @@ async function testCraftingXpFallsBackToHighestLevelWhenNoBankOnly() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -256,6 +410,7 @@ async function testCraftingSkipsTemporarilyBlockedRecipe() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: (craft) => planByRecipe.get(craft._testCode) || null,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -285,6 +440,7 @@ async function testUnwinnableCombatRecipeIsTemporarilyBlocked() {
     getBankItems: async () => new Map(),
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => true,
+      canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -323,6 +479,7 @@ async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
   const stub = makeGameDataStub({
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -350,6 +507,130 @@ async function testOrderBoardCreatesGatherOrderForUnmetGatherSkill() {
   assert.equal(createdOrders[0].quantity, 3);
 }
 
+async function testOrderBoardScalesGatherOrderToGoalQty() {
+  const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'hard_ore',
+      resource: { code: 'hard_rocks', skill: 'mining', level: 40 },
+      quantity: 3,
+    },
+  ];
+  const createdOrders = [];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { weaponcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  // goalQty=10 → order should be 3 * 10 = 30
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { mining: 5 }, itemCounts: {} }),
+    new Map(),
+    10,
+  );
+  assert.equal(candidate, null, 'recipe should be rejected');
+  assert.equal(createdOrders.length, 1, 'a gather order should be created');
+  assert.equal(createdOrders[0].quantity, 30, 'order quantity should be step.quantity * goalQty');
+}
+
+async function testOrderBoardScalesGatherOrderSubtractsExisting() {
+  const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'hard_ore',
+      resource: { code: 'hard_rocks', skill: 'mining', level: 40 },
+      quantity: 3,
+    },
+  ];
+  const createdOrders = [];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { weaponcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: (payload) => {
+        createdOrders.push(payload);
+        return payload;
+      },
+    },
+  );
+
+  // goalQty=10 → need 30, bank has 5, inv has 3 → order for 22
+  const bank = new Map([['hard_ore', 5]]);
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { mining: 5 }, itemCounts: { hard_ore: 3 } }),
+    bank,
+    10,
+  );
+  assert.equal(candidate, null, 'recipe should be rejected');
+  assert.equal(createdOrders.length, 1, 'a gather order should be created');
+  assert.equal(createdOrders[0].quantity, 22, 'order quantity should subtract bank and inventory');
+}
+
+async function testBuildCraftCandidateScalesFightDeficitToGoalQty() {
+  const recipe = makeRecipe('wolf_hat', 'gearcrafting', 20);
+  const plan = [
+    {
+      type: 'fight',
+      itemCode: 'wolf_pelt',
+      monster: { code: 'wolf', level: 20 },
+      quantity: 2,
+    },
+    { type: 'craft', itemCode: 'wolf_hat', recipe: recipe.craft, quantity: 1 },
+  ];
+
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => true,
+    canFulfillPlanWithBank: () => ({ ok: true, deficits: [] }),
+  });
+
+  const rotation = new SkillRotation(
+    { weights: { gearcrafting: 1 }, orderBoard: { enabled: true } },
+    {
+      gameDataSvc: stub,
+      findBestCombatTargetFn: async () => null,
+      createOrMergeOrderFn: () => ({}),
+    },
+  );
+
+  // goalQty=5, step.quantity=2, bank=0, inv=0 → deficit = 10
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: {}, itemCounts: {} }),
+    new Map(),
+    5,
+  );
+  assert.ok(candidate, 'candidate should be returned');
+  assert.equal(candidate.needsCombat, true, 'should need combat');
+  assert.equal(candidate.fightSteps[0].deficit, 10, 'fight deficit should be step.quantity * goalQty');
+}
+
 async function testOrderBoardCanDisableOrderCreation() {
   const recipe = makeRecipe('hard_steel_blade', 'weaponcrafting', 30);
   const plan = [
@@ -365,6 +646,7 @@ async function testOrderBoardCanDisableOrderCreation() {
   const stub = makeGameDataStub({
     resolveRecipeChain: () => plan,
     canFulfillPlan: () => false,
+    canFulfillPlanWithBank: () => ({ ok: false, deficits: [] }),
   });
 
   const rotation = new SkillRotation(
@@ -421,6 +703,1152 @@ async function testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop() {
   assert.equal(createdOrders[0].sourceCode, 'wolf');
   assert.equal(createdOrders[0].itemCode, 'wolf_pelt');
   assert.equal(createdOrders[0].quantity, 2);
+}
+
+async function testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'cheese',
+      itemCode: 'cheese',
+      sourceType: 'craft',
+      sourceCode: 'cheese',
+      craftSkill: 'alchemy',
+      sourceLevel: 1,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'cheese',
+      craft: { skill: 'alchemy', level: 1, items: [] },
+    });
+    routine._resolveRecipeChain = () => [
+      {
+        type: 'fight',
+        itemCode: 'milk_bucket',
+        quantity: 1,
+        monster: { code: 'cow', level: 8 },
+      },
+    ];
+    routine._canFulfillCraftClaimPlan = () => true;
+    routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
+    let simCalls = 0;
+    routine._simulateClaimFight = async () => {
+      simCalls += 1;
+      return { simResult: { win: false, hpLostPercent: 100 } };
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { alchemy: 10 } }),
+      'alchemy',
+    );
+
+    assert.equal(claim, null, 'unwinnable craft claim should be skipped');
+    assert.equal(simCalls, 1, 'fight simulation should run once for required fight step');
+    assert.equal(
+      listClaimableOrders({ sourceType: 'craft', craftSkill: 'alchemy', charName: 'Tester' }).length,
+      0,
+      'skipped order should be blocked for this character',
+    );
+
+    const snapshot = getOrderBoardSnapshot();
+    const cheeseOrder = snapshot.orders.find(o => o.id === created.id);
+    assert.ok(cheeseOrder, 'cheese craft order should still exist in snapshot');
+    const blockedUntil = Number(cheeseOrder.blockedByChar?.Tester || 0);
+    assert.ok(blockedUntil > Date.now(), 'blocked retry timestamp should be set for char');
+  });
+}
+
+async function testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'rare_potion',
+      itemCode: 'rare_potion',
+      sourceType: 'craft',
+      sourceCode: 'rare_potion',
+      craftSkill: 'alchemy',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'rare_potion',
+      craft: { skill: 'alchemy', level: 1, items: [] },
+    });
+    routine._resolveRecipeChain = () => [
+      { type: 'bank', itemCode: 'event_core', quantity: 1 },
+    ];
+    routine._canFulfillCraftClaimPlan = () => true;
+    routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
+    let simCalls = 0;
+    routine._simulateClaimFight = async () => {
+      simCalls += 1;
+      return { simResult: { win: true, hpLostPercent: 20 } };
+    };
+    routine._isTaskRewardCode = () => false;
+    let proactiveCalls = 0;
+    routine._maybeRunProactiveExchange = async () => {
+      proactiveCalls += 1;
+      return { attempted: false, exchanged: 0, resolved: false, reason: 'deferred' };
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { alchemy: 10 } }),
+      'alchemy',
+    );
+
+    assert.equal(claim, null, 'claim should be skipped when bank dependency is missing');
+    assert.equal(simCalls, 0, 'fight simulation should not run when bank step already fails');
+    assert.equal(proactiveCalls, 0, 'non-task reward bank dependency should not trigger proactive exchange');
+    assert.equal(
+      listClaimableOrders({ sourceType: 'craft', craftSkill: 'alchemy', charName: 'Tester' }).length,
+      0,
+      'skipped order should be blocked for this character',
+    );
+  });
+}
+
+async function testAcquireCraftClaimRetriesTaskRewardDependencyWithProactiveExchange() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        createOrders: false,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'satchel',
+      itemCode: 'satchel',
+      sourceType: 'craft',
+      sourceCode: 'satchel',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    let bankState = new Map();
+    routine._getBankItems = async () => bankState;
+    routine._canClaimCraftOrderNow = async (_ctx, _order, _craftSkill, bank) => {
+      const hasJasper = (bank.get('jasper_crystal') || 0) >= 1;
+      if (!hasJasper) {
+        return { ok: false, reason: 'missing_bank_dependency:jasper_crystal' };
+      }
+      return { ok: true, reason: '' };
+    };
+    routine._isTaskRewardCode = (code) => code === 'jasper_crystal';
+
+    let proactiveCalls = 0;
+    routine._maybeRunProactiveExchange = async () => {
+      proactiveCalls += 1;
+      bankState = new Map([['jasper_crystal', 1]]);
+      return { attempted: true, exchanged: 1, resolved: true, reason: 'targets_met' };
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { gearcrafting: 10 } }),
+      'gearcrafting',
+    );
+
+    assert.ok(claim, 'claim should succeed after proactive exchange satisfies missing task reward');
+    assert.equal(proactiveCalls, 1, 'proactive exchange should run once for missing task reward dependency');
+  });
+}
+
+async function testAcquireCraftClaimSucceedsWhenPrechecksPass() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'fang_elixir',
+      itemCode: 'fang_elixir',
+      sourceType: 'craft',
+      sourceCode: 'fang_elixir',
+      craftSkill: 'alchemy',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map([['empty_vial', 1]]);
+    routine._getCraftClaimItem = () => ({
+      code: 'fang_elixir',
+      craft: { skill: 'alchemy', level: 1, items: [] },
+    });
+    routine._resolveRecipeChain = () => [
+      {
+        type: 'gather',
+        itemCode: 'herb',
+        quantity: 1,
+        resource: { code: 'herb_patch', skill: 'alchemy', level: 1 },
+      },
+      { type: 'bank', itemCode: 'empty_vial', quantity: 1 },
+      {
+        type: 'fight',
+        itemCode: 'wolf_fang',
+        quantity: 1,
+        monster: { code: 'wolf', level: 5 },
+      },
+    ];
+    routine._canFulfillCraftClaimPlan = () => true;
+    routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 40 } });
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { alchemy: 10 } }),
+      'alchemy',
+    );
+
+    assert.ok(claim, 'precheck-passing craft order should be claimed');
+    assert.equal(claim?.sourceType, 'craft');
+    assert.equal(claim?.craftSkill, 'alchemy');
+  });
+}
+
+async function testAcquireGatherClaimPrioritizesToolOrders() {
+  await withTempOrderBoard(async () => {
+    installOrderPriorityDeps(new Map([
+      ['priority_tool', { code: 'priority_tool', type: 'weapon', subtype: 'tool' }],
+      ['priority_resource', { code: 'priority_resource', type: 'resource' }],
+      ['priority_weapon', { code: 'priority_weapon', type: 'weapon' }],
+      ['priority_gear', { code: 'priority_gear', type: 'ring' }],
+    ]));
+
+    try {
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+        },
+      });
+      routine.rotation = { currentSkill: 'mining' };
+
+      // Reverse of desired priority to verify sorting is applied.
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r1',
+        itemCode: 'priority_gear',
+        sourceType: 'gather',
+        sourceCode: 'rocks_gear',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r2',
+        itemCode: 'priority_weapon',
+        sourceType: 'gather',
+        sourceCode: 'rocks_weapon',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r3',
+        itemCode: 'priority_resource',
+        sourceType: 'gather',
+        sourceCode: 'rocks_resource',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'r4',
+        itemCode: 'priority_tool',
+        sourceType: 'gather',
+        sourceCode: 'rocks_tool',
+        gatherSkill: 'mining',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+
+      const claim = await routine._acquireGatherOrderClaim({ name: 'Tester' });
+      assert.equal(claim?.itemCode, 'priority_tool', 'gather claim should prioritize tool orders first');
+    } finally {
+      resetOrderPriorityForTests();
+    }
+  });
+}
+
+async function testAcquireCombatClaimPrioritizesToolOrders() {
+  await withTempOrderBoard(async () => {
+    installOrderPriorityDeps(new Map([
+      ['fight_tool', { code: 'fight_tool', type: 'weapon', subtype: 'tool' }],
+      ['fight_resource', { code: 'fight_resource', type: 'resource' }],
+      ['fight_weapon', { code: 'fight_weapon', type: 'weapon' }],
+      ['fight_gear', { code: 'fight_gear', type: 'helmet' }],
+    ]));
+
+    try {
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+        },
+      });
+      routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 5 } });
+
+      // Reverse of desired priority to verify sorting is applied.
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c1',
+        itemCode: 'fight_gear',
+        sourceType: 'fight',
+        sourceCode: 'rat_gear',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c2',
+        itemCode: 'fight_weapon',
+        sourceType: 'fight',
+        sourceCode: 'rat_weapon',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c3',
+        itemCode: 'fight_resource',
+        sourceType: 'fight',
+        sourceCode: 'rat_resource',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'c4',
+        itemCode: 'fight_tool',
+        sourceType: 'fight',
+        sourceCode: 'rat_tool',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+
+      const claim = await routine._acquireCombatOrderClaim({ name: 'Tester' });
+      assert.equal(claim?.itemCode, 'fight_tool', 'combat claim should prioritize tool orders first');
+    } finally {
+      resetOrderPriorityForTests();
+    }
+  });
+}
+
+async function testAcquireCraftClaimPrioritizesToolOrders() {
+  await withTempOrderBoard(async () => {
+    installOrderPriorityDeps(new Map([
+      ['craft_tool', { code: 'craft_tool', type: 'weapon', subtype: 'tool' }],
+      ['craft_resource', { code: 'craft_resource', type: 'resource' }],
+      ['craft_weapon', { code: 'craft_weapon', type: 'weapon' }],
+      ['craft_gear', { code: 'craft_gear', type: 'body_armor' }],
+    ]));
+
+    try {
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+        },
+      });
+      routine._getBankItems = async () => new Map();
+      routine._canClaimCraftOrderNow = async () => ({ ok: true, reason: '' });
+
+      // Reverse of desired priority to verify sorting is applied.
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k1',
+        itemCode: 'craft_gear',
+        sourceType: 'craft',
+        sourceCode: 'craft_gear',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k2',
+        itemCode: 'craft_weapon',
+        sourceType: 'craft',
+        sourceCode: 'craft_weapon',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k3',
+        itemCode: 'craft_resource',
+        sourceType: 'craft',
+        sourceCode: 'craft_resource',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+      createOrMergeOrder({
+        requesterName: 'CrafterA',
+        recipeCode: 'k4',
+        itemCode: 'craft_tool',
+        sourceType: 'craft',
+        sourceCode: 'craft_tool',
+        craftSkill: 'alchemy',
+        sourceLevel: 1,
+        quantity: 1,
+      });
+
+      const claim = await routine._acquireCraftOrderClaim(
+        makeCtx({ skillLevels: { alchemy: 10 } }),
+        'alchemy',
+      );
+      assert.equal(claim?.itemCode, 'craft_tool', 'craft claim should prioritize tool orders first');
+    } finally {
+      resetOrderPriorityForTests();
+    }
+  });
+}
+
+async function testCraftFightStepSkipsCombatWhenSimUnwinnable() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => null;
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'cheese', craft: { skill: 'alchemy', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'fight',
+      itemCode: 'milk_bucket',
+      quantity: 1,
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+    }],
+    bankChecked: true,
+    forceRotate: async () => null,
+    blockCurrentRecipe: () => true,
+  };
+
+  let handledArgs = null;
+  routine._equipForCraftFight = async () => ({ simResult: { win: false, hpLostPercent: 100 } });
+  routine._handleUnwinnableCraftFight = async (_ctx, args) => {
+    handledArgs = args;
+    return true;
+  };
+
+  const result = await routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+  });
+
+  assert.equal(result, true);
+  assert.ok(handledArgs, 'unwinnable handler should be called');
+  assert.equal(handledArgs.monsterCode, 'cow');
+  assert.equal(handledArgs.itemCode, 'milk_bucket');
+}
+
+async function testCraftFightStepTreatsReadinessUnwinnableAsNonViable() {
+  await withMonsterCache([
+    {
+      code: 'boar',
+      hp: 100,
+      attack_fire: 120,
+    },
+  ], async () => {
+    const routine = new SkillRotationRoutine();
+    routine._ensureOrderClaim = async () => null;
+    routine.rotation = {
+      currentSkill: 'alchemy',
+      goalTarget: 10,
+      goalProgress: 0,
+      recipe: { code: 'stew', craft: { skill: 'alchemy', level: 1, items: [] } },
+      productionPlan: [{
+        type: 'fight',
+        itemCode: 'boar_meat',
+        quantity: 1,
+        monster: { code: 'boar', level: 8 },
+        monsterLoc: { x: 2, y: 2 },
+      }],
+      bankChecked: true,
+      forceRotate: async () => null,
+      blockCurrentRecipe: () => true,
+    };
+
+    let handledArgs = null;
+    routine._equipForCraftFight = async () => ({ simResult: { win: true, hpLostPercent: 10 }, ready: true });
+    routine._handleUnwinnableCraftFight = async (_ctx, args) => {
+      handledArgs = args;
+      return true;
+    };
+
+    const result = await routine._executeCrafting(makeCombatCtx({
+      hp: 50,
+      maxHp: 100,
+      attackFire: 50,
+    }));
+
+    assert.equal(result, true);
+    assert.ok(handledArgs, 'readiness-based unwinnable path should reuse craft fight handler');
+    assert.equal(handledArgs.monsterCode, 'boar');
+    assert.equal(handledArgs.itemCode, 'boar_meat');
+  });
+}
+
+async function testCraftGatherStepInsufficientSkillRotatesBeforeGathering() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => null;
+
+  let rotateCalls = 0;
+  let blockCalls = 0;
+  routine.rotation = {
+    currentSkill: 'gearcrafting',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'ash_plank', craft: { skill: 'gearcrafting', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 2,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    }],
+    bankChecked: true,
+    blockCurrentRecipe: () => {
+      blockCalls += 1;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+
+  let fetchCalls = 0;
+  const result = await withMockFetch(async () => {
+    fetchCalls += 1;
+    throw new Error('unexpected fetch during insufficient-skill craft gather test');
+  }, async () => routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+    skillLevel(skill) {
+      if (skill === 'gearcrafting') return 10;
+      if (skill === 'woodcutting') return 1;
+      return 1;
+    },
+  }));
+
+  assert.equal(result, true, 'should return true after rotating away from un-gatherable recipe');
+  assert.equal(rotateCalls, 1, 'should rotate instead of attempting to gather');
+  assert.equal(blockCalls, 0, 'should not block the recipe in normal rotation mode');
+  assert.equal(fetchCalls, 0, 'should not make any API calls before the skill guard trips');
+}
+
+async function testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: true,
+    },
+  });
+  routine._ensureOrderClaim = async () => ({
+    orderId: 'craft-order-1',
+    charName: 'Tester',
+    itemCode: 'ash_plank',
+    sourceType: 'craft',
+    sourceCode: 'ash_plank',
+    craftSkill: 'gearcrafting',
+    remainingQty: 1,
+    claim: {},
+  });
+  routine._getCraftClaimItem = () => ({
+    code: 'ash_plank',
+    craft: { skill: 'gearcrafting', level: 1, items: [] },
+  });
+  routine._resolveRecipeChain = () => [{
+    type: 'gather',
+    itemCode: 'ash_wood',
+    quantity: 2,
+    resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+  }];
+
+  let rotateCalls = 0;
+  let blockReason = null;
+  routine.rotation = {
+    currentSkill: 'gearcrafting',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'ash_plank', craft: { skill: 'gearcrafting', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 2,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    }],
+    bankChecked: true,
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+    blockCurrentRecipe: () => true,
+  };
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    blockReason = reason;
+  };
+
+  let fetchCalls = 0;
+  const result = await withMockFetch(async () => {
+    fetchCalls += 1;
+    throw new Error('unexpected fetch during insufficient-skill craft claim gather test');
+  }, async () => routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+    skillLevel(skill) {
+      if (skill === 'gearcrafting') return 10;
+      if (skill === 'woodcutting') return 1;
+      return 1;
+    },
+  }));
+
+  assert.equal(result, true, 'claim mode should return true after blocking the claim');
+  assert.equal(blockReason, 'insufficient_skill', 'claim mode should block and release the claim');
+  assert.equal(rotateCalls, 0, 'claim mode should not rotate');
+  assert.equal(fetchCalls, 0, 'claim mode should not hit the API before blocking');
+}
+
+async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
+  await withMonsterCache([
+    {
+      code: 'pig',
+      hp: 100,
+      attack_fire: 120,
+    },
+  ], async () => {
+    const claim = {
+      orderId: 'order-1',
+      charName: 'Tester',
+      itemCode: 'pig_skin',
+      sourceType: 'npc_buy',
+      sourceCode: 'pig_skin',
+      remainingQty: 1,
+    };
+
+    const routine = {
+      _syncActiveClaimFromBoard() {
+        return claim;
+      },
+      async _getBankItems() {
+        return new Map();
+      },
+      async _canClaimNpcBuyOrderNow() {
+        return {
+          ok: true,
+          plan: [{
+            type: 'fight',
+            itemCode: 'pig_skin',
+            quantity: 1,
+            monster: { code: 'pig', level: 5 },
+          }],
+        };
+      },
+      async _equipForCraftFight() {
+        return { simResult: { win: true, hpLostPercent: 10 }, ready: true };
+      },
+      async _blockAndReleaseClaim(_ctx, reason) {
+        blockedReason = reason;
+      },
+      _enqueueGatherOrderForDeficit() {},
+      _enqueueFightOrderForDeficit() {},
+    };
+
+    let blockedReason = null;
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          data: [{ x: -3, y: -3 }],
+        });
+      },
+    });
+
+    const result = await withMockFetch(fetchImpl, async () => fulfillNpcBuyOrderClaim(
+      makeCombatCtx({
+        hp: 50,
+        maxHp: 100,
+        attackFire: 50,
+        itemCounts: { pig_skin: 0 },
+      }),
+      routine,
+    ));
+
+    assert.deepEqual(result, {
+      attempted: false,
+      fulfilled: false,
+      reason: 'combat_not_viable:pig',
+    });
+    assert.equal(blockedReason, 'combat_not_viable:pig');
+  });
+}
+
+async function testNpcBuyGoldClaimBuysAffordableQuantityAndBlocksWhenBudgetExhausted() {
+  await withTempOrderBoard(async () => {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+    applyBankGoldDelta(250, 'deposit');
+
+    const state = {
+      name: 'Buyer',
+      x: 0,
+      y: 0,
+      gold: 0,
+      bankGold: 250,
+      bank: new Map(),
+      inventory: new Map(),
+      purchases: [],
+      deposits: [],
+    };
+
+    const fakeApi = {
+      async getMaps(params = {}) {
+        if (params.content_type === 'bank') {
+          return [{ x: 4, y: 1, name: 'bank', access: { conditions: [] } }];
+        }
+        return [];
+      },
+      async getBankItems({ page } = {}) {
+        if ((Number(page) || 1) > 1) return [];
+        return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+      },
+      async move(x, y) {
+        state.x = x;
+        state.y = y;
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+      async waitForCooldown() {},
+      async withdrawGold(quantity) {
+        const qty = Math.max(0, Number(quantity) || 0);
+        if ((state.bankGold || 0) < qty) throw new Error('not enough gold');
+        state.bankGold -= qty;
+        state.gold += qty;
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+      async withdrawBank(items) {
+        for (const row of items || []) {
+          const code = `${row?.code || ''}`.trim();
+          const qty = Math.max(0, Number(row?.quantity) || 0);
+          if (!code || qty <= 0) continue;
+          const have = state.bank.get(code) || 0;
+          if (have < qty) throw new Error(`not enough ${code}`);
+          if (have === qty) state.bank.delete(code);
+          else state.bank.set(code, have - qty);
+          state.inventory.set(code, (state.inventory.get(code) || 0) + qty);
+        }
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+      async depositBank(items) {
+        for (const row of items || []) {
+          const code = `${row?.code || ''}`.trim();
+          const qty = Math.max(0, Number(row?.quantity) || 0);
+          if (!code || qty <= 0) continue;
+          const have = state.inventory.get(code) || 0;
+          if (have < qty) throw new Error(`not enough inventory ${code}`);
+          if (have === qty) state.inventory.delete(code);
+          else state.inventory.set(code, have - qty);
+          state.bank.set(code, (state.bank.get(code) || 0) + qty);
+          state.deposits.push({ code, quantity: qty });
+        }
+        return {
+          character: snapshotCharacter(state),
+          cooldown: { total_seconds: 0 },
+        };
+      },
+    };
+
+    setInventoryApiForTests(fakeApi);
+    setBankOpsApiForTests(fakeApi);
+
+    try {
+      await getBankItems(true);
+
+      const routine = new SkillRotationRoutine({
+        orderBoard: {
+          enabled: true,
+          fulfillOrders: true,
+          createOrders: true,
+          leaseMs: 120_000,
+          blockedRetryMs: 600_000,
+        },
+      });
+      routine._getBankItems = async () => new Map(state.bank);
+      routine._getCraftClaimItem = (order) => ({
+        code: order?.itemCode || 'npc_item',
+        level: Number(order?.sourceLevel) || 1,
+      });
+      routine._resolveNpcBuyPlan = (itemCode, quantity = 1) => [{
+        type: 'npc_trade',
+        itemCode,
+        npcCode: 'rune_vendor',
+        currency: 'gold',
+        buyPrice: 100,
+        quantity,
+      }];
+      routine._canFulfillCraftClaimPlanWithBank = () => ({ ok: true, deficits: [] });
+      routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 10 } });
+
+      const ctx = makeMutableCtx(state);
+      const order = createOrMergeOrder({
+        requesterName: 'ReqA',
+        recipeCode: 'partial-healing-rune',
+        itemCode: 'healing_rune',
+        sourceType: 'npc_buy',
+        sourceCode: 'rune_vendor',
+        sourceLevel: 20,
+        quantity: 3,
+      });
+      assert.ok(order, 'expected npc_buy order to be created');
+
+      const claim = routine._claimOrderForChar(ctx, order);
+      assert.ok(claim, 'expected npc_buy order to be claimed');
+
+      await withMockFetch(makeNpcBuyFetch(state, { healing_rune: 100 }), async () => {
+        const first = await fulfillNpcBuyOrderClaim(ctx, routine);
+        assert.deepEqual(first, { attempted: true, fulfilled: false });
+        assert.deepEqual(state.purchases, [{
+          itemCode: 'healing_rune',
+          quantity: 2,
+          unitPrice: 100,
+          totalCost: 200,
+        }], 'first pass should buy only the currently affordable quantity');
+        assert.deepEqual(state.deposits, [{ code: 'healing_rune', quantity: 2 }], 'partial progress should deposit immediately');
+        assert.equal(state.gold, 0, 'purchased gold should be spent');
+        assert.equal(state.bankGold, 50, 'bank gold should track the remaining budget');
+
+        const afterFirst = getOrderBoardSnapshot().orders.find((row) => row.id === order.id);
+        assert.ok(afterFirst, 'order should remain on the board after partial progress');
+        assert.equal(afterFirst.remainingQty, 1, 'partial deposit should reduce remaining quantity');
+        assert.equal(afterFirst.claim?.charName, 'Buyer', 'claim should remain active while more work remains');
+
+        const second = await fulfillNpcBuyOrderClaim(ctx, routine);
+        assert.deepEqual(second, {
+          attempted: false,
+          fulfilled: false,
+          reason: 'insufficient_npc_budget:gold',
+        });
+
+        const afterSecond = getOrderBoardSnapshot().orders.find((row) => row.id === order.id);
+        assert.ok(afterSecond, 'order should still be present after budget exhaustion');
+        assert.equal(afterSecond.remainingQty, 1, 'budget exhaustion should not lose remaining demand');
+        assert.equal(afterSecond.claim, null, 'active claim should be released when budget is exhausted');
+        assert.ok(
+          Number(afterSecond.blockedByChar?.Buyer) > 0,
+          'zero-affordable gold should block the order for the character after release',
+        );
+      });
+    } finally {
+      resetInventoryForTests();
+      resetBankOpsForTests();
+    }
+  });
+}
+
+async function testHandleUnwinnableCraftFightBlocksRecipeAndRotates() {
+  const routine = new SkillRotationRoutine();
+  let blockCalls = 0;
+  let rotateCalls = 0;
+  let claimBlockCalls = 0;
+
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    blockCurrentRecipe: () => {
+      blockCalls += 1;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+  routine._blockAndReleaseClaim = async () => {
+    claimBlockCalls += 1;
+  };
+
+  const result = await routine._handleUnwinnableCraftFight(
+    { name: 'Tester' },
+    {
+      monsterCode: 'cow',
+      itemCode: 'milk_bucket',
+      recipeCode: 'cheese',
+      claimMode: false,
+      simResult: { win: false, hpLostPercent: 100 },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(blockCalls, 1, 'recipe should be blocked for non-claim crafting');
+  assert.equal(rotateCalls, 1, 'non-claim path should rotate away');
+  assert.equal(claimBlockCalls, 0, 'non-claim path should not block/release a claim');
+}
+
+async function testHandleUnwinnableCraftFightBlocksAndReleasesClaim() {
+  const routine = new SkillRotationRoutine();
+  let blockCalls = 0;
+  let rotateCalls = 0;
+  let claimReason = null;
+
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    blockCurrentRecipe: () => {
+      blockCalls += 1;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    claimReason = reason;
+  };
+
+  const result = await routine._handleUnwinnableCraftFight(
+    { name: 'Tester' },
+    {
+      monsterCode: 'cow',
+      itemCode: 'milk_bucket',
+      recipeCode: 'cheese',
+      claimMode: true,
+      simResult: { win: false, hpLostPercent: 100 },
+    },
+  );
+
+  assert.equal(result, true);
+  assert.equal(claimReason, 'combat_not_viable', 'claim mode should block and release claim');
+  assert.equal(blockCalls, 0, 'claim mode should not block recipe');
+  assert.equal(rotateCalls, 0, 'claim mode should not rotate');
+}
+
+async function testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => ({
+    orderId: 'order-99',
+    charName: 'Tester',
+    itemCode: 'cheese',
+    sourceType: 'craft',
+    sourceCode: 'cheese',
+    craftSkill: 'alchemy',
+    remainingQty: 5,
+    claim: {},
+  });
+  routine._getCraftClaimItem = () => ({
+    code: 'cheese',
+    craft: { skill: 'alchemy', level: 1, items: [] },
+  });
+  routine._resolveRecipeChain = () => [{
+    type: 'fight',
+    itemCode: 'milk_bucket',
+    quantity: 1,
+    monster: { code: 'cow', level: 8 },
+    monsterLoc: { x: 2, y: 2 },
+  }];
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'cheese', craft: { skill: 'alchemy', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'fight',
+      itemCode: 'milk_bucket',
+      quantity: 1,
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+    }],
+    bankChecked: true,
+    forceRotate: async () => null,
+    blockCurrentRecipe: () => true,
+  };
+
+  routine._equipForCraftFight = async () => ({ simResult: null, ready: false });
+
+  let blockReason = null;
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    blockReason = reason;
+  };
+
+  const result = await routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+    skillLevel: () => 10,
+  });
+
+  assert.equal(result, true, 'should return true to avoid tight retry');
+  assert.equal(blockReason, 'combat_gear_not_ready:cow', 'should block claim with monster code');
+}
+
+async function testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates() {
+  const routine = new SkillRotationRoutine();
+  routine._ensureOrderClaim = async () => null;
+  let blockCalls = 0;
+  let rotateCalls = 0;
+  let blockArgs = null;
+
+  routine.rotation = {
+    currentSkill: 'alchemy',
+    goalTarget: 10,
+    goalProgress: 0,
+    recipe: { code: 'cheese', craft: { skill: 'alchemy', level: 1, items: [] } },
+    productionPlan: [{
+      type: 'fight',
+      itemCode: 'milk_bucket',
+      quantity: 1,
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+    }],
+    bankChecked: true,
+    blockCurrentRecipe: (args) => {
+      blockCalls += 1;
+      blockArgs = args;
+      return true;
+    },
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
+  };
+
+  routine._equipForCraftFight = async () => ({ simResult: null, ready: false });
+
+  const result = await routine._executeCrafting({
+    name: 'Tester',
+    itemCount: () => 0,
+    inventoryCount: () => 1,
+    inventoryCapacity: () => 20,
+    inventoryFull: () => false,
+  });
+
+  assert.equal(result, true, 'should return true to avoid tight retry');
+  assert.equal(blockCalls, 1, 'should block current recipe');
+  assert.ok(blockArgs?.reason?.includes('cow'), 'block reason should mention monster code');
+  assert.equal(rotateCalls, 1, 'should force rotate to next recipe');
+}
+
+async function testCombatReadyFalseWithClaimBlocksAndReleasesClaim() {
+  resetGameDataForTests();
+  setGearOptimizerDepsForTests({
+    getMonsterFn: () => null,
+  });
+
+  try {
+    const routine = new SkillRotationRoutine({
+      orderBoard: {
+        enabled: true,
+        fulfillOrders: true,
+      },
+    });
+    routine._ensureOrderClaim = async () => ({
+      orderId: 'fight-order-1',
+      itemCode: 'milk_bucket',
+      sourceType: 'fight',
+      sourceCode: 'cow',
+    });
+    routine.rotation = {
+      monster: null,
+      monsterLoc: null,
+      forceRotate: async () => null,
+    };
+
+    let blockReason = null;
+    routine._blockAndReleaseClaim = async (_ctx, reason) => {
+      blockReason = reason;
+    };
+
+    const result = await withMockFetch(async (url, opts = {}) => {
+      const requestUrl = new URL(url);
+      const method = `${opts.method || 'GET'}`.toUpperCase();
+      if (method === 'GET' && requestUrl.pathname === '/maps') {
+        const contentType = requestUrl.searchParams.get('content_type');
+        const contentCode = requestUrl.searchParams.get('content_code');
+        if (contentType === 'monster' && contentCode === 'cow') {
+          return makeJsonResponse([{ x: 2, y: 2 }]);
+        }
+      }
+      return makeJsonResponse([]);
+    }, async () => routine._executeCombat(makeCombatCtx()));
+
+    assert.equal(result, true, 'claim-mode gear failure should return true to avoid tight retry');
+    assert.equal(blockReason, 'combat_gear_not_ready:cow', 'claim-mode gear failure should block and release the claim');
+  } finally {
+    resetGearOptimizerDepsForTests();
+    resetGameDataForTests();
+  }
+}
+
+async function testCombatReadyFalseWithoutClaimStillDefers() {
+  setGearOptimizerDepsForTests({
+    getMonsterFn: () => null,
+  });
+
+  try {
+    const routine = new SkillRotationRoutine();
+    routine._ensureOrderClaim = async () => null;
+    routine.rotation = {
+      monster: { code: 'cow', level: 8 },
+      monsterLoc: { x: 2, y: 2 },
+      forceRotate: async () => null,
+    };
+
+    const result = await routine._executeCombat(makeCombatCtx());
+    assert.equal(result, false, 'non-claim gear failure should keep deferring');
+  } finally {
+    resetGearOptimizerDepsForTests();
+  }
 }
 
 async function testRoutineCanDisableOrderFulfillment() {
@@ -567,6 +1995,298 @@ async function testRoutineDispatchesAlchemyCraftingMode() {
   assert.equal(harness.rotateCalls(), 0);
 }
 
+async function testBatchSizeRespectsInventoryReserve() {
+  const routine = new SkillRotationRoutine();
+  routine.rotation = {
+    goalTarget: 50,
+    goalProgress: 0,
+    productionPlan: [
+      { type: 'gather', itemCode: 'ash_wood', quantity: 10 },
+    ],
+  };
+
+  const batchSize = routine._batchSize({
+    inventoryCapacity: () => 120,
+    inventoryCount: () => 7,
+  });
+
+  assert.equal(
+    batchSize,
+    10,
+    'batch size should use reserve-aware usable space (101 usable / 10 mats per craft)',
+  );
+}
+
+async function testItemTaskTradeDecisionDefersBelowBatchWhenGatherable() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => false },
+    { haveQty: 3, needed: 20, canGatherNow: true, usableSpace: 50 },
+  );
+  assert.equal(decision.tradeNow, false, 'below batch target should continue gathering');
+  assert.equal(decision.batchTarget, 20);
+}
+
+async function testItemTaskTradeDecisionTradesAtBatchTarget() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => false },
+    { haveQty: 4, needed: 20, canGatherNow: true, usableSpace: 0 },
+  );
+  assert.equal(decision.tradeNow, true, 'no usable space left should trade');
+  assert.equal(decision.batchTarget, 4);
+}
+
+async function testItemTaskTradeDecisionTradesWhenInventoryFull() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => true },
+    { haveQty: 1, needed: 20, canGatherNow: true },
+  );
+  assert.equal(decision.tradeNow, true, 'full inventory with task items should trade immediately');
+}
+
+async function testItemTaskTradeDecisionTradesWhenNotGatherable() {
+  const routine = new SkillRotationRoutine();
+  const decision = routine._shouldTradeItemTaskNow(
+    { inventoryFull: () => false },
+    { haveQty: 1, needed: 20, canGatherNow: false },
+  );
+  assert.equal(decision.tradeNow, true, 'non-gatherable path should trade immediately when items exist');
+}
+
+function makeItemTaskFlowCtx(state, { task = 'sunflower', taskTotal = 20, taskProgress = 0, gatherLevel = 10 } = {}) {
+  return {
+    name: 'Tester',
+    hasTask: () => true,
+    taskComplete: () => false,
+    get: () => ({
+      task,
+      task_total: taskTotal,
+      task_progress: taskProgress,
+    }),
+    itemCount: () => state.haveQty,
+    inventoryFull: () => false,
+    skillLevel: () => gatherLevel,
+    refresh: async () => {},
+    applyActionResult() {},
+  };
+}
+
+async function testItemTaskFlowDefersTradeUntilBatchWhenGatherable() {
+  const routine = new SkillRotationRoutine();
+  const state = { haveQty: 1 };
+  const trades = [];
+  let gatherCalls = 0;
+
+  routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
+  routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
+  routine._withdrawForItemTask = async () => 0;
+  routine._usableInventorySpace = () => 50;
+  routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
+    trades.push(quantity);
+    return true;
+  };
+  routine._gatherForItemTask = async () => {
+    gatherCalls += 1;
+    return true;
+  };
+
+  const result = await routine._runItemTaskFlow(makeItemTaskFlowCtx(state));
+  assert.equal(result, true);
+  assert.equal(gatherCalls, 1, 'below batch threshold should continue gathering');
+  assert.deepEqual(trades, [], 'below batch threshold should not trade');
+}
+
+async function testItemTaskFlowTradesAtBatchThresholdWhenGatherable() {
+  const routine = new SkillRotationRoutine();
+  const state = { haveQty: 4 };
+  const trades = [];
+  let gatherCalls = 0;
+
+  routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
+  routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
+  routine._withdrawForItemTask = async () => 0;
+  routine._usableInventorySpace = () => 0;
+  routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
+    trades.push(quantity);
+    return true;
+  };
+  routine._gatherForItemTask = async () => {
+    gatherCalls += 1;
+    return true;
+  };
+
+  const result = await routine._runItemTaskFlow(makeItemTaskFlowCtx(state));
+  assert.equal(result, true);
+  assert.equal(gatherCalls, 0, 'at batch threshold should trade instead of gathering');
+  assert.deepEqual(trades, [4], 'trade quantity should match available task item count');
+}
+
+async function testItemTaskFlowTradesImmediatelyAfterBankWithdraw() {
+  const routine = new SkillRotationRoutine();
+  const state = { haveQty: 1 };
+  const trades = [];
+  let gatherCalls = 0;
+
+  routine._getItemTaskItem = () => ({ code: 'sunflower', craft: null });
+  routine._getItemTaskResource = () => ({ code: 'sunflower_field', skill: 'woodcutting', level: 1 });
+  routine._withdrawForItemTask = async () => {
+    state.haveQty += 2;
+    return 2;
+  };
+  routine._tradeItemTask = async (_ctx, _itemCode, quantity) => {
+    trades.push(quantity);
+    return true;
+  };
+  routine._gatherForItemTask = async () => {
+    gatherCalls += 1;
+    return true;
+  };
+
+  const result = await routine._runItemTaskFlow(makeItemTaskFlowCtx(state));
+  assert.equal(result, true);
+  assert.equal(gatherCalls, 0, 'fresh bank withdrawal should trade immediately');
+  assert.deepEqual(trades, [3], 'trade should use post-withdraw inventory quantity');
+}
+
+async function testItemTaskWithdrawRespectsReserveCap() {
+  const state = {
+    bank: new Map([
+      ['ash_wood', 200],
+    ]),
+    withdrawCalls: [],
+  };
+
+  const fakeApi = {
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move() {
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const entry of items) {
+        const code = entry?.code;
+        const qty = Number(entry?.quantity) || 0;
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const next = have - qty;
+        if (next > 0) state.bank.set(code, next);
+        else state.bank.delete(code);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    const ctx = {
+      name: 'Tester',
+      isAt: () => true,
+      inventoryCapacity: () => 120,
+      inventoryCount: () => 105,
+      inventoryEmptySlots: () => 20,
+      get: () => ({ inventory: [] }),
+      itemCount: () => 0,
+      refresh: async () => {},
+      applyActionResult() {},
+    };
+
+    const withdrawn = await routine._withdrawForItemTask(ctx, 'ash_wood', 50);
+    assert.equal(withdrawn, 3, 'withdraw should be capped by reserve-aware usable space');
+    assert.deepEqual(state.withdrawCalls, [{ code: 'ash_wood', quantity: 3 }]);
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
+async function testItemTaskReserveOverflowUsesCraftTradeFallback() {
+  const routine = new SkillRotationRoutine();
+  let fallbackCalls = 0;
+
+  routine._withdrawForItemTask = async () => 0;
+  routine._craftAndTradeItemTaskFromInventory = async () => {
+    fallbackCalls += 1;
+    return { progressed: true, crafted: true, traded: false };
+  };
+
+  const item = {
+    code: 'ash_plank',
+    craft: {
+      skill: 'weaponcrafting',
+      quantity: 1,
+      items: [{ code: 'ash_wood', quantity: 5 }],
+    },
+  };
+  const plan = [{
+    type: 'gather',
+    itemCode: 'ash_wood',
+    quantity: 5,
+    resource: { code: 'ash_tree', skill: 'woodcutting', level: 1 },
+  }];
+  const ctx = {
+    name: 'Tester',
+    inventoryCapacity: () => 120,
+    inventoryCount: () => 110,
+    inventoryFull: () => false,
+    itemCount: () => 0,
+  };
+
+  const result = await routine._craftForItemTask(ctx, 'ash_plank', item, plan, 24);
+  assert.equal(result, true, 'overflow fallback should keep item-task flow progressing');
+  assert.equal(fallbackCalls, 1, 'craft/trade fallback should be attempted before gathering');
+}
+
+async function testItemTaskReserveOverflowYieldsWhenNoFallbackProgress() {
+  const routine = new SkillRotationRoutine();
+  let fallbackCalls = 0;
+
+  routine._withdrawForItemTask = async () => 0;
+  routine._craftAndTradeItemTaskFromInventory = async () => {
+    fallbackCalls += 1;
+    return { progressed: false, crafted: false, traded: false };
+  };
+
+  const item = {
+    code: 'ash_plank',
+    craft: {
+      skill: 'weaponcrafting',
+      quantity: 1,
+      items: [{ code: 'ash_wood', quantity: 5 }],
+    },
+  };
+  const plan = [{
+    type: 'gather',
+    itemCode: 'ash_wood',
+    quantity: 5,
+    resource: { code: 'ash_tree', skill: 'woodcutting', level: 1 },
+  }];
+  const ctx = {
+    name: 'Tester',
+    inventoryCapacity: () => 120,
+    inventoryCount: () => 110,
+    inventoryFull: () => false,
+    itemCount: () => 0,
+  };
+
+  const result = await routine._craftForItemTask(ctx, 'ash_plank', item, plan, 24);
+  assert.equal(result, false, 'overflow with no craft/trade progress should yield');
+  assert.equal(fallbackCalls, 1, 'fallback should be attempted once before yielding');
+}
+
 async function testCraftingWithdrawSkipsFinalRecipeOutput() {
   const state = {
     bank: new Map([
@@ -625,8 +2345,11 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
       isAt: () => true,
       inventoryCapacity: () => 20,
       inventoryCount: () => 0,
+      inventoryEmptySlots: () => 20,
+      get: () => ({ inventory: [] }),
       itemCount: () => 0,
       refresh: async () => {},
+      applyActionResult() {},
     };
 
     await routine._withdrawFromBank(ctx, routine.rotation.productionPlan, routine.rotation.recipe.code, 1);
@@ -642,7 +2365,844 @@ async function testCraftingWithdrawSkipsFinalRecipeOutput() {
   }
 }
 
+async function testCraftingWithdrawHonorsReserveMaxUnits() {
+  const state = {
+    bank: new Map([
+      ['fire_bow', 7],
+      ['fire_string', 4],
+      ['ash_wood', 12],
+    ]),
+    withdrawCalls: [],
+  };
+
+  const fakeApi = {
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move() {
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const entry of items) {
+        const code = entry?.code;
+        const qty = Number(entry?.quantity) || 0;
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const next = have - qty;
+        if (next > 0) state.bank.set(code, next);
+        else state.bank.delete(code);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    routine.rotation = {
+      productionPlan: [
+        { type: 'bank', itemCode: 'ash_wood', quantity: 2 },
+        { type: 'craft', itemCode: 'fire_string', quantity: 1, recipe: { items: [] } },
+        { type: 'craft', itemCode: 'fire_bow', quantity: 1, recipe: { items: [] } },
+      ],
+      recipe: { code: 'fire_bow' },
+    };
+
+    const ctx = {
+      name: 'Tester',
+      isAt: () => true,
+      inventoryCapacity: () => 120,
+      inventoryCount: () => 107,
+      inventoryEmptySlots: () => 20,
+      get: () => ({ inventory: [] }),
+      itemCount: () => 0,
+      refresh: async () => {},
+      applyActionResult() {},
+    };
+
+    await routine._withdrawFromBank(ctx, routine.rotation.productionPlan, routine.rotation.recipe.code, 1);
+
+    assert.equal(
+      state.withdrawCalls.reduce((sum, row) => sum + row.quantity, 0),
+      1,
+      'reserve-aware maxUnits should cap total crafting withdrawal to one unit',
+    );
+    assert.deepEqual(
+      state.withdrawCalls.map(row => row.code),
+      ['fire_string'],
+      'when capped, withdrawal should prioritize higher-value reversed plan step',
+    );
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
+function makeMutableCtx(state) {
+  const losses = state.losses || (state.losses = new Map());
+
+  return {
+    name: state.name || 'Tester',
+    get() {
+      return {
+        x: state.x || 0,
+        y: state.y || 0,
+        gold: state.gold || 0,
+        inventory: [...state.inventory.entries()].map(([code, quantity]) => ({ code, quantity })),
+      };
+    },
+    settings() {
+      return {
+        potions: {
+          enabled: false,
+          bankTravel: { enabled: false },
+        },
+      };
+    },
+    isAt(x, y) {
+      return (state.x || 0) === x && (state.y || 0) === y;
+    },
+    itemCount(code) {
+      return state.inventory.get(code) || 0;
+    },
+    hasItem(code, quantity = 1) {
+      return (state.inventory.get(code) || 0) >= Math.max(1, Number(quantity) || 1);
+    },
+    inventoryCount() {
+      let total = 0;
+      for (const qty of state.inventory.values()) total += qty;
+      return total;
+    },
+    inventoryCapacity() {
+      return 20;
+    },
+    inventoryEmptySlots() {
+      const used = [...state.inventory.entries()].filter(([, qty]) => qty > 0).length;
+      return Math.max(0, 20 - used);
+    },
+    inventoryFull() {
+      return this.inventoryCount() >= this.inventoryCapacity() || this.inventoryEmptySlots() <= 0;
+    },
+    taskCoins() {
+      return state.inventory.get('tasks_coin') || 0;
+    },
+    async refresh() {},
+    applyActionResult(result) {
+      const character = result?.character;
+      if (!character || typeof character !== 'object') return;
+      if (Number.isFinite(character.x)) state.x = character.x;
+      if (Number.isFinite(character.y)) state.y = character.y;
+      if (Number.isFinite(character.gold)) state.gold = character.gold;
+      if (Array.isArray(character.inventory)) {
+        state.inventory = new Map(
+          character.inventory
+            .filter((row) => row?.code && Number(row.quantity) > 0)
+            .map((row) => [row.code, Number(row.quantity)]),
+        );
+      }
+    },
+    clearLosses(monsterCode) {
+      losses.delete(monsterCode);
+    },
+    recordLoss(monsterCode) {
+      losses.set(monsterCode, (losses.get(monsterCode) || 0) + 1);
+    },
+    consecutiveLosses(monsterCode) {
+      return losses.get(monsterCode) || 0;
+    },
+  };
+}
+
+function makeJsonResponse(data, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify({ data });
+    },
+  };
+}
+
+function makeJsonErrorResponse(message, status = 400, code = status) {
+  return {
+    ok: false,
+    status,
+    async text() {
+      return JSON.stringify({ error: { code, message } });
+    },
+  };
+}
+
+function snapshotCharacter(state) {
+  return {
+    name: state.name || 'Tester',
+    x: state.x || 0,
+    y: state.y || 0,
+    gold: state.gold || 0,
+    inventory: [...state.inventory.entries()]
+      .filter(([, quantity]) => quantity > 0)
+      .map(([code, quantity]) => ({ code, quantity })),
+  };
+}
+
+function makeNpcBuyFetch(state, pricesByCode = {}) {
+  return async (url, opts = {}) => {
+    const requestUrl = new URL(url);
+    const method = `${opts.method || 'GET'}`.toUpperCase();
+    const body = opts.body ? JSON.parse(opts.body) : {};
+
+    if (method === 'GET' && requestUrl.pathname === '/maps') {
+      const contentType = requestUrl.searchParams.get('content_type');
+      const contentCode = requestUrl.searchParams.get('content_code');
+      if (contentType === 'npc' && contentCode === 'rune_vendor') {
+        return makeJsonResponse([{ x: 6, y: 1 }]);
+      }
+      return makeJsonResponse([]);
+    }
+
+    if (method === 'POST' && requestUrl.pathname === `/my/${state.name}/action/move`) {
+      state.x = Number(body.x) || 0;
+      state.y = Number(body.y) || 0;
+      return makeJsonResponse({
+        character: snapshotCharacter(state),
+        cooldown: { total_seconds: 0 },
+      });
+    }
+
+    if (method === 'POST' && requestUrl.pathname === `/my/${state.name}/action/npc/buy`) {
+      const itemCode = `${body.code || ''}`.trim();
+      const quantity = Math.max(0, Number(body.quantity) || 0);
+      const unitPrice = Number(pricesByCode[itemCode]) || 0;
+      const totalCost = unitPrice * quantity;
+      if (!itemCode || quantity <= 0) {
+        return makeJsonErrorResponse('invalid npc buy request', 400);
+      }
+      if ((state.gold || 0) < totalCost) {
+        return makeJsonErrorResponse('not enough gold', 478);
+      }
+      state.gold -= totalCost;
+      state.inventory.set(itemCode, (state.inventory.get(itemCode) || 0) + quantity);
+      state.purchases.push({ itemCode, quantity, unitPrice, totalCost });
+      return makeJsonResponse({
+        character: snapshotCharacter(state),
+        cooldown: { total_seconds: 0 },
+      });
+    }
+
+    return makeJsonErrorResponse(`unhandled test fetch: ${method} ${requestUrl.pathname}`, 404);
+  };
+}
+
+async function testContextTaskCoinsUsesInventoryOnly() {
+  const inventoryOnly = new CharacterContext('InventoryOnly');
+  inventoryOnly._char = {
+    inventory: [
+      { code: 'tasks_coin', quantity: 5 },
+      { code: 'apple', quantity: 3 },
+    ],
+  };
+  assert.equal(inventoryOnly.taskCoins(), 5, 'taskCoins should count tasks_coin from inventory');
+
+  const none = new CharacterContext('NoCoins');
+  none._char = {
+    inventory: [
+      { code: 'apple', quantity: 3 },
+    ],
+  };
+  assert.equal(none.taskCoins(), 0, 'taskCoins should return 0 when tasks_coin is absent');
+}
+
+async function testRoutineTriggersProactiveExchangeBeforeSkillDispatch() {
+  const routine = new SkillRotationRoutine();
+  let proactiveCalls = 0;
+  let combatCalls = 0;
+
+  routine._maybeRunProactiveExchange = async () => {
+    proactiveCalls += 1;
+    return { attempted: true, exchanged: 1, resolved: false, reason: 'insufficient_coins' };
+  };
+  routine._executeCombat = async () => {
+    combatCalls += 1;
+    return true;
+  };
+  routine.rotation = {
+    currentSkill: 'combat',
+    isGoalComplete: () => false,
+  };
+
+  const result = await routine.execute({
+    name: 'Tester',
+    inventoryFull: () => false,
+  });
+
+  assert.equal(result, true);
+  assert.equal(proactiveCalls, 1, 'execute should call proactive exchange hook once');
+  assert.equal(combatCalls, 0, 'skill dispatch should be skipped when proactive exchange does work');
+}
+
+async function testTaskExchangeLockPreventsConcurrentRuns() {
+  const routineA = new SkillRotationRoutine();
+  const routineB = new SkillRotationRoutine();
+  const targets = new Map([['jasper_crystal', 1]]);
+
+  let releaseGate;
+  const gate = new Promise(resolve => {
+    releaseGate = resolve;
+  });
+
+  routineA._getBankItems = async () => new Map();
+  routineA._computeUnmetTargets = () => new Map([['jasper_crystal', 1]]);
+  routineA._ensureExchangeCoinsInInventory = async () => {
+    await gate;
+    return { ok: false, available: 0 };
+  };
+
+  const runA = routineA._runTaskExchange(
+    {
+      name: 'LockA',
+      itemCount: () => 0,
+      inventoryCount: () => 0,
+      inventoryCapacity: () => 20,
+      taskCoins: () => 0,
+    },
+    { targets, trigger: 'lock-a', proactive: true },
+  );
+
+  await Promise.resolve();
+
+  const resultB = await routineB._runTaskExchange(
+    {
+      name: 'LockB',
+      itemCount: () => 0,
+      inventoryCount: () => 0,
+      inventoryCapacity: () => 20,
+      taskCoins: () => 0,
+    },
+    { targets, trigger: 'lock-b', proactive: true },
+  );
+
+  assert.equal(resultB.reason, 'lock_busy', 'second routine should defer while lock holder is active');
+  releaseGate();
+  await runA;
+}
+
+async function testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards() {
+  const state = {
+    x: 4,
+    y: 1,
+    bank: new Map([['tasks_coin', 12]]),
+    inventory: new Map(),
+    withdrawCalls: [],
+    depositCalls: [],
+  };
+
+  const fakeApi = {
+    async getMaps(params = {}) {
+      if (params.content_type === 'bank') {
+        return [{ x: 4, y: 1, name: 'bank', access: { conditions: [] } }];
+      }
+      return [];
+    },
+    async getBankItems({ page }) {
+      if (page > 1) return [];
+      return [...state.bank.entries()].map(([code, quantity]) => ({ code, quantity }));
+    },
+    async move(x, y) {
+      state.x = x;
+      state.y = y;
+      return {};
+    },
+    async waitForCooldown() {},
+    async withdrawBank(items) {
+      for (const row of items) {
+        const code = `${row?.code || ''}`.trim();
+        const qty = Math.max(0, Number(row?.quantity) || 0);
+        if (!code || qty <= 0) continue;
+        const have = state.bank.get(code) || 0;
+        if (have < qty) throw new Error(`not enough ${code}`);
+        const nextBank = have - qty;
+        if (nextBank > 0) state.bank.set(code, nextBank);
+        else state.bank.delete(code);
+        state.inventory.set(code, (state.inventory.get(code) || 0) + qty);
+        state.withdrawCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+    async depositBank(items) {
+      for (const row of items) {
+        const code = `${row?.code || ''}`.trim();
+        const qty = Math.max(0, Number(row?.quantity) || 0);
+        if (!code || qty <= 0) continue;
+        const have = state.inventory.get(code) || 0;
+        if (have < qty) throw new Error(`not enough inventory ${code}`);
+        const nextInv = have - qty;
+        if (nextInv > 0) state.inventory.set(code, nextInv);
+        else state.inventory.delete(code);
+        state.bank.set(code, (state.bank.get(code) || 0) + qty);
+        state.depositCalls.push({ code, quantity: qty });
+      }
+      return {};
+    },
+  };
+
+  resetInventoryForTests();
+  resetBankOpsForTests();
+  setInventoryApiForTests(fakeApi);
+  setBankOpsApiForTests(fakeApi);
+
+  try {
+    await getBankItems(true);
+
+    const routine = new SkillRotationRoutine();
+    routine._getBankItems = async () => new Map(state.bank);
+    routine._performTaskExchange = async () => {
+      const coins = state.inventory.get('tasks_coin') || 0;
+      assert.ok(coins >= 6, 'exchange should run only after coins are withdrawn to inventory');
+      const nextCoins = coins - 6;
+      if (nextCoins > 0) state.inventory.set('tasks_coin', nextCoins);
+      else state.inventory.delete('tasks_coin');
+      state.inventory.set('jasper_crystal', (state.inventory.get('jasper_crystal') || 0) + 1);
+    };
+
+    const result = await routine._runTaskExchange(makeMutableCtx(state), {
+      targets: new Map([['jasper_crystal', 1]]),
+      trigger: 'test',
+      proactive: true,
+    });
+
+    assert.equal(result.resolved, true, 'target reward should be satisfied after proactive exchange');
+    assert.ok(
+      state.withdrawCalls.some(row => row.code === 'tasks_coin'),
+      'coins should be withdrawn from bank for exchange',
+    );
+    assert.ok(
+      state.depositCalls.some(row => row.code === 'jasper_crystal'),
+      'gained target rewards should be deposited to bank',
+    );
+    assert.equal(state.bank.get('jasper_crystal') || 0, 1);
+  } finally {
+    resetInventoryForTests();
+    resetBankOpsForTests();
+  }
+}
+
+async function testExecuteDispatchesTaskExchangeOrderClaim() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    // Create a task_exchange order on the board
+    const order = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'jasper_crystal',
+      sourceType: 'task_exchange',
+      sourceCode: 'jasper_crystal',
+      quantity: 2,
+    });
+    assert.ok(order, 'task_exchange order should be created');
+
+    let exchangeCalls = 0;
+    let combatCalls = 0;
+
+    routine._fulfillTaskExchangeOrderClaim = async () => {
+      exchangeCalls += 1;
+      return { attempted: true, fulfilled: true };
+    };
+    routine._maybeRunProactiveExchange = async () => ({ attempted: false });
+    routine._executeCombat = async () => { combatCalls += 1; return true; };
+
+    // Mock the bank items check for coin availability
+    routine._getBankItems = async () => new Map([['tasks_coin', 12]]);
+
+    routine.rotation = {
+      currentSkill: 'combat',
+      isGoalComplete: () => false,
+    };
+
+    const ctx = {
+      name: 'Worker1',
+      inventoryFull: () => false,
+      itemCount: (code) => code === 'tasks_coin' ? 6 : 0,
+    };
+
+    const result = await routine.execute(ctx);
+
+    assert.equal(result, true);
+    assert.equal(exchangeCalls, 1, 'execute should dispatch to exchange order fulfillment');
+    assert.equal(combatCalls, 0, 'combat dispatch should be skipped when exchange order claimed');
+  });
+}
+
+async function testExecuteBacksOffAfterFailedExchangeClaim() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    const order = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'jasper_crystal',
+      sourceType: 'task_exchange',
+      sourceCode: 'jasper_crystal',
+      quantity: 2,
+    });
+    assert.ok(order);
+
+    let exchangeCalls = 0;
+    let combatCalls = 0;
+
+    routine._fulfillTaskExchangeOrderClaim = async () => {
+      exchangeCalls += 1;
+      // Simulate failure and release claim
+      routine._activeOrderClaim = null;
+      return { attempted: true, fulfilled: false, reason: 'insufficient_coins' };
+    };
+    routine._maybeRunProactiveExchange = async () => ({ attempted: false });
+    routine._executeCombat = async () => { combatCalls += 1; return true; };
+    routine._getBankItems = async () => new Map([['tasks_coin', 12]]);
+
+    routine.rotation = {
+      currentSkill: 'combat',
+      isGoalComplete: () => false,
+    };
+
+    const ctx = {
+      name: 'Worker1',
+      inventoryFull: () => false,
+      itemCount: (code) => code === 'tasks_coin' ? 6 : 0,
+    };
+
+    // First call — claims and attempts exchange
+    await routine.execute(ctx);
+    assert.equal(exchangeCalls, 1);
+
+    // Second call — should be backed off, falls through to combat
+    combatCalls = 0;
+    exchangeCalls = 0;
+    await routine.execute(ctx);
+    assert.equal(exchangeCalls, 0, 'should not attempt exchange during backoff');
+    assert.equal(combatCalls, 1, 'should fall through to combat during backoff');
+  });
+}
+
+async function testCraftClaimPostsExchangeOrderWhenCreateOrdersEnabled() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, createOrders: true, fulfillOrders: true },
+    });
+
+    // Create a craft order that will have a missing bank dependency
+    const craftOrder = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'enchanted_ring',
+      itemCode: 'enchanted_ring',
+      sourceType: 'craft',
+      sourceCode: 'enchanted_ring',
+      craftSkill: 'jewelrycrafting',
+      sourceLevel: 20,
+      quantity: 1,
+    });
+    assert.ok(craftOrder);
+
+    let proactiveCalls = 0;
+    let enqueueCalls = [];
+
+    // Mock the craft claim viability to return missing_bank_dependency for a task reward
+    routine._canClaimCraftOrderNow = async () => ({
+      ok: false,
+      reason: 'missing_bank_dependency:jasper_crystal',
+    });
+    routine._isTaskRewardCode = () => true;
+    routine._parseMissingBankDependency = (reason) => {
+      const prefix = 'missing_bank_dependency:';
+      return reason.startsWith(prefix) ? reason.slice(prefix.length).trim() : '';
+    };
+    routine._maybeRunProactiveExchange = async () => {
+      proactiveCalls += 1;
+      return { attempted: false, resolved: false };
+    };
+    routine._blockUnclaimableOrderForChar = () => {};
+    routine._getBankItems = async () => new Map();
+    routine._enqueueTaskExchangeOrder = (_ctx, itemCode, deficit) => {
+      enqueueCalls.push({ itemCode, deficit });
+    };
+
+    const ctx = {
+      name: 'Tester',
+      inventoryFull: () => false,
+      itemCount: () => 0,
+      skillLevel: () => 30,
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(ctx, 'jewelrycrafting');
+    assert.equal(claim, null, 'craft claim should fail due to missing bank dependency');
+    assert.equal(proactiveCalls, 0, 'proactive exchange should NOT be called when createOrders=true');
+    assert.equal(enqueueCalls.length, 1, 'should enqueue a task_exchange order');
+    assert.equal(enqueueCalls[0].itemCode, 'jasper_crystal');
+  });
+}
+
+async function testCraftClaimSucceedsWhenBankCoversGatherDeficit() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'wooden_staff',
+      itemCode: 'wooden_staff',
+      sourceType: 'craft',
+      sourceCode: 'wooden_staff',
+      craftSkill: 'weaponcrafting',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    // Bank has the gather material the character can't gather
+    routine._getBankItems = async () => new Map([['ash_wood', 10]]);
+    routine._getCraftClaimItem = () => ({
+      code: 'wooden_staff',
+      craft: { skill: 'weaponcrafting', level: 5, items: [{ code: 'wooden_stick', quantity: 1 }] },
+    });
+    routine._resolveRecipeChain = () => [
+      {
+        type: 'gather',
+        itemCode: 'ash_wood',
+        quantity: 2,
+        resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+      },
+      {
+        type: 'craft',
+        itemCode: 'wooden_stick',
+        recipe: { skill: 'weaponcrafting', level: 1, items: [{ code: 'ash_wood', quantity: 2 }] },
+        quantity: 1,
+      },
+    ];
+    // Character has woodcutting 1 (too low for lv10 ash_tree), but bank has 10 ash_wood
+    // Bank-aware check should pass because bank covers the gather deficit
+    routine._canFulfillCraftClaimPlanWithBank = (_plan, ctx, bankItems) => {
+      const bank = bankItems instanceof Map ? bankItems : new Map();
+      // Simulate: woodcutting too low, but bank has ash_wood
+      const have = (ctx.itemCount('ash_wood') || 0) + (bank.get('ash_wood') || 0);
+      if (have >= 2) return { ok: true, deficits: [] };
+      return { ok: false, deficits: [{ type: 'gather', itemCode: 'ash_wood', resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 }, quantity: 2 }] };
+    };
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 0 } });
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { weaponcrafting: 10, woodcutting: 1 } }),
+      'weaponcrafting',
+    );
+
+    assert.ok(claim, 'craft claim should succeed when bank covers gather deficit');
+    assert.equal(claim?.itemCode, 'wooden_staff');
+  });
+}
+
+async function testCraftClaimRejectsInsufficientIntermediateCraftSkill() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'fancy_item',
+      itemCode: 'fancy_item',
+      sourceType: 'craft',
+      sourceCode: 'fancy_item',
+      craftSkill: 'gearcrafting',
+      sourceLevel: 10,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'fancy_item',
+      craft: { skill: 'gearcrafting', level: 10, items: [{ code: 'sub_part', quantity: 1 }] },
+    });
+    routine._resolveRecipeChain = () => [
+      {
+        type: 'craft',
+        itemCode: 'sub_part',
+        recipe: { skill: 'jewelrycrafting', level: 20, items: [{ code: 'gem', quantity: 1 }] },
+        quantity: 1,
+      },
+    ];
+    // Character has gearcrafting 10 but jewelrycrafting 5 (too low for lv20 sub_part)
+    routine._canFulfillCraftClaimPlanWithBank = () => ({
+      ok: false,
+      deficits: [{
+        type: 'craft',
+        itemCode: 'sub_part',
+        recipe: { skill: 'jewelrycrafting', level: 20 },
+        quantity: 1,
+      }],
+    });
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 0 } });
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { gearcrafting: 10, jewelrycrafting: 5 } }),
+      'gearcrafting',
+    );
+
+    assert.equal(claim, null, 'claim should be rejected when intermediate craft skill too low');
+    assert.equal(
+      listClaimableOrders({ sourceType: 'craft', craftSkill: 'gearcrafting', charName: 'Tester' }).length,
+      0,
+      'rejected order should be blocked for this character',
+    );
+  });
+}
+
+async function testCraftClaimQueuesGatherOrderOnInsufficientSkill() {
+  await withTempOrderBoard(async () => {
+    const routine = new SkillRotationRoutine({
+      orderBoard: { enabled: true, fulfillOrders: true, createOrders: true },
+    });
+
+    // Set up a rotation that supports order creation
+    routine.rotation = new SkillRotation({
+      skills: ['weaponcrafting'],
+      orderBoard: { enabled: true, createOrders: true },
+    });
+
+    const created = createOrMergeOrder({
+      requesterName: 'CrafterA',
+      recipeCode: 'wooden_staff',
+      itemCode: 'wooden_staff',
+      sourceType: 'craft',
+      sourceCode: 'wooden_staff',
+      craftSkill: 'weaponcrafting',
+      sourceLevel: 5,
+      quantity: 1,
+    });
+    assert.ok(created, 'expected craft order to be created');
+
+    routine._getBankItems = async () => new Map();
+    routine._getCraftClaimItem = () => ({
+      code: 'wooden_staff',
+      craft: { skill: 'weaponcrafting', level: 5, items: [{ code: 'ash_wood', quantity: 2 }] },
+    });
+    const gatherStep = {
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 2,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    };
+    routine._resolveRecipeChain = () => [gatherStep];
+    routine._canFulfillCraftClaimPlanWithBank = () => ({
+      ok: false,
+      deficits: [gatherStep],
+    });
+    routine._simulateClaimFight = async () => ({ simResult: { win: true, hpLostPercent: 0 } });
+
+    let enqueuedOrders = [];
+    routine._enqueueGatherOrderForDeficit = (step, order, ctx, deficit) => {
+      enqueuedOrders.push({ step, orderItemCode: order.itemCode, charName: ctx.name, deficit });
+    };
+
+    const claim = await routine._acquireCraftOrderClaim(
+      makeCtx({ skillLevels: { weaponcrafting: 10, woodcutting: 1 } }),
+      'weaponcrafting',
+    );
+
+    assert.equal(claim, null, 'claim should be rejected for insufficient gather skill');
+    assert.equal(enqueuedOrders.length, 1, 'should queue one gather order for the deficit');
+    assert.equal(enqueuedOrders[0].step.itemCode, 'ash_wood');
+    assert.equal(enqueuedOrders[0].deficit, 2);
+  });
+}
+
+async function testBuildCraftCandidateAcceptsWhenBankCoversMaterials() {
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'ash_wood',
+      quantity: 3,
+      resource: { code: 'ash_tree', skill: 'woodcutting', level: 10 },
+    },
+    {
+      type: 'craft',
+      itemCode: 'ash_plank',
+      recipe: { skill: 'woodcutting', level: 1, items: [{ code: 'ash_wood', quantity: 3 }] },
+      quantity: 1,
+    },
+  ];
+  const recipe = makeRecipe('ash_plank', 'woodcutting', 5);
+
+  // Bank has all the raw materials — character doesn't need to gather
+  const bank = new Map([['ash_wood', 10]]);
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    canFulfillPlan: () => false, // Pure skill check would fail
+    canFulfillPlanWithBank: (_steps, _ctx, bankItems) => {
+      const have = (bankItems?.get('ash_wood') || 0);
+      if (have >= 3) return { ok: true, deficits: [] };
+      return { ok: false, deficits: [plan[0]] };
+    },
+  });
+
+  const rotation = new SkillRotation(
+    { skills: ['woodcutting'], orderBoard: { enabled: true, createOrders: true } },
+    { gameDataSvc: stub },
+  );
+
+  const ctx = makeCtx({ skillLevels: { woodcutting: 1 } }); // Too low to gather
+  const candidate = rotation._buildCraftCandidate(recipe, ctx, bank);
+
+  assert.ok(candidate, 'candidate should be returned when bank covers all gather materials');
+  assert.equal(candidate.recipe.code, 'ash_plank');
+}
+
+async function testSkillRotationRoutineEnabledHotReload() {
+  const routine = new SkillRotationRoutine({
+    enabled: false,
+    weights: { mining: 1 },
+    goals: { mining: 5 },
+  });
+  const ctx = {
+    inventoryFull() {
+      return false;
+    },
+  };
+
+  assert.equal(routine.canRun(ctx), false, 'routine should not run while disabled');
+
+  routine.rotation.currentSkill = 'mining';
+  routine.rotation.goalProgress = 3;
+  routine.updateConfig({
+    enabled: true,
+    weights: { mining: 2 },
+    goals: { mining: 8 },
+  });
+
+  assert.equal(routine.canRun(ctx), true, 'routine should hot-reload enabled=true');
+  assert.equal(routine.rotation.currentSkill, 'mining', 'hot-reload should not reset current rotation state');
+  assert.equal(routine.rotation.goalProgress, 3, 'hot-reload should preserve in-progress goal state');
+
+  routine.updateConfig({ enabled: false });
+  assert.equal(routine.canRun(ctx), false, 'routine should stop running after enabled=false hot-reload');
+}
+
 async function run() {
+  await testContextTaskCoinsUsesInventoryOnly();
   await testAlchemyFallbackToGatherAtLevel1();
   await testAlchemyCraftingSelectsViableRecipe();
   await testAlchemyCraftingNonViableFallsBackToGathering();
@@ -651,19 +3211,70 @@ async function run() {
   await testCraftingSkipsTemporarilyBlockedRecipe();
   await testUnwinnableCombatRecipeIsTemporarilyBlocked();
   await testOrderBoardCreatesGatherOrderForUnmetGatherSkill();
+  await testOrderBoardScalesGatherOrderToGoalQty();
+  await testOrderBoardScalesGatherOrderSubtractsExisting();
+  await testBuildCraftCandidateScalesFightDeficitToGoalQty();
   await testOrderBoardCanDisableOrderCreation();
   await testOrderBoardCreatesFightOrderForUnwinnableMonsterDrop();
+  await testAcquireCraftClaimSkipsUnwinnableFightAndBlocksChar();
+  await testAcquireCraftClaimSkipsMissingBankDependencyAndBlocksChar();
+  await testAcquireCraftClaimRetriesTaskRewardDependencyWithProactiveExchange();
+  await testAcquireCraftClaimSucceedsWhenPrechecksPass();
+  await testAcquireGatherClaimPrioritizesToolOrders();
+  await testAcquireCombatClaimPrioritizesToolOrders();
+  await testAcquireCraftClaimPrioritizesToolOrders();
+  await testCraftFightStepSkipsCombatWhenSimUnwinnable();
+  await testCraftFightStepTreatsReadinessUnwinnableAsNonViable();
+  await testCraftGatherStepInsufficientSkillRotatesBeforeGathering();
+  await testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering();
+  await testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable();
+  await testNpcBuyGoldClaimBuysAffordableQuantityAndBlocksWhenBudgetExhausted();
+  await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
+  await testHandleUnwinnableCraftFightBlocksAndReleasesClaim();
+  await testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim();
+  await testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates();
+  await testCombatReadyFalseWithClaimBlocksAndReleasesClaim();
+  await testCombatReadyFalseWithoutClaimStillDefers();
   await testRoutineCanDisableOrderFulfillment();
   await testRoutineRoutesCraftClaimsBySkill();
   await testRoutineCraftingFallsBackWhenNoCraftClaim();
   await testRoutineSkipsGoalProgressWhileOrderClaimIsActive();
   await testRoutineDispatchesAlchemyGatheringMode();
   await testRoutineDispatchesAlchemyCraftingMode();
+  await testBatchSizeRespectsInventoryReserve();
+  await testItemTaskTradeDecisionDefersBelowBatchWhenGatherable();
+  await testItemTaskTradeDecisionTradesAtBatchTarget();
+  await testItemTaskTradeDecisionTradesWhenInventoryFull();
+  await testItemTaskTradeDecisionTradesWhenNotGatherable();
+  await testItemTaskFlowDefersTradeUntilBatchWhenGatherable();
+  await testItemTaskFlowTradesAtBatchThresholdWhenGatherable();
+  await testItemTaskFlowTradesImmediatelyAfterBankWithdraw();
+  await testItemTaskWithdrawRespectsReserveCap();
+  await testItemTaskReserveOverflowUsesCraftTradeFallback();
+  await testItemTaskReserveOverflowYieldsWhenNoFallbackProgress();
+  await testRoutineTriggersProactiveExchangeBeforeSkillDispatch();
+  await testTaskExchangeLockPreventsConcurrentRuns();
+  await testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards();
+  await testExecuteDispatchesTaskExchangeOrderClaim();
+  await testExecuteBacksOffAfterFailedExchangeClaim();
+  await testCraftClaimPostsExchangeOrderWhenCreateOrdersEnabled();
   await testCraftingWithdrawSkipsFinalRecipeOutput();
+  await testCraftingWithdrawHonorsReserveMaxUnits();
+  await testCraftClaimSucceedsWhenBankCoversGatherDeficit();
+  await testCraftClaimRejectsInsufficientIntermediateCraftSkill();
+  await testCraftClaimQueuesGatherOrderOnInsufficientSkill();
+  await testBuildCraftCandidateAcceptsWhenBankCoversMaterials();
+  await testSkillRotationRoutineEnabledHotReload();
+  resetOrderPriorityForTests();
+  resetGameDataForTests();
+  resetGearOptimizerDepsForTests();
   console.log('skill-rotation tests passed');
 }
 
 run().catch((err) => {
+  resetOrderPriorityForTests();
+  resetGameDataForTests();
+  resetGearOptimizerDepsForTests();
   console.error(err);
   process.exit(1);
 });

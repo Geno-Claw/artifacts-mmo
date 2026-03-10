@@ -8,6 +8,12 @@ import {
   RuntimeOperationConflictError,
   createRuntimeManager,
 } from '../src/runtime-manager.mjs';
+import { fight } from '../src/api.mjs';
+import {
+  _resetForTests as resetCombatConfigForTests,
+  getCombatWinRateThreshold,
+  loadCombatConfig,
+} from '../src/services/combat-config.mjs';
 import {
   _resetOrderBoardForTests,
   claimOrder,
@@ -23,6 +29,10 @@ import {
   refreshGearState,
   registerContext,
 } from '../src/services/gear-state.mjs';
+import {
+  _resetUiStateForTests,
+  getUiSnapshot,
+} from '../src/services/ui-state.mjs';
 
 const VALID_LIFECYCLE_STATES = new Set(['stopped', 'starting', 'running', 'stopping', 'error']);
 
@@ -91,6 +101,10 @@ function assertOperation(status, expectedName, label = 'runtime status') {
 
 function mapLoadout(slots = {}) {
   return new Map(Object.entries(slots).filter(([, code]) => !!code));
+}
+
+function getUiCharacter(name) {
+  return getUiSnapshot().characters.find(char => char.name === name) || null;
 }
 
 function makeGearCtx(name = 'Alpha', level = 10) {
@@ -354,7 +368,58 @@ async function testOperationLockConflict(manager, controls) {
 async function testRolloutHardClearRunsOnce() {
   await withIsolatedCwd('runtime-rollout-test', async () => {
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
     await initializeOrderBoard({ path: './report/order-board.json' });
+
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem(code) {
+          if (code === 'rollout_staff') {
+            return {
+              code,
+              type: 'weapon',
+              level: 12,
+              craft: {
+                skill: 'weaponcrafting',
+                level: 12,
+              },
+            };
+          }
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'rollout_staff' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 0,
+    });
+
+    await initializeGearState({
+      path: './report/gear-state.json',
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      }],
+    });
+    registerContext(makeGearCtx('Alpha', 12));
+    await refreshGearState({ force: true });
 
     const manager = createRuntimeManager();
     createOrMergeOrder({
@@ -373,22 +438,93 @@ async function testRolloutHardClearRunsOnce() {
     assert.equal(getOrderBoardSnapshot().orders.length, 0, 'first rollout run should hard-clear board');
     assert.equal(existsSync('./report/.order-board-v2-rollout'), true, 'rollout marker should be written');
 
-    createOrMergeOrder({
-      requesterName: 'Alpha',
-      recipeCode: 'gear_state:Alpha:iron_shield',
-      itemCode: 'iron_shield',
-      sourceType: 'craft',
-      sourceCode: 'iron_shield',
-      craftSkill: 'gearcrafting',
-      sourceLevel: 10,
-      quantity: 1,
-    });
-    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'fixture should restore one order');
+    manager._republishDesiredOrdersForCharacters(['Alpha'], 'rollout_v2_hard_clear');
+    assert.equal(getOrderBoardSnapshot().orders.length, 1, 'rollout clear should be repopulatable from gear-state');
+    assert.equal(getOrderBoardSnapshot().orders[0]?.itemCode, 'rollout_staff');
 
     manager._runOrderBoardRolloutResetIfNeeded();
     assert.equal(getOrderBoardSnapshot().orders.length, 1, 'marker should prevent repeated hard-clear');
 
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
+  });
+}
+
+async function testRepublishDesiredOrdersForCharactersUsesGearStateSnapshot() {
+  await withIsolatedCwd('runtime-republish-test', async () => {
+    _resetOrderBoardForTests();
+    _resetGearStateForTests();
+
+    await initializeOrderBoard({ path: './report/order-board.json' });
+
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem(code) {
+          if (code === 'runtime_staff') {
+            return {
+              code,
+              type: 'weapon',
+              level: 12,
+              craft: {
+                skill: 'weaponcrafting',
+                level: 12,
+              },
+            };
+          }
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'runtime_staff' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 0,
+    });
+
+    await initializeGearState({
+      path: './report/gear-state.json',
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      }],
+    });
+
+    const gearCtx = makeGearCtx('Alpha', 12);
+    registerContext(gearCtx);
+    await refreshGearState({ force: true });
+
+    const manager = createRuntimeManager();
+    const republished = manager._republishDesiredOrdersForCharacters(['Alpha'], 'startup_test');
+    assert.equal(republished, 1, 'runtime republish helper should publish current desired orders');
+
+    let snapshot = getOrderBoardSnapshot();
+    assert.equal(snapshot.orders.length, 1, 'runtime republish should seed order board immediately');
+    assert.equal(snapshot.orders[0]?.itemCode, 'runtime_staff');
+    assert.equal(snapshot.orders[0]?.requestedQty, 1);
+
+    manager._republishDesiredOrdersForCharacters(['Alpha'], 'startup_test_repeat');
+    snapshot = getOrderBoardSnapshot();
+    assert.equal(snapshot.orders.length, 1, 'repeat republish should not duplicate orders');
+    assert.equal(snapshot.orders[0]?.requestedQty, 1, 'repeat republish should not increase requested quantity');
+
+    _resetOrderBoardForTests();
+    _resetGearStateForTests();
   });
 }
 
@@ -486,14 +622,89 @@ async function testCleanupFlushesGearStateAndReleasesClaims() {
   });
 }
 
+async function testActionEventsPopulateUiLogWithoutWebsocket() {
+  _resetUiStateForTests();
+
+  const manager = createRuntimeManager();
+  const originalWsUrl = process.env.WEBSOCKET_URL;
+  delete process.env.WEBSOCKET_URL;
+  const run = manager._buildRunContext('./config/characters.json', {
+    characters: [{ name: 'Alpha', routines: [] }],
+  });
+
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        data: {
+          cooldown: {
+            total_seconds: 5,
+            remaining_seconds: 5,
+          },
+          fight: {
+            result: 'win',
+            opponent: 'mushmush',
+            turns: 2,
+            logs: [],
+            characters: [{
+              character_name: 'Alpha',
+              xp: 7,
+              gold: 3,
+              drops: [{ code: 'mushroom', quantity: 1 }],
+              final_hp: 24,
+            }],
+          },
+          characters: [{ name: 'Alpha' }],
+        },
+      });
+    },
+  });
+
+  try {
+    await fight('Alpha');
+
+    const char = getUiCharacter('Alpha');
+    assert.ok(char, 'UI snapshot should include Alpha');
+    assert.equal(char.gameLogLatestType, 'fight', 'action success should populate game log type');
+    assert.equal(char.gameLogLatest, 'Won vs mushmush +7xp +3g mushroomx1');
+    assert.equal(char.gameLogLatestDetail?.monster, 'mushmush');
+    assert.equal(char.cooldown.action, 'fight', 'action success should update cooldown action');
+    assert.equal(typeof char.cooldown.requestId, 'string');
+    assert.equal(char.cooldown.requestId.length > 0, true, 'cooldown should keep request correlation id');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWsUrl === undefined) delete process.env.WEBSOCKET_URL;
+    else process.env.WEBSOCKET_URL = originalWsUrl;
+    run.unsubscribeActionEvents?.();
+    run.unsubscribeLogEvents?.();
+    run.unsubscribeAccountLog?.();
+    _resetUiStateForTests();
+  }
+}
+
+function testLoadCombatConfig() {
+  resetCombatConfigForTests();
+  loadCombatConfig({ combat: { winRateThreshold: 77 } });
+  assert.equal(getCombatWinRateThreshold(), 77, 'combat config loader should apply configured threshold');
+
+  loadCombatConfig({});
+  assert.equal(getCombatWinRateThreshold(), 90, 'combat config loader should fall back to default threshold');
+}
+
 async function run() {
   const manager = createRuntimeManager({ defaultStopTimeoutMs: 25 });
   const controls = installDeterministicRuntimeStubs(manager);
 
+  testLoadCombatConfig();
   await testLifecycleTransitions(manager, controls);
   await testOperationLockConflict(manager, controls);
   await testRolloutHardClearRunsOnce();
+  await testRepublishDesiredOrdersForCharactersUsesGearStateSnapshot();
   await testCleanupFlushesGearStateAndReleasesClaims();
+  await testActionEventsPopulateUiLogWithoutWebsocket();
 
   console.log('test-runtime-manager: PASS');
 }

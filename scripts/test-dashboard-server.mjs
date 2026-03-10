@@ -26,14 +26,61 @@ const {
   _resetOrderBoardForTests,
   claimOrder,
   createOrMergeOrder,
+  getOrderBoardSnapshot,
   initializeOrderBoard,
 } = orderBoard;
+const gearState = await import('../src/services/gear-state.mjs');
+const {
+  _resetGearStateForTests,
+  _setDepsForTests: setGearStateDepsForTests,
+  initializeGearState,
+  registerContext,
+  refreshGearState,
+} = gearState;
 
 function assertHasKeys(obj, keys, label) {
   assert.ok(obj && typeof obj === 'object', `${label} must be an object`);
   for (const key of keys) {
     assert.equal(Object.hasOwn(obj, key), true, `${label} missing key "${key}"`);
   }
+}
+
+function mapLoadout(slots = {}) {
+  return new Map(Object.entries(slots).filter(([, code]) => !!code));
+}
+
+function makeGearCtx(name = 'Alpha', level = 10) {
+  const char = {
+    name,
+    level,
+    weapon_slot: 'none',
+    shield_slot: 'none',
+    helmet_slot: 'none',
+    body_armor_slot: 'none',
+    leg_armor_slot: 'none',
+    boots_slot: 'none',
+    ring1_slot: 'none',
+    ring2_slot: 'none',
+    amulet_slot: 'none',
+    utility1_slot: '',
+    utility1_slot_quantity: 0,
+    utility2_slot: '',
+    utility2_slot_quantity: 0,
+    inventory: [],
+  };
+
+  return {
+    name,
+    get() {
+      return char;
+    },
+    inventoryCapacity() {
+      return 30;
+    },
+    itemCount() {
+      return 0;
+    },
+  };
 }
 
 function assertSnapshotCharacterShape(char, label = 'snapshot character') {
@@ -118,6 +165,7 @@ function assertCharacterDetailShape(detail, expectedName) {
     'equipment',
     'stats',
     'logHistory',
+    'interruptionHistory',
     'updatedAtMs',
   ], 'character detail payload');
 
@@ -168,6 +216,7 @@ function assertCharacterDetailShape(detail, expectedName) {
   assert.equal(hasTaskFields, true, 'detail.stats should expose task fields');
 
   assert.ok(Array.isArray(detail.logHistory), 'detail.logHistory must be an array');
+  assert.ok(Array.isArray(detail.interruptionHistory), 'detail.interruptionHistory must be an array');
   for (const [idx, entry] of detail.logHistory.entries()) {
     assertHasKeys(entry, ['atMs', 'level', 'line'], `detail.logHistory[${idx}]`);
     assert.equal(typeof entry.atMs, 'number');
@@ -213,9 +262,16 @@ function assertAccountSummaryShape(summary) {
 function assertAchievementShape(entry, label) {
   assert.ok(entry && typeof entry === 'object' && !Array.isArray(entry), `${label} must be an object`);
   const code = getFirstPresent(entry, ['code', 'id']);
-  const title = getFirstPresent(entry, ['title', 'name', 'label']);
+  const title = getFirstPresent(entry, ['name', 'title', 'label']);
   assert.equal(typeof code, 'string', `${label} missing code/id`);
-  assert.equal(typeof title, 'string', `${label} missing title/name`);
+  assert.equal(typeof title, 'string', `${label} missing name/title`);
+
+  if (Array.isArray(entry.objectives) && entry.objectives.length > 0) {
+    for (const [oi, obj] of entry.objectives.entries()) {
+      assert.equal(typeof obj.total, 'number', `${label}.objectives[${oi}] missing total`);
+    }
+    return;
+  }
 
   const completed = getFirstPresent(entry, ['completed', 'isCompleted', 'done']);
   const progress = getFirstPresent(entry, ['progress', 'current', 'value']);
@@ -277,6 +333,42 @@ function mutateConfigName(config, suffix) {
     ...first,
     name: `${baseName}_${suffix}`,
   };
+  return next;
+}
+
+function mutateRoutineField(config, {
+  characterIndex = 0,
+  routineType,
+  path,
+  value,
+}) {
+  const next = deepCloneJson(config);
+  const character = next.characters?.[characterIndex];
+  assert.ok(character, `config.characters[${characterIndex}] must exist`);
+  const routine = character.routines?.find((entry) => entry?.type === routineType);
+  assert.ok(routine, `routine ${routineType} must exist`);
+
+  const segments = `${path || ''}`.split('.').filter(Boolean);
+  assert.ok(segments.length > 0, 'path must not be empty');
+
+  let node = routine;
+  for (let index = 0; index < segments.length - 1; index++) {
+    const segment = segments[index];
+    if (!node[segment] || typeof node[segment] !== 'object' || Array.isArray(node[segment])) {
+      node[segment] = {};
+    }
+    node = node[segment];
+  }
+  node[segments[segments.length - 1]] = value;
+  return next;
+}
+
+function removeRoutine(config, { characterIndex = 0, routineType }) {
+  const next = deepCloneJson(config);
+  const character = next.characters?.[characterIndex];
+  assert.ok(character, `config.characters[${characterIndex}] must exist`);
+  character.routines = (Array.isArray(character.routines) ? character.routines : [])
+    .filter((entry) => entry?.type !== routineType);
   return next;
 }
 
@@ -380,23 +472,66 @@ function createArtifactsApiMock(baseUrl) {
   const summary = {
     account: 'qa-account',
     completed: 1,
-    total: 2,
-    inProgress: 1,
+    total: 3,
+    inProgress: 2,
   };
-  const achievements = [
+
+  const definitions = [
     {
       code: 'first_steps',
-      title: 'First Steps',
-      completed: true,
-      progress: 1,
-      total: 1,
+      name: 'First Steps',
+      description: 'Take your first steps in the world.',
+      points: 1,
+      objectives: [{ type: 'combat_level', target: null, total: 1 }],
+      rewards: { gold: 100, items: [] },
     },
     {
       code: 'ore_hoarder',
-      title: 'Ore Hoarder',
+      name: 'Ore Hoarder',
+      description: 'Collect ores from across the land.',
+      points: 2,
+      objectives: [{ type: 'gathering', target: 'copper_ore', total: 100 }],
+      rewards: { gold: 500, items: [{ code: 'copper_ore', quantity: 10 }] },
+    },
+    {
+      code: 'in_every_color',
+      name: 'In Every Color',
+      description: 'Hunt 50 of each slime color.',
+      points: 3,
+      objectives: [
+        { type: 'combat_kill', target: 'red_slime', total: 50 },
+        { type: 'combat_kill', target: 'blue_slime', total: 50 },
+        { type: 'combat_kill', target: 'yellow_slime', total: 50 },
+        { type: 'combat_kill', target: 'green_slime', total: 50 },
+      ],
+      rewards: { gold: 1000, items: [{ code: 'apple', quantity: 10 }] },
+    },
+  ];
+
+  const accountAchievements = [
+    {
+      code: 'first_steps',
+      name: 'First Steps',
+      completed: true,
+      completed_at: '2024-01-01T00:00:00Z',
+      objectives: [{ type: 'combat_level', target: null, total: 1, progress: 1 }],
+    },
+    {
+      code: 'ore_hoarder',
+      name: 'Ore Hoarder',
       completed: false,
-      progress: 12,
-      total: 100,
+      objectives: [{ type: 'gathering', target: 'copper_ore', total: 100, progress: 12 }],
+    },
+    {
+      code: 'in_every_color',
+      name: 'In Every Color',
+      completed: false,
+      objectives: [
+        { type: 'combat_kill', target: 'red_slime', total: 50, progress: 50 },
+        { type: 'combat_kill', target: 'blue_slime', total: 50, progress: 23 },
+        { type: 'combat_kill', target: 'yellow_slime', total: 50, progress: 0 },
+        { type: 'combat_kill', target: 'green_slime', total: 50, progress: 5 },
+      ],
     },
   ];
 
@@ -424,9 +559,20 @@ function createArtifactsApiMock(baseUrl) {
         });
       }
 
+      if (url.pathname === '/achievements') {
+        state.achievementCalls++;
+        return createJsonResponse(200, {
+          data: definitions,
+          total: definitions.length,
+          page: 1,
+          size: 100,
+          pages: 1,
+        });
+      }
+
       if (url.pathname.includes('/achievements')) {
         state.achievementCalls++;
-        return createJsonResponse(200, { data: achievements });
+        return createJsonResponse(200, { data: accountAchievements });
       }
 
       return createJsonResponse(404, {
@@ -746,6 +892,20 @@ async function nextSseEvent(sse, eventName, maxEvents = 20, timeoutMs = 1_500) {
   throw new Error(`Timed out waiting for SSE "${eventName}" event`);
 }
 
+async function resolvesWithin(promise, timeoutMs) {
+  let timerId = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true, () => false),
+      new Promise(resolve => {
+        timerId = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timerId) clearTimeout(timerId);
+  }
+}
+
 async function run() {
   const rootDir = resolve(fileURLToPath(new URL('../', import.meta.url)));
   const configFixture = createConfigFixture(rootDir);
@@ -756,6 +916,8 @@ async function run() {
   const runtimeControlMock = createRuntimeControlMock();
   let dashboard = null;
   let sse = null;
+  let closeRegressionDashboard = null;
+  let closeRegressionSse = null;
   const orderBoardPath = join(configFixture.tempDir, 'order-board.json');
   try {
     process.env.BOT_CONFIG = configFixture.configPath;
@@ -825,8 +987,21 @@ async function run() {
         at: i,
       });
     }
+    recordLog('Alpha', {
+      level: 'info',
+      line: 'detail-preempted',
+      at: 1000,
+      scope: 'scheduler',
+      event: 'routine.preempted',
+      reasonCode: 'preempted_by_higher_priority',
+      routine: 'Skill Rotation',
+      runId: 42,
+      tickId: 77,
+      requestId: 'req-1',
+    });
 
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
     await initializeOrderBoard({ path: orderBoardPath });
     const seedOrder = createOrMergeOrder({
       requesterName: 'CrafterAlpha',
@@ -841,6 +1016,56 @@ async function run() {
     assert.ok(seedOrder, 'expected order board seed order');
     const claimResult = claimOrder(seedOrder.id, { charName: 'WorkerAlpha', leaseMs: 10_000 });
     assert.ok(claimResult, 'expected order board seed claim');
+
+    setGearStateDepsForTests({
+      gameDataSvc: {
+        findMonstersByLevel(maxLevel) {
+          return [{ code: 'wolf', level: Math.min(12, maxLevel) }];
+        },
+        getItem(code) {
+          if (code === 'dashboard_staff') {
+            return {
+              code,
+              type: 'weapon',
+              level: 12,
+              craft: {
+                skill: 'weaponcrafting',
+                level: 12,
+              },
+            };
+          }
+          return null;
+        },
+        getResourceForDrop() {
+          return null;
+        },
+        getMonsterForDrop() {
+          return null;
+        },
+      },
+      optimizeForMonsterFn: async () => ({
+        loadout: mapLoadout({ weapon: 'dashboard_staff' }),
+        simResult: {
+          win: true,
+          hpLostPercent: 5,
+          turns: 2,
+          remainingHp: 99,
+        },
+      }),
+      getBankRevisionFn: () => 1,
+      globalCountFn: () => 0,
+    });
+
+    await initializeGearState({
+      path: join(configFixture.tempDir, 'gear-state.json'),
+      characters: [{
+        name: 'Alpha',
+        settings: {},
+        routines: [{ type: 'skillRotation', orderBoard: { enabled: true, createOrders: true } }],
+      }],
+    });
+    registerContext(makeGearCtx('Alpha', 12));
+    await refreshGearState({ force: true });
 
     dashboard = await startDashboardServer({
       host: '127.0.0.1',
@@ -859,6 +1084,41 @@ async function run() {
     const health = await fetch(`${baseUrl}/healthz`);
     assert.equal(health.status, 200);
 
+    const dashboardPageRes = await fetch(`${baseUrl}/`);
+    assert.equal(dashboardPageRes.status, 200, 'dashboard root should return HTML');
+    const dashboardHtml = await dashboardPageRes.text();
+    assert.equal(typeof dashboardHtml, 'string', 'dashboard root response should be text');
+    assert.equal(
+      dashboardHtml.includes('id="ordersPanel"'),
+      true,
+      'dashboard HTML should include ordersPanel',
+    );
+    assert.equal(
+      dashboardHtml.includes('id="ordersList"'),
+      true,
+      'dashboard HTML should include ordersList',
+    );
+    assert.equal(
+      dashboardHtml.includes('id="ordersPanelMeta"'),
+      true,
+      'dashboard HTML should include ordersPanelMeta',
+    );
+    assert.equal(
+      dashboardHtml.includes('data-order-filter="all"'),
+      true,
+      'dashboard HTML should include all orders filter control',
+    );
+    assert.equal(
+      dashboardHtml.includes('data-order-filter="claimed"'),
+      true,
+      'dashboard HTML should include claimed orders filter control',
+    );
+    assert.equal(
+      dashboardHtml.includes('data-order-filter="hidden"'),
+      true,
+      'dashboard HTML should include hide orders filter control',
+    );
+
     const snapshotRes = await fetch(`${baseUrl}/api/ui/snapshot`);
     assert.equal(snapshotRes.status, 200);
     const snapshot = await snapshotRes.json();
@@ -875,6 +1135,21 @@ async function run() {
     assertOrdersPayloadShape(ordersPayload, 'GET /api/ui/orders payload');
     assert.ok(ordersPayload.orders.length >= 1, 'orders endpoint should include seeded order');
 
+    const clearOrderBoardRes = await requestJson(`${baseUrl}/api/control/clear-order-board`, { method: 'POST' });
+    assert.equal(
+      clearOrderBoardRes.res.status,
+      200,
+      `Expected /api/control/clear-order-board 200, got ${clearOrderBoardRes.res.status}`,
+    );
+    assertControlSuccessShape(clearOrderBoardRes.payload, 'POST /api/control/clear-order-board');
+    assert.equal(clearOrderBoardRes.payload?.cleared >= 1, true, 'clear-order-board should report cleared orders');
+    assert.equal(clearOrderBoardRes.payload?.republished, 1, 'clear-order-board should republish current desired orders');
+
+    const clearedSnapshot = getOrderBoardSnapshot();
+    assert.equal(clearedSnapshot.orders.length, 1, 'manual clear should repopulate the order board immediately');
+    assert.equal(clearedSnapshot.orders[0]?.itemCode, 'dashboard_staff');
+    assert.equal(clearedSnapshot.orders[0]?.claim, null, 'republished desired orders should be open, not claimed');
+
     const detailRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}`);
     assert.equal(detailRes.status, 200);
     const detail = await detailRes.json();
@@ -882,9 +1157,20 @@ async function run() {
     assert.equal(detail.skills.length > 0, true, 'Expected non-empty normalized skills');
     assert.equal(detail.inventory.length > 0, true, 'Expected non-empty normalized inventory');
     assert.equal(detail.equipment.length > 0, true, 'Expected non-empty normalized equipment');
-    assert.equal(detail.logHistory.length, 50, 'Expected detail logHistory cap at 50 entries');
+    assert.equal(detail.logHistory.length, 66, 'Expected all 66 detail log entries retained (cap is 500)');
     assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-64'), true);
-    assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-0'), false);
+    assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-0'), true);
+    assert.equal(detail.interruptionHistory.some(entry => entry.line === 'detail-preempted'), true);
+
+    const detailLogRes = await fetch(
+      `${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/logs?event=routine.preempted&scope=scheduler&reasonCode=preempted_by_higher_priority&limit=5`,
+    );
+    assert.equal(detailLogRes.status, 200, 'character filtered logs endpoint should return 200');
+    const detailLogPayload = await detailLogRes.json();
+    assertHasKeys(detailLogPayload, ['name', 'count', 'filters', 'logs'], 'filtered logs payload');
+    assert.equal(detailLogPayload.name, 'Alpha');
+    assert.equal(detailLogPayload.count, 1);
+    assert.equal(detailLogPayload.logs[0].line, 'detail-preempted');
 
     const missingRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Missing')}`);
     assert.equal(missingRes.status, 404);
@@ -920,6 +1206,19 @@ async function run() {
     const accountAchievementsPayload = await accountAchievementsRes.json();
     assertAccountAchievementsShape(accountAchievementsPayload);
 
+    // Verify per-objective progress is correctly propagated (beta API uses "progress" not "current")
+    const rows = accountAchievementsPayload.achievements || accountAchievementsPayload.data || [];
+    const slimeAch = rows.find(r => r.code === 'in_every_color');
+    assert.ok(slimeAch, 'Expected in_every_color achievement in response');
+    assert.ok(Array.isArray(slimeAch.objectives) && slimeAch.objectives.length === 4,
+      'Expected 4 objectives for in_every_color');
+    const redSlime = slimeAch.objectives.find(o => o.target === 'red_slime');
+    assert.equal(redSlime.current, 50, 'red_slime progress should be 50 (from API "progress" field)');
+    const blueSlime = slimeAch.objectives.find(o => o.target === 'blue_slime');
+    assert.equal(blueSlime.current, 23, 'blue_slime progress should be 23');
+    const greenSlime = slimeAch.objectives.find(o => o.target === 'green_slime');
+    assert.equal(greenSlime.current, 5, 'green_slime progress should be 5');
+
     assert.ok(apiMock.state.detailsCalls >= 1, 'Expected account summary endpoint to call upstream details at least once');
     assert.ok(apiMock.state.achievementCalls >= 1, 'Expected account achievements endpoint to call upstream achievements at least once');
 
@@ -933,6 +1232,54 @@ async function run() {
       'GET /api/config should return active BOT_CONFIG path',
     );
 
+    const getConfigOptions = await requestJson(`${baseUrl}/api/config/options`);
+    assert.equal(getConfigOptions.res.status, 200, `Expected /api/config/options 200, got ${getConfigOptions.res.status}`);
+    assert.ok(Array.isArray(getConfigOptions.payload?.resources), '/api/config/options should include resources array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.npcEvents), '/api/config/options should include npcEvents array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.npcVendors), '/api/config/options should include npcVendors array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.skillNames), '/api/config/options should include skillNames array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.achievementTypes), '/api/config/options should include achievementTypes array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.routines), '/api/config/options should include routines array');
+    assert.equal(typeof getConfigOptions.payload?.descriptions, 'object', '/api/config/options should include descriptions map');
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.['events.gatherResources'],
+      'string',
+      '/api/config/options should expose schema descriptions for structured fields',
+    );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.combat,
+      'string',
+      '/api/config/options should expose top-level combat description',
+    );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.['combat.winRateThreshold'],
+      'string',
+      '/api/config/options should expose combat win rate threshold description',
+    );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.npcSellList,
+      'string',
+      '/api/config/options should expose npcSellList description',
+    );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.['characters[].routines.depositBank.sellToVendor'],
+      'string',
+      '/api/config/options should expose depositBank sellToVendor description',
+    );
+    assert.equal(
+      getConfigOptions.payload?.descriptions?.['characters[].routines.event.minWinrate'],
+      undefined,
+      '/api/config/options should not advertise removed event minWinrate field',
+    );
+    assert.ok(
+      getConfigOptions.payload.npcVendors.every((entry) => Array.isArray(entry?.sellableItems)),
+      '/api/config/options should expose sellableItems for NPC vendors',
+    );
+    assert.ok(
+      getConfigOptions.payload.routines.some((entry) => entry?.type === 'skillRotation' && entry?.defaultConfig?.enabled === false),
+      '/api/config/options should expose routine metadata with materialized defaults',
+    );
+
     const validateValid = await requestJson(`${baseUrl}/api/config/validate`, {
       method: 'POST',
       body: { config: deepCloneJson(getConfig.payload.config) },
@@ -944,14 +1291,18 @@ async function run() {
 
     const validateInvalid = await requestJson(`${baseUrl}/api/config/validate`, {
       method: 'POST',
-      body: { config: { characters: [{ name: 'MissingRoutines' }] } },
+      body: { config: { characters: [{ name: 'BrokenCharacter', routines: [{ type: 'rest', triggerPct: 'bad' }] }] } },
     });
     assert.equal(validateInvalid.res.status, 200, `Expected invalid /api/config/validate 200, got ${validateInvalid.res.status}`);
     assert.equal(validateInvalid.payload?.ok, false, 'invalid config should return ok=false');
     assertValidationErrorsShape(validateInvalid.payload?.errors, 'invalid config errors');
 
     const staleHash = `${getConfig.payload.hash}`;
-    const savedConfig = mutateConfigName(getConfig.payload.config, 'phase4save');
+    const savedConfig = mutateRoutineField(getConfig.payload.config, {
+      routineType: 'event',
+      path: 'enabled',
+      value: false,
+    });
     const atomicProbe = openAtomicProbe(configFixture.configPath);
     let saveRes;
     try {
@@ -967,16 +1318,67 @@ async function run() {
       atomicProbe.close();
     }
     assert.equal(saveRes.res.status, 200, `Expected /api/config PUT 200, got ${saveRes.res.status}`);
-    assertHasKeys(saveRes.payload, ['ok', 'hash', 'savedAtMs'], 'PUT /api/config success payload');
+    assertHasKeys(saveRes.payload, ['ok', 'hash', 'savedAtMs', 'requiresRestart', 'restartReasons'], 'PUT /api/config success payload');
     assert.equal(saveRes.payload.ok, true, 'successful save should return ok=true');
     assert.equal(typeof saveRes.payload.hash, 'string', 'successful save should return new hash string');
     assert.equal(typeof saveRes.payload.savedAtMs, 'number', 'successful save should return numeric savedAtMs');
+    assert.equal(saveRes.payload.requiresRestart, false, 'hot-reloadable field edits should not require restart');
+    assert.deepEqual(saveRes.payload.restartReasons, [], 'hot-reloadable field edits should not report restart reasons');
 
     const savedDiskConfig = JSON.parse(readFileSync(configFixture.configPath, 'utf-8'));
     assert.equal(
-      savedDiskConfig?.characters?.[0]?.name,
-      savedConfig?.characters?.[0]?.name,
+      savedDiskConfig?.characters?.[0]?.routines?.find((entry) => entry?.type === 'event')?.enabled,
+      false,
       'successful save should persist updated config to disk',
+    );
+
+    const restartHash = `${saveRes.payload.hash}`;
+    const restartConfig = mutateConfigName(savedDiskConfig, 'phase4restart');
+    const restartSave = await requestJson(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      body: {
+        config: restartConfig,
+        ifMatchHash: restartHash,
+      },
+    });
+    assert.equal(restartSave.res.status, 200, `Expected restart metadata save 200, got ${restartSave.res.status}`);
+    assert.equal(restartSave.payload?.requiresRestart, true, 'roster changes should require restart');
+    assert.ok(
+      Array.isArray(restartSave.payload?.restartReasons)
+      && restartSave.payload.restartReasons.some((reason) => `${reason}`.includes('Character roster changed')),
+      'roster changes should report a restart reason',
+    );
+
+    const materializeHash = `${restartSave.payload.hash}`;
+    const materializeConfig = removeRoutine(restartConfig, {
+      characterIndex: 0,
+      routineType: 'orderFulfillment',
+    });
+    const materializeSave = await requestJson(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      body: {
+        config: materializeConfig,
+        ifMatchHash: materializeHash,
+      },
+    });
+    assert.equal(materializeSave.res.status, 200, `Expected missing routine save 200, got ${materializeSave.res.status}`);
+    assert.equal(materializeSave.payload?.requiresRestart, true, 'routine materialization should require restart');
+    assert.ok(
+      Array.isArray(materializeSave.payload?.restartReasons)
+      && materializeSave.payload.restartReasons.some((reason) => `${reason}`.includes('Routine membership changed')),
+      'routine materialization should report routine membership restart reason',
+    );
+    const materializedDiskConfig = JSON.parse(readFileSync(configFixture.configPath, 'utf-8'));
+    const materializedRoutineTypes = materializedDiskConfig.characters?.[0]?.routines?.map((entry) => entry?.type) || [];
+    assert.deepEqual(
+      materializedRoutineTypes.slice(0, 8),
+      ['rest', 'depositBank', 'bankExpansion', 'event', 'bossFight', 'completeTask', 'orderFulfillment', 'skillRotation'],
+      'save normalization should materialize the managed routine template in canonical order',
+    );
+    assert.equal(
+      materializedDiskConfig.characters?.[0]?.routines?.find((entry) => entry?.type === 'orderFulfillment')?.enabled,
+      false,
+      'materialized toggleable routines should default to enabled=false',
     );
 
     const conflictInodeBefore = fs.statSync(configFixture.configPath).ino;
@@ -1051,11 +1453,31 @@ async function run() {
       'POST /api/control/reload-config (pending completion)',
     );
 
+    // Regression: close() must not hang when SSE clients are still connected.
+    closeRegressionDashboard = await startDashboardServer({
+      host: '127.0.0.1',
+      port: 0,
+      rootDir,
+      heartbeatMs: 100,
+      broadcastDebounceMs: 20,
+      runtimeManager: runtimeControlMock,
+      runtime: runtimeControlMock,
+      controlRuntime: runtimeControlMock,
+    });
+    const closeRegressionBaseUrl = `http://127.0.0.1:${closeRegressionDashboard.port}`;
+    closeRegressionSse = await openSse(`${closeRegressionBaseUrl}/api/ui/events`);
+
+    const closeResolved = await resolvesWithin(closeRegressionDashboard.close(), 1_500);
+    assert.equal(closeResolved, true, 'dashboard.close() should resolve quickly with active SSE clients');
+
     console.log('test-dashboard-server: PASS');
   } finally {
     if (sse) await sse.close();
     if (dashboard) await dashboard.close();
+    if (closeRegressionSse) await closeRegressionSse.close();
+    if (closeRegressionDashboard) await closeRegressionDashboard.close();
     _resetOrderBoardForTests();
+    _resetGearStateForTests();
     globalThis.fetch = originalFetch;
     if (originalBotConfig === undefined) delete process.env.BOT_CONFIG;
     else process.env.BOT_CONFIG = originalBotConfig;

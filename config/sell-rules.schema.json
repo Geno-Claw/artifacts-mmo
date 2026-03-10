@@ -10,13 +10,13 @@
     "sellDuplicateEquipment": {
       "type": "boolean",
       "default": true,
-      "description": "Recycle unclaimed equipment/jewelry at workshops. Claimed gear-state ownership is protected automatically."
+      "description": "Enable claim-aware duplicate gear disposal. Craftable surplus gear can be recycled, and GE selling uses the same logic for sellable equipment including dropped loot."
     },
 
     "alwaysSell": {
       "type": "array",
       "default": [],
-      "description": "Items to always sell when found in bank",
+      "description": "Items to sell whenever they are found in bank. These rules override normal keep logic for the same item code, except neverSell.",
       "items": {
         "type": "object",
         "required": ["code"],

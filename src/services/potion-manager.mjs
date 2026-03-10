@@ -4,6 +4,7 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
+import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { canUseItem } from './item-conditions.mjs';
 import { simulateCombat } from './combat-simulator.mjs';
@@ -22,6 +23,7 @@ const DEFAULT_COMBAT_SETTINGS = Object.freeze({
   targetQuantity: 20,
   poisonBias: true,
   respectNonPotionUtility: true,
+  monsterTypes: ['normal', 'elite', 'boss'],
 });
 
 function getCombatSettings(ctx) {
@@ -33,11 +35,6 @@ function normalizeSlotCode(code) {
   if (typeof code !== 'string') return null;
   if (!code || code === 'none') return null;
   return code;
-}
-
-function toPositiveInt(value) {
-  const n = Number(value) || 0;
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
 }
 
 function isUtilityPotion(item) {
@@ -148,12 +145,27 @@ function applyPotionEffects(stats, item) {
 
 function scorePotionCandidate(item, charStats, monster, { poisonBias = true, healHeuristic = false } = {}) {
   const hypoStats = applyPotionEffects(charStats, item);
-  const sim = _simulateCombat(hypoStats, monster);
+  // Pass the candidate utility to the simulator so restore/antipoison are modeled
+  const simOpts = { utilities: [{ code: item.code, effects: item.effects }] };
+  const sim = _simulateCombat(hypoStats, monster, simOpts);
   let score = 0;
+  const canWin = typeof sim?.canWin === 'boolean'
+    ? sim.canWin
+    : (Boolean(sim?.win) && Number(sim?.hpLostPercent ?? 100) <= 90);
+  const winRate = Number.isFinite(Number(sim?.winRate))
+    ? Number(sim.winRate)
+    : (canWin ? 100 : 0);
+  const avgHpLostPercent = Number.isFinite(Number(sim?.avgHpLostPercent))
+    ? Number(sim.avgHpLostPercent)
+    : Number(sim?.hpLostPercent ?? 100);
+  const avgTurns = Number.isFinite(Number(sim?.avgTurns))
+    ? Number(sim.avgTurns)
+    : Number(sim?.turns ?? 100);
 
-  if (sim.win) score += 1_000_000;
-  score += Math.round((100 - sim.hpLostPercent) * 1000);
-  score += Math.round((100 - sim.turns) * 10);
+  if (canWin) score += 1_000_000;
+  score += Math.round(winRate * 1_000);
+  score += Math.round((100 - avgHpLostPercent) * 1_000);
+  score += Math.round(Math.max(0, 100 - avgTurns) * 5);
 
   if (poisonBias && hasMonsterPoison(monster) && effectValue(item, 'antipoison') > 0) {
     score += 500;
@@ -241,15 +253,15 @@ function getSlotState(c, slot) {
 async function unequipSlot(ctx, slot, quantity) {
   const qty = Math.max(1, toPositiveInt(quantity));
   const action = await _api.unequipItem(slot, ctx.name, qty);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
 }
 
 async function equipSlot(ctx, slot, code, quantity) {
   const qty = Math.max(1, toPositiveInt(quantity));
   const action = await _api.equipItem(slot, code, ctx.name, qty);
+  ctx.applyActionResult(action);
   await _api.waitForCooldown(action);
-  await ctx.refresh();
 }
 
 async function ensureSlotPotion(ctx, slot, desiredCode, settings) {
@@ -334,6 +346,9 @@ export async function prepareCombatPotions(ctx, monsterCode) {
   const monster = _gameData.getMonster(monsterCode);
   if (!monster) return { selected: null };
 
+  const allowedTypes = settings.monsterTypes || DEFAULT_COMBAT_SETTINGS.monsterTypes;
+  if (!allowedTypes.includes(monster.type || 'normal')) return { selected: null };
+
   const bankItems = await _gameData.getBankItems();
   const candidates = collectPotionCandidates(ctx, bankItems);
   if (candidates.length === 0) return { selected: null };
@@ -366,6 +381,50 @@ export async function prepareCombatPotions(ctx, monsterCode) {
       utility2: utility2?.code || null,
     },
   };
+}
+
+/**
+ * Compute the set of ideal potion codes across target monsters.
+ * Unlike collectPotionCandidates, this considers ALL potions the character
+ * can use (no availability filter) — used by gear-state to track desired
+ * potions and place orders for missing ones.
+ *
+ * @param {object} ctx — CharacterContext
+ * @param {string[]} monsterCodes — monsters to evaluate against
+ * @param {{ poisonBias?: boolean }} [settings]
+ * @returns {Set<string>} — unique desired potion codes
+ */
+export function computeDesiredPotionsForMonsters(ctx, monsterCodes, settings = {}) {
+  const c = ctx.get();
+  const allPotions = _gameData.findItems({ type: 'utility', subtype: 'potion', maxLevel: c.level }) || [];
+
+  const candidates = [];
+  for (const item of allPotions) {
+    if (!isUtilityPotion(item)) continue;
+    if (!_canUseItem(item, c)) continue;
+    candidates.push({ code: item.code, item });
+  }
+
+  if (candidates.length === 0) return new Set();
+
+  const mergedSettings = { ...DEFAULT_COMBAT_SETTINGS, ...settings };
+  const allowedTypes = mergedSettings.monsterTypes || DEFAULT_COMBAT_SETTINGS.monsterTypes;
+  const desiredCodes = new Set();
+
+  for (const monsterCode of monsterCodes) {
+    const monster = _gameData.getMonster(monsterCode);
+    if (!monster) continue;
+    if (!allowedTypes.includes(monster.type || 'normal')) continue;
+
+    const charStats = c;
+    const u1 = chooseUtility1(candidates, charStats, monster, mergedSettings);
+    if (u1?.code) desiredCodes.add(u1.code);
+
+    const u2 = chooseUtility2(candidates, u1?.code || null, charStats, monster, mergedSettings);
+    if (u2?.code) desiredCodes.add(u2.code);
+  }
+
+  return desiredCodes;
 }
 
 // Test helpers.

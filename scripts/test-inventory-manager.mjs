@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 
 process.env.ARTIFACTS_TOKEN ||= 'test-token';
+process.env.LOG_LEVEL ||= 'debug';
 
+const logModule = await import('../src/log.mjs');
+const { subscribeLogEvents } = logModule;
 const manager = await import('../src/services/inventory-manager.mjs');
 const {
   _resetForTests,
@@ -13,6 +16,8 @@ const {
   cleanupExpiredReservations,
   equippedCount,
   getBankItems,
+  getCharacterLevelsSnapshot,
+  getCharacterToolProfilesSnapshot,
   globalCount,
   initialize,
   invalidateBank,
@@ -65,23 +70,49 @@ const fakeApi = {
 async function run() {
   _resetForTests();
   _setApiClientForTests(fakeApi);
+  const events = [];
+  const unsubscribe = subscribeLogEvents((entry) => {
+    events.push(entry);
+  });
 
-  await initialize();
+  try {
+    await initialize();
 
-  assert.equal(bankCount('wooden_shield'), 8, 'bank shield count from startup');
-  assert.equal(inventoryCount('wooden_shield'), 3, 'inventory shield total from startup');
-  assert.equal(equippedCount('wooden_shield'), 2, 'equipped shield total from startup');
-  assert.equal(globalCount('wooden_shield'), 13, 'global shield total from startup');
+    assert.equal(bankCount('wooden_shield'), 8, 'bank shield count from startup');
+    assert.equal(inventoryCount('wooden_shield'), 3, 'inventory shield total from startup');
+    assert.equal(equippedCount('wooden_shield'), 2, 'equipped shield total from startup');
+    assert.equal(globalCount('wooden_shield'), 13, 'global shield total from startup');
+    assert.deepEqual(
+      getCharacterLevelsSnapshot(),
+      {},
+      'unknown levels should not be tracked',
+    );
+    assert.deepEqual(
+      getCharacterToolProfilesSnapshot(),
+      {
+        A: { level: 0, mining_level: 0, woodcutting_level: 0, fishing_level: 0, alchemy_level: 0 },
+        B: { level: 0, mining_level: 0, woodcutting_level: 0, fishing_level: 0, alchemy_level: 0 },
+      },
+      'tool profiles should be tracked even before levels are known',
+    );
+    assert.ok(
+      events.some(entry => entry.scope === 'service.inventory-manager' && entry.event === 'inventory.initialized'),
+      'initialize should emit structured inventory.initialized log',
+    );
+    assert.ok(
+      events.some(entry => entry.scope === 'service.inventory-manager' && entry.event === 'inventory.bank.refreshed'),
+      'initialize should emit structured inventory.bank.refreshed log',
+    );
 
-  // Reservation accounting: available should exclude reservations from other chars.
-  const r1 = reserve('wooden_shield', 2, 'A', 200);
-  assert.ok(r1, 'single reservation created');
-  assert.equal(availableBankCount('wooden_shield'), 6, 'global available excludes reservation');
-  assert.equal(availableBankCount('wooden_shield', { includeChar: 'A' }), 8, 'includeChar ignores own reservations');
-  const r2 = reserve('wooden_shield', 7, 'B', 200);
-  assert.equal(r2, null, 'reservation rejected when insufficient');
-  release(r1);
-  assert.equal(availableBankCount('wooden_shield'), 8, 'release restores availability');
+    // Reservation accounting: available should exclude reservations from other chars.
+    const r1 = reserve('wooden_shield', 2, 'A', 200);
+    assert.ok(r1, 'single reservation created');
+    assert.equal(availableBankCount('wooden_shield'), 6, 'global available excludes reservation');
+    assert.equal(availableBankCount('wooden_shield', { includeChar: 'A' }), 8, 'includeChar ignores own reservations');
+    const r2 = reserve('wooden_shield', 7, 'B', 200);
+    assert.equal(r2, null, 'reservation rejected when insufficient');
+    release(r1);
+    assert.equal(availableBankCount('wooden_shield'), 8, 'release restores availability');
 
   // Atomic multi-reserve.
   const batchOk = reserveMany(
@@ -116,18 +147,41 @@ async function run() {
   // Character map rebuild should replace old values, not merge.
   updateCharacter('A', makeChar('A', {
     inventory: [{ code: 'wooden_shield', quantity: 4 }],
-    slots: { shield_slot: null, ring1_slot: null, ring2_slot: 'copper_ring' },
+    slots: {
+      shield_slot: null,
+      ring1_slot: null,
+      ring2_slot: 'copper_ring',
+      level: 12,
+      mining_level: 4,
+      woodcutting_level: 5,
+      fishing_level: 6,
+      alchemy_level: 7,
+    },
   }));
   assert.equal(inventoryCount('wooden_shield'), 6, 'inventory rebuild replaced char A data');
   assert.equal(equippedCount('wooden_shield'), 1, 'equipment rebuild replaced char A slots');
+  assert.equal(getCharacterLevelsSnapshot().A, 12, 'character level snapshot should refresh with updateCharacter');
+  assert.deepEqual(
+    getCharacterToolProfilesSnapshot().A,
+    { level: 12, mining_level: 4, woodcutting_level: 5, fishing_level: 6, alchemy_level: 7 },
+    'tool profile snapshot should refresh with updateCharacter',
+  );
 
   // Bank deltas should update immediately and clamp at zero.
-  applyBankDelta([{ code: 'wooden_shield', quantity: 2 }], 'withdraw', { reason: 'test withdraw' });
-  assert.equal(bankCount('wooden_shield'), 6, 'withdraw delta applied');
-  applyBankDelta([{ code: 'wooden_shield', quantity: 999 }], 'withdraw', { reason: 'test clamp' });
-  assert.equal(bankCount('wooden_shield'), 0, 'withdraw delta clamped at zero');
-  applyBankDelta([{ code: 'wooden_shield', quantity: 5 }], 'deposit', { reason: 'test deposit' });
-  assert.equal(bankCount('wooden_shield'), 5, 'deposit delta applied');
+    applyBankDelta([{ code: 'wooden_shield', quantity: 2 }], 'withdraw', { reason: 'test withdraw', charName: 'A' });
+    assert.equal(bankCount('wooden_shield'), 6, 'withdraw delta applied');
+    applyBankDelta([{ code: 'wooden_shield', quantity: 999 }], 'withdraw', { reason: 'test clamp', charName: 'A' });
+    assert.equal(bankCount('wooden_shield'), 0, 'withdraw delta clamped at zero');
+    applyBankDelta([{ code: 'wooden_shield', quantity: 5 }], 'deposit', { reason: 'test deposit', charName: 'A' });
+    assert.equal(bankCount('wooden_shield'), 5, 'deposit delta applied');
+    assert.ok(
+      events.some(entry => entry.scope === 'service.inventory-manager' && entry.event === 'inventory.bank.deposit_delta'),
+      'bank deposit delta should emit structured inventory.bank.deposit_delta log',
+    );
+    assert.ok(
+      events.some(entry => entry.scope === 'service.inventory-manager' && entry.event === 'inventory.bank.delta_clamped'),
+      'clamped bank delta should emit structured inventory.bank.delta_clamped log',
+    );
 
   // Invalidating should force a refetch on next read.
   const callsBeforeInvalidate = state.calls;
@@ -157,8 +211,11 @@ async function run() {
   assert.equal(callDelta, 1, 'concurrent fetches reused in-flight promise');
   assert.equal(bankCount('wooden_shield'), 7, 'concurrent refresh produced expected bank state');
 
-  _resetForTests();
-  console.log('inventory-manager tests passed');
+    _resetForTests();
+    console.log('inventory-manager tests passed');
+  } finally {
+    unsubscribe();
+  }
 }
 
 run().catch((err) => {

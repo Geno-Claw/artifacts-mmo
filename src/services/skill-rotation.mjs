@@ -5,8 +5,10 @@
  */
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
+import { isCombatResultViable } from './combat-simulator.mjs';
 import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
+import { selectBestAchievement } from '../routines/skill-rotation/achievements.mjs';
 
 const GATHERING_SKILLS = new Set(['mining', 'woodcutting', 'fishing']);
 const CRAFTING_SKILLS = new Set(['cooking', 'alchemy', 'weaponcrafting', 'gearcrafting', 'jewelrycrafting']);
@@ -21,8 +23,9 @@ const DEFAULT_GOALS = {
   gearcrafting: 2,
   jewelrycrafting: 2,
   combat: 10,
-  npc_task: 1,
-  item_task: 1,
+  npc_task: 999,
+  item_task: 999,
+  achievement: 50,
 };
 
 const DEFAULT_ORDER_BOARD = Object.freeze({
@@ -63,6 +66,8 @@ export class SkillRotation {
       taskCollection = {},
       orderBoard = {},
       recipeBlockMs = DEFAULT_RECIPE_BLOCK_MS,
+      achievementTypes,
+      achievementBlacklist,
     } = {},
     {
       gameDataSvc = gameData,
@@ -92,6 +97,8 @@ export class SkillRotation {
       : DEFAULT_RECIPE_BLOCK_MS;
     this._exchangeNeeds = new Map();              // { itemCode → qty } dynamic targets from crafting
     this._recipeBlocks = new Map();               // { "skill:recipeCode" → expiresAtMs }
+    this.achievementTypes = Array.isArray(achievementTypes) ? achievementTypes : null;
+    this.achievementBlacklist = Array.isArray(achievementBlacklist) ? achievementBlacklist : null;
 
     // Current rotation state
     this.currentSkill = null;
@@ -108,6 +115,32 @@ export class SkillRotation {
     this._monsterLoc = null;    // { x, y } for combat
     this._combatLoadout = null; // optimal gear loadout for combat target
     this._bankChecked = false;  // whether bank withdrawal happened for current recipe
+    this._achievement = null;        // achievement object for achievement hunter
+    this._achievementObjective = null; // specific objective being worked on
+    this._achievementAction = null;  // { type, monsterCode/resourceCode/etc, loc }
+  }
+
+  /** Hot-reload: update config fields, preserving rotation state. */
+  updateConfig({ weights, skills, goals, craftBlacklist, taskCollection, orderBoard, recipeBlockMs, achievementTypes, achievementBlacklist } = {}) {
+    if (weights !== undefined) {
+      this.weights = weights && Object.keys(weights).length > 0 ? weights : null;
+      this.skills = this.weights
+        ? Object.keys(this.weights).filter(s => this.weights[s] > 0)
+        : (skills?.length > 0 ? skills : Object.keys(DEFAULT_GOALS));
+    } else if (skills !== undefined) {
+      this.skills = skills?.length > 0 ? skills : Object.keys(DEFAULT_GOALS);
+    }
+    if (goals !== undefined) this.goals = { ...DEFAULT_GOALS, ...goals };
+    if (craftBlacklist !== undefined) this.craftBlacklist = craftBlacklist;
+    if (taskCollection !== undefined) this.taskCollection = taskCollection;
+    if (orderBoard !== undefined) this.orderBoard = normalizeOrderBoardConfig(orderBoard);
+    if (recipeBlockMs !== undefined) {
+      const parsed = Number(recipeBlockMs);
+      this.recipeBlockMs = Number.isFinite(parsed) && parsed > 0
+        ? Math.floor(parsed) : DEFAULT_RECIPE_BLOCK_MS;
+    }
+    if (achievementTypes !== undefined) this.achievementTypes = Array.isArray(achievementTypes) ? achievementTypes : null;
+    if (achievementBlacklist !== undefined) this.achievementBlacklist = Array.isArray(achievementBlacklist) ? achievementBlacklist : null;
   }
 
   isGoalComplete() {
@@ -178,6 +211,9 @@ export class SkillRotation {
   get combatLoadout() { return this._combatLoadout; }
   get bankChecked() { return this._bankChecked; }
   set bankChecked(v) { this._bankChecked = v; }
+  get achievement() { return this._achievement; }
+  get achievementObjective() { return this._achievementObjective; }
+  get achievementAction() { return this._achievementAction; }
 
   // --- Internal ---
 
@@ -191,6 +227,9 @@ export class SkillRotation {
     this._monsterLoc = null;
     this._combatLoadout = null;
     this._bankChecked = false;
+    this._achievement = null;
+    this._achievementObjective = null;
+    this._achievementAction = null;
   }
 
   _weightedShuffle(skills) {
@@ -278,7 +317,28 @@ export class SkillRotation {
     if (skill === 'item_task') {
       return true; // always viable
     }
+    if (skill === 'achievement') {
+      return this._setupAchievement(ctx);
+    }
     return false;
+  }
+
+  async _setupAchievement(ctx) {
+    const config = {
+      achievementTypes: this.achievementTypes || undefined,
+      achievementBlacklist: this.achievementBlacklist || undefined,
+    };
+    const result = await selectBestAchievement(ctx, config);
+    if (!result) return false;
+
+    this._achievement = result.achievement;
+    this._achievementObjective = result.objective;
+    this._achievementAction = result.action;
+    const obj = result.objective;
+    const progress = obj.current ?? obj.progress ?? 0;
+    const total = obj.total ?? 0;
+    log.info(`[${ctx.name}] Rotation: achievement → ${result.achievement.code} / ${obj.type}:${obj.target || 'any'} (${progress}/${total}, score: ${result.score.toFixed(0)})`);
+    return true;
   }
 
   async _setupGathering(skill, ctx) {
@@ -314,12 +374,15 @@ export class SkillRotation {
     const blacklist = new Set(this.craftBlacklist[skill] || []);
     this._pruneRecipeBlocks();
 
+    // Goal quantity for availability scoring (goalTarget isn't set yet — computed from config)
+    const goalQty = Math.max(1, this.goals[skill] || DEFAULT_GOALS[skill] || 50);
+
     const scored = [];
     for (const recipe of recipes) {
       if (blacklist.has(recipe.code)) continue;
       if (this._isRecipeBlocked(skill, recipe.code)) continue;
 
-      const candidate = this._buildCraftCandidate(recipe, ctx, bank);
+      const candidate = this._buildCraftCandidate(recipe, ctx, bank, goalQty);
       if (!candidate) continue;
       scored.push(candidate);
     }
@@ -354,12 +417,12 @@ export class SkillRotation {
    * are already available in bank + inventory.
    * Returns 0.0 (nothing available) to 1.0 (everything available).
    */
-  _scoreRecipeAvailability(plan, ctx, bank) {
+  _scoreRecipeAvailability(plan, ctx, bank, goalQty = 1) {
     let totalNeeded = 0;
     let totalHave = 0;
 
     for (const step of plan) {
-      const needed = step.quantity;
+      const needed = step.quantity * goalQty;
       totalNeeded += needed;
 
       const inInventory = ctx.itemCount(step.itemCode);
@@ -374,11 +437,12 @@ export class SkillRotation {
    * Build a craft candidate with viability checks and metadata for selection.
    * Returns null if the recipe cannot be used right now.
    */
-  _buildCraftCandidate(recipe, ctx, bank) {
+  _buildCraftCandidate(recipe, ctx, bank, goalQty = 1) {
     const plan = this.gameData.resolveRecipeChain(recipe.craft);
     if (!plan || plan.length === 0) return null;
-    if (!this.gameData.canFulfillPlan(plan, ctx)) {
-      this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank);
+    const planCheck = this.gameData.canFulfillPlanWithBank(plan, ctx, bank);
+    if (!planCheck.ok) {
+      this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank, goalQty);
       return null;
     }
 
@@ -387,7 +451,7 @@ export class SkillRotation {
     if (bankSteps.length > 0) {
       const allMet = bankSteps.every(s => (bank.get(s.itemCode) || 0) >= s.quantity);
       if (!allMet) {
-        this._trackExchangeNeeds(bankSteps, bank);
+        this._trackExchangeNeeds(bankSteps, bank, ctx);
         return null;
       }
     }
@@ -399,7 +463,7 @@ export class SkillRotation {
     for (const step of fightSteps) {
       const inBank = bank.get(step.itemCode) || 0;
       const inInventory = ctx.itemCount(step.itemCode);
-      const deficit = step.quantity - (inBank + inInventory);
+      const deficit = (step.quantity * goalQty) - (inBank + inInventory);
       if (deficit > 0) {
         needsCombat = true;
         fightStepDeficits.push({ ...step, deficit });
@@ -411,8 +475,8 @@ export class SkillRotation {
     return {
       recipe,
       plan,
-      availability: this._scoreRecipeAvailability(plan, ctx, bank),
-      bankOnly: this._isPlanBankOnly(plan, ctx, bank),
+      availability: this._scoreRecipeAvailability(plan, ctx, bank, goalQty),
+      bankOnly: this._isPlanBankOnly(plan, ctx, bank, goalQty),
       needsCombat,
       fightSteps: needsCombat ? fightStepDeficits : [],
     };
@@ -435,6 +499,7 @@ export class SkillRotation {
       }
 
       let viable = true;
+      let blocked = false;
       for (const step of candidate.fightSteps) {
         const monsterCode = step.monster.code;
         if (!simCache.has(monsterCode)) {
@@ -442,17 +507,17 @@ export class SkillRotation {
           simCache.set(monsterCode, result);
         }
         const simResult = simCache.get(monsterCode);
-        if (!simResult || !simResult.simResult.win || simResult.simResult.hpLostPercent > 90) {
+        if (!isCombatResultViable(simResult?.simResult)) {
           viable = false;
           this._queueFightOrder(step, candidate.recipe, ctx);
           log.info(`[${ctx.name}] Rotation: ${candidate.recipe.code} needs ${step.itemCode} from ${monsterCode} — can't win fight, skipping`);
-          if (skill && candidate.recipe?.code) {
+          if (!blocked && skill && candidate.recipe?.code) {
             this.blockRecipe(skill, candidate.recipe.code, {
               reason: `combat not viable vs ${monsterCode}`,
               ctx,
             });
+            blocked = true;
           }
-          break;
         }
       }
       if (viable) verified.push(candidate);
@@ -461,14 +526,14 @@ export class SkillRotation {
     return verified;
   }
 
-  _queueGatherOrdersForDeficits(plan, recipe, ctx, bank) {
+  _queueGatherOrdersForDeficits(plan, recipe, ctx, bank, goalQty = 1) {
     const bankItems = bank || new Map();
 
     for (const step of plan) {
       if (step.type !== 'gather' || !step.resource) continue;
       if (ctx.skillLevel(step.resource.skill) >= step.resource.level) continue;
 
-      const deficit = this._deficitQty(step.quantity, step.itemCode, bankItems, ctx);
+      const deficit = this._deficitQty(step.quantity * goalQty, step.itemCode, bankItems, ctx);
       if (deficit <= 0) continue;
 
       this._enqueueOrder({
@@ -520,11 +585,11 @@ export class SkillRotation {
    * A plan is bank-only when all gather/bank inputs are already present in
    * current inventory + bank, so no gathering action is needed.
    */
-  _isPlanBankOnly(plan, ctx, bank) {
+  _isPlanBankOnly(plan, ctx, bank, goalQty = 1) {
     for (const step of plan) {
       if (step.type !== 'gather' && step.type !== 'bank' && step.type !== 'fight') continue;
       const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
-      if (have < step.quantity) return false;
+      if (have < step.quantity * goalQty) return false;
     }
     return true;
   }
@@ -532,8 +597,10 @@ export class SkillRotation {
   /**
    * Record unmet bank-only deps that are obtainable via task exchange.
    * Called when a recipe is skipped due to missing bank ingredients.
+   * When createOrders is enabled, also enqueues task_exchange orders for
+   * cross-character coordination.
    */
-  _trackExchangeNeeds(bankSteps, bank) {
+  _trackExchangeNeeds(bankSteps, bank, ctx = null) {
     for (const step of bankSteps) {
       if (!this.gameData.isTaskReward(step.itemCode)) continue;
       const inBank = bank.get(step.itemCode) || 0;
@@ -541,6 +608,15 @@ export class SkillRotation {
       if (deficit > 0) {
         this._exchangeNeeds.set(step.itemCode,
           Math.max(this._exchangeNeeds.get(step.itemCode) || 0, deficit));
+        if (ctx && this.orderBoard.createOrders) {
+          this._enqueueOrder({
+            sourceType: 'task_exchange',
+            sourceCode: step.itemCode,
+            itemCode: step.itemCode,
+            requesterName: ctx.name,
+            quantity: deficit,
+          });
+        }
       }
     }
   }

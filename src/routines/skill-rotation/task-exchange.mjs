@@ -1,0 +1,421 @@
+/**
+ * Task coin exchange executor — proactively exchange task coins for rewards.
+ *
+ * All cross-calls go through routine._* wrappers so tests can monkey-patch methods.
+ */
+import * as api from '../../api.mjs';
+import * as log from '../../log.mjs';
+import * as gameData from '../../services/game-data.mjs';
+import { moveTo } from '../../helpers.mjs';
+import { depositBankItems, withdrawBankItems } from '../../services/bank-ops.mjs';
+import { globalCount } from '../../services/inventory-manager.mjs';
+import { getOrderBoardSnapshot } from '../../services/order-board.mjs';
+import { TASKS_MASTER, TASKS_TRADER } from '../../data/locations.mjs';
+import { TASK_COIN_CODE, TASK_EXCHANGE_COST, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
+
+const TASKS_TRADER_NPC = 'tasks_trader';
+const exchangeLog = log.createLogger({ scope: 'routine.skill-rotation.task-exchange' });
+
+/** Gate for tasks_trader access — flipped to false on 496 "condition not met" errors. */
+let tasksTraderAvailable = true;
+
+/** Returns false if we've seen a 496 indicating the tasks_farmer achievement isn't unlocked. */
+export function isTasksTraderAvailable() { return tasksTraderAvailable; }
+
+/**
+ * Returns true if there is any open/claimed task_exchange order on the board
+ * for an item that the tasks_trader NPC sells directly.
+ * When this is true, random task/exchange should not run — preserve coins for
+ * targeted NPC purchases.
+ */
+function hasOpenTasksTraderOrders() {
+  if (!tasksTraderAvailable) return false;
+  const { orders } = getOrderBoardSnapshot();
+  return orders.some(o =>
+    o.sourceType === 'task_exchange' &&
+    o.status !== 'fulfilled' &&
+    gameData.canNpcSell(TASKS_TRADER_NPC, o.itemCode),
+  );
+}
+
+let taskExchangeLockHolder = null;
+
+export function collectExchangeTargets(routine, { extraNeedItemCode = '' } = {}) {
+  const targets = typeof routine.rotation?.getExchangeTargets === 'function'
+    ? routine.rotation.getExchangeTargets()
+    : new Map();
+  const code = `${extraNeedItemCode || ''}`.trim();
+  if (code && routine._isTaskRewardCode(code)) {
+    targets.set(code, Math.max(targets.get(code) || 0, 1));
+  }
+  return targets;
+}
+
+export function computeUnmetTargets(ctx, targets, bankItems) {
+  const unmet = new Map();
+  const bank = bankItems instanceof Map ? bankItems : new Map();
+
+  for (const [code, rawTarget] of targets) {
+    const target = Math.max(0, Math.floor(Number(rawTarget) || 0));
+    if (!code || target <= 0) continue;
+    const have = (bank.get(code) || 0) + ctx.itemCount(code);
+    if (have < target) unmet.set(code, target - have);
+  }
+  return unmet;
+}
+
+export function inventorySnapshotForTargets(ctx, targets) {
+  const snapshot = new Map();
+  for (const code of targets.keys()) {
+    snapshot.set(code, ctx.itemCount(code));
+  }
+  return snapshot;
+}
+
+export async function ensureExchangeCoinsInInventory(ctx, minCoins = TASK_EXCHANGE_COST) {
+  const logger = log.forCharacter(exchangeLog, ctx);
+  const invCoins = ctx.itemCount(TASK_COIN_CODE);
+  if (invCoins >= minCoins) {
+    return { ok: true, available: invCoins };
+  }
+
+  const needed = Math.max(0, minCoins - invCoins);
+  if (needed <= 0) {
+    return { ok: true, available: invCoins };
+  }
+
+  // Check if bank actually has coins before traveling there
+  const totalGlobal = globalCount(TASK_COIN_CODE);
+  const bankCoins = totalGlobal - invCoins;
+  if (bankCoins <= 0) {
+    return { ok: false, available: invCoins };
+  }
+
+  const result = await withdrawBankItems(ctx, [{ code: TASK_COIN_CODE, quantity: needed }], {
+    reason: 'task exchange coin withdrawal',
+    mode: 'partial',
+    retryStaleOnce: true,
+  });
+  for (const row of result.failed) {
+    logger.warn(`[${ctx.name}] Task Exchange: coin withdrawal failed for ${row.code}: ${row.error}`, {
+      event: 'task_exchange.coin_withdraw.failed',
+      reasonCode: 'bank_unavailable',
+      data: {
+        code: row.code,
+        requested: row.requested,
+        error: row.error,
+      },
+    });
+  }
+
+  const refreshedInv = ctx.itemCount(TASK_COIN_CODE);
+  const ok = refreshedInv >= minCoins;
+  return { ok, available: refreshedInv };
+}
+
+export async function depositTargetRewardsToBank(ctx, targets, beforeInvSnapshot = new Map()) {
+  const logger = log.forCharacter(exchangeLog, ctx);
+  const deposits = [];
+  for (const code of targets.keys()) {
+    const before = beforeInvSnapshot.get(code) || 0;
+    const now = ctx.itemCount(code);
+    const gained = now - before;
+    if (gained > 0) {
+      deposits.push({ code, quantity: gained });
+    }
+  }
+  if (deposits.length === 0) return [];
+
+  try {
+    return await depositBankItems(ctx, deposits, {
+      reason: 'task exchange reward deposit',
+    });
+  } catch (err) {
+    logger.warn(`[${ctx.name}] Task Exchange: reward deposit failed: ${err.message}`, {
+      event: 'task_exchange.reward_deposit.failed',
+      reasonCode: 'bank_unavailable',
+      error: err,
+      data: {
+        items: deposits,
+      },
+    });
+    return [];
+  }
+}
+
+export async function performTaskExchange(ctx) {
+  await moveTo(ctx, TASKS_MASTER.monsters.x, TASKS_MASTER.monsters.y);
+  const result = await api.taskExchange(ctx.name);
+  ctx.applyActionResult(result);
+  await api.waitForCooldown(result);
+}
+
+/**
+ * Buy a specific item directly from the tasks_trader NPC.
+ * Assumes coins are already in inventory and character is or will be moved.
+ */
+export async function performTasksTraderPurchase(ctx, itemCode, quantity) {
+  const logger = log.forCharacter(exchangeLog, ctx);
+  try {
+    await moveTo(ctx, TASKS_TRADER.x, TASKS_TRADER.y);
+  } catch (err) {
+    // 496 = "Condition not met" — typically missing tasks_farmer achievement to access the trader tile.
+    if (err.status === 496 || err.code === 496 || `${err.code}` === '496') {
+      logger.warn(`[${ctx.name}] Tasks Trader: cannot reach trader tile — disabling trader purchases until restart`, {
+        event: 'tasks_trader.path.blocked',
+        reasonCode: 'routine_conditions_changed',
+        error: err,
+      });
+      tasksTraderAvailable = false;
+    }
+    throw err;
+  }
+  const result = await api.npcBuy(itemCode, quantity, ctx.name);
+  ctx.applyActionResult(result);
+  await api.waitForCooldown(result);
+}
+
+/**
+ * Orchestrate a targeted purchase from the tasks_trader NPC.
+ * Ensures coins are in inventory, buys, then deposits to bank (triggering order credit).
+ *
+ * @returns {{ attempted, purchased, reason }}
+ */
+export async function runTasksTraderPurchase(ctx, routine, { itemCode, remainingQty = 1 } = {}) {
+  const logger = log.forCharacter(exchangeLog, ctx);
+  const offer = gameData.getNpcBuyOffer(TASKS_TRADER_NPC, itemCode);
+  if (!offer) {
+    return { attempted: false, purchased: 0, reason: 'not_available' };
+  }
+
+  const unitPrice = offer.buyPrice;
+  const totalNeeded = Math.max(1, Math.floor(Number(remainingQty) || 1));
+
+  const totalCoins = globalCount(TASK_COIN_CODE);
+  const maxAffordable = Math.floor(totalCoins / unitPrice);
+  if (maxAffordable <= 0) {
+    return { attempted: false, purchased: 0, reason: 'insufficient_coins' };
+  }
+
+  const availableSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
+  if (availableSpace <= 0) {
+    return { attempted: false, purchased: 0, reason: 'inventory_full' };
+  }
+
+  const buyQty = Math.min(totalNeeded, maxAffordable, availableSpace);
+  const coinsNeeded = buyQty * unitPrice;
+
+  const coinStatus = await ensureExchangeCoinsInInventory(ctx, coinsNeeded);
+  if (!coinStatus.ok) {
+    return { attempted: false, purchased: 0, reason: 'insufficient_coins' };
+  }
+
+  try {
+    await routine._performTasksTraderPurchase(ctx, itemCode, buyQty);
+    logger.info(`[${ctx.name}] Tasks Trader: bought ${itemCode} x${buyQty} for ${coinsNeeded} ${TASK_COIN_CODE}`, {
+      event: 'tasks_trader.purchase.completed',
+      data: {
+        itemCode,
+        quantity: buyQty,
+        coinsNeeded,
+      },
+    });
+  } catch (err) {
+    logger.warn(`[${ctx.name}] Tasks Trader: buy failed for ${itemCode}: ${err.message}`, {
+      event: 'tasks_trader.purchase.failed',
+      reasonCode: 'request_failed',
+      error: err,
+      data: {
+        itemCode,
+        quantity: buyQty,
+      },
+    });
+    // 496 = "Condition not met" — typically a missing achievement (e.g. tasks_farmer).
+    // Mark the trader as unavailable so we stop retrying until restart.
+    if (err.status === 496 || `${err.code}` === '496') {
+      logger.warn(`[${ctx.name}] Tasks Trader: condition not met — disabling trader purchases until restart`, {
+        event: 'tasks_trader.unavailable',
+        reasonCode: 'routine_conditions_changed',
+        error: err,
+        data: {
+          itemCode,
+        },
+      });
+      tasksTraderAvailable = false;
+      return { attempted: true, purchased: 0, reason: 'condition_not_met' };
+    }
+    return { attempted: true, purchased: 0, reason: `buy_failed:${err.code || 'unknown'}` };
+  }
+
+  // Deposit to bank so the order board credits the deposit
+  const qty = ctx.itemCount(itemCode);
+  if (qty > 0) {
+    try {
+      await depositBankItems(ctx, [{ code: itemCode, quantity: qty }], {
+        reason: `tasks_trader purchase: ${itemCode}`,
+      });
+    } catch (err) {
+      logger.warn(`[${ctx.name}] Tasks Trader: deposit failed after buying ${itemCode}: ${err.message}`, {
+        event: 'tasks_trader.deposit.failed',
+        reasonCode: 'bank_unavailable',
+        error: err,
+        data: {
+          itemCode,
+          quantity: qty,
+        },
+      });
+    }
+  }
+
+  return { attempted: true, purchased: buyQty, reason: 'purchased' };
+}
+
+export async function runTaskExchange(
+  ctx,
+  routine,
+  { targets = null, trigger = 'unknown', proactive = false, extraNeedItemCode = '' } = {},
+) {
+  const logger = log.forCharacter(exchangeLog, ctx);
+  let targetMap = targets instanceof Map
+    ? new Map(targets)
+    : routine._collectExchangeTargets({ extraNeedItemCode });
+  const extraCode = `${extraNeedItemCode || ''}`.trim();
+  if (extraCode && routine._isTaskRewardCode(extraCode)) {
+    targetMap.set(extraCode, Math.max(targetMap.get(extraCode) || 0, 1));
+  }
+  if (targetMap.size === 0) {
+    return { attempted: false, exchanged: 0, resolved: true, reason: 'no_targets' };
+  }
+
+  if (taskExchangeLockHolder && taskExchangeLockHolder !== ctx.name) {
+    return { attempted: false, exchanged: 0, resolved: false, reason: 'lock_busy' };
+  }
+
+  taskExchangeLockHolder = ctx.name;
+  try {
+    let bank = await routine._getBankItems(true);
+    let unmet = routine._computeUnmetTargets(ctx, targetMap, bank);
+    if (unmet.size === 0) {
+      return { attempted: false, exchanged: 0, resolved: true, reason: 'targets_met' };
+    }
+
+    let attempted = false;
+    let exchanged = 0;
+    let reason = 'targets_unmet';
+
+    while (unmet.size > 0) {
+      const coinStatus = await routine._ensureExchangeCoinsInInventory(ctx, TASK_EXCHANGE_COST);
+      if (!coinStatus.ok) {
+        reason = 'insufficient_coins';
+        break;
+      }
+
+      if (ctx.inventoryCount() + 2 >= ctx.inventoryCapacity()) {
+        reason = 'inventory_full';
+        break;
+      }
+
+      attempted = true;
+      const beforeInv = routine._inventorySnapshotForTargets(ctx, targetMap);
+
+      try {
+        await routine._performTaskExchange(ctx);
+        exchanged += 1;
+        logger.debug(`[${ctx.name}] Task Exchange (${trigger}): exchanged ${TASK_EXCHANGE_COST} coins (${ctx.taskCoins()} available)`, {
+          event: 'task_exchange.exchange.completed',
+          data: {
+            trigger,
+            exchanged,
+            cost: TASK_EXCHANGE_COST,
+            availableCoins: ctx.taskCoins(),
+          },
+        });
+      } catch (err) {
+        reason = `exchange_failed:${err.code || 'unknown'}`;
+        logger.warn(`[${ctx.name}] Task Exchange (${trigger}) failed: ${err.message}`, {
+          event: 'task_exchange.exchange.failed',
+          reasonCode: 'request_failed',
+          error: err,
+          data: {
+            trigger,
+          },
+        });
+        break;
+      }
+
+      await routine._depositTargetRewardsToBank(ctx, targetMap, beforeInv);
+      bank = await routine._getBankItems(true);
+      unmet = routine._computeUnmetTargets(ctx, targetMap, bank);
+    }
+
+    const resolved = unmet.size === 0;
+    if (resolved) {
+      if (attempted) {
+        logger.info(`[${ctx.name}] Task Exchange (${trigger}): targets met`, {
+          event: 'task_exchange.targets.met',
+          data: {
+            trigger,
+            exchanged,
+          },
+        });
+      }
+      return { attempted, exchanged, resolved: true, reason: 'targets_met' };
+    }
+
+    if (!attempted && reason === 'targets_unmet') {
+      reason = 'deferred';
+    }
+    if (proactive && reason === 'lock_busy') {
+      return { attempted: false, exchanged, resolved: false, reason };
+    }
+    return { attempted, exchanged, resolved: false, reason };
+  } finally {
+    if (taskExchangeLockHolder === ctx.name) {
+      taskExchangeLockHolder = null;
+    }
+  }
+}
+
+export async function maybeRunProactiveExchange(ctx, routine, { extraNeedItemCode = '', trigger = 'proactive' } = {}) {
+  const now = routine._nowMs();
+  if (now < routine._nextProactiveExchangeAt) {
+    return { attempted: false, exchanged: 0, resolved: false, reason: 'backoff' };
+  }
+
+  // Don't gamble coins when there's a pending order for a tasks_trader item —
+  // those will be fulfilled via targeted NPC purchase instead.
+  if (hasOpenTasksTraderOrders()) {
+    return { attempted: false, exchanged: 0, resolved: false, reason: 'deferred_for_trader_order' };
+  }
+
+  const targets = routine._collectExchangeTargets({ extraNeedItemCode });
+  if (targets.size === 0) {
+    return { attempted: false, exchanged: 0, resolved: true, reason: 'no_targets' };
+  }
+
+  const result = await routine._runTaskExchange(ctx, {
+    targets,
+    trigger,
+    proactive: true,
+    extraNeedItemCode,
+  });
+  if (!result.resolved) {
+    routine._nextProactiveExchangeAt = routine._nowMs() + PROACTIVE_EXCHANGE_BACKOFF_MS;
+  } else {
+    routine._nextProactiveExchangeAt = 0;
+  }
+  return result;
+}
+
+export async function exchangeTaskCoins(ctx, routine) {
+  // Don't gamble coins post-task when a pending tasks_trader order exists.
+  if (hasOpenTasksTraderOrders()) return;
+
+  const targets = routine._collectExchangeTargets();
+  if (targets.size === 0) return;
+  await routine._runTaskExchange(ctx, {
+    targets,
+    trigger: 'task_completion',
+    proactive: false,
+  });
+}

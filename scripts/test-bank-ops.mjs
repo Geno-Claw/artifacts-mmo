@@ -272,6 +272,11 @@ function makeCtx(name = 'Tester', opts = {}) {
     inventoryCount() {
       return state.inventoryByChar[name] || 0;
     },
+    inventoryEmptySlots() {
+      const inventory = state.inventorySlotsByChar[name] || [];
+      const used = inventory.filter(s => s.code && s.quantity > 0).length;
+      return Math.max(0, (opts.maxSlots || 20) - used);
+    },
     isAt(x, y) {
       const pos = state.positionByChar[name] || { x: 0, y: 0 };
       return pos.x === x && pos.y === y;
@@ -286,6 +291,7 @@ function makeCtx(name = 'Tester', opts = {}) {
       };
     },
     async refresh() {},
+    applyActionResult() {},
   };
 }
 
@@ -492,6 +498,28 @@ async function run() {
   assert.equal(bankCount('copper_ore'), 3, 'deposit should keep configured carry quantity');
   assert.equal(state.inventorySlotsByChar.H2.find(row => row.code === 'iron_sword')?.quantity || 0, 1, 'kept gear should stay in inventory');
   assert.equal(state.inventorySlotsByChar.H2.find(row => row.code === 'copper_ore')?.quantity || 0, 1, 'kept quantity should remain in inventory');
+
+  // 9c) transition fallback keepByCode should preserve old weapon while depositing non-kept items.
+  await resetHarness();
+  setBank([]);
+  await getBankItems(true);
+  const ctx8c = makeCtx('H3', {
+    startX: BANK.x,
+    startY: BANK.y,
+    inventory: [
+      { code: 'sticky_sword', quantity: 1 },
+      { code: 'copper_pick', quantity: 1 },
+      { code: 'copper_ore', quantity: 2 },
+    ],
+  });
+  await depositAllInventory(ctx8c, {
+    reason: 'test transition fallback keep',
+    keepByCode: { sticky_sword: 1 },
+  });
+  assert.equal(bankCount('sticky_sword'), 0, 'fallback weapon in keepByCode should not be deposited');
+  assert.equal(bankCount('copper_pick'), 1, 'non-kept tool should be deposited');
+  assert.equal(bankCount('copper_ore'), 2, 'non-kept resources should be deposited');
+  assert.equal(state.inventorySlotsByChar.H3.find(row => row.code === 'sticky_sword')?.quantity || 0, 1, 'kept fallback weapon should stay in inventory');
 
   // 10) Off-bank gold withdraw/deposit auto-moves to bank.
   await resetHarness();

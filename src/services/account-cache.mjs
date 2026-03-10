@@ -1,9 +1,11 @@
 const ACCOUNT_DETAILS_TTL_MS = 5 * 60 * 1000;
 const ACCOUNT_ACHIEVEMENTS_TTL_MS = 10 * 60 * 1000;
+const ACHIEVEMENT_DEFINITIONS_TTL_MS = 30 * 60 * 1000;
 
 let nowImpl = () => Date.now();
 let apiModulePromise = null;
 let detailsCache = null;
+let definitionsCache = null;
 const achievementsCache = new Map();
 
 function nowMs() {
@@ -85,6 +87,30 @@ async function refreshDetails() {
   return toResult(next, false);
 }
 
+async function refreshDefinitions() {
+  const { getAchievements } = await getApiModule();
+  const allItems = [];
+  let page = 1;
+  const size = 100;
+  for (;;) {
+    const raw = await getAchievements({ page, size });
+    const payload = raw && typeof raw === 'object' ? raw : {};
+    const list = Array.isArray(payload.data) ? payload.data : (Array.isArray(raw) ? raw : []);
+    allItems.push(...list);
+    const totalPages = payload.pages ?? 1;
+    if (page >= totalPages || list.length < size) break;
+    page++;
+  }
+  const fetchedAtMs = nowMs();
+  const next = {
+    data: allItems,
+    fetchedAtMs,
+    expiresAtMs: fetchedAtMs + ACHIEVEMENT_DEFINITIONS_TTL_MS,
+  };
+  definitionsCache = next;
+  return toResult(next, false);
+}
+
 async function refreshAchievements(cacheKey, account, params = {}) {
   const { getAccountAchievements } = await getApiModule();
   const data = await getAccountAchievements(account, params);
@@ -147,10 +173,33 @@ export async function getCachedAccountAchievements(account, params = {}, { force
   }
 }
 
+export async function getCachedAchievementDefinitions({ forceRefresh = false } = {}) {
+  const atMs = nowMs();
+  if (!forceRefresh && isFresh(definitionsCache, atMs)) {
+    return toResult(definitionsCache, true);
+  }
+
+  if (definitionsCache?.promise) {
+    return definitionsCache.promise;
+  }
+
+  const previous = definitionsCache && !definitionsCache.promise ? definitionsCache : null;
+  const promise = refreshDefinitions();
+  definitionsCache = { ...previous, promise };
+
+  try {
+    return await promise;
+  } catch (err) {
+    definitionsCache = previous;
+    throw err;
+  }
+}
+
 export function _resetAccountCacheForTests() {
   nowImpl = () => Date.now();
   apiModulePromise = null;
   detailsCache = null;
+  definitionsCache = null;
   achievementsCache.clear();
 }
 
@@ -161,4 +210,5 @@ export function _setAccountCacheNowForTests(nowFn) {
 export {
   ACCOUNT_DETAILS_TTL_MS,
   ACCOUNT_ACHIEVEMENTS_TTL_MS,
+  ACHIEVEMENT_DEFINITIONS_TTL_MS,
 };

@@ -1,14 +1,9 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import * as log from './log.mjs';
+import { toPositiveInt } from './utils.mjs';
 import { createRuntimeManager } from './runtime-manager.mjs';
 import { startDashboardServer } from './dashboard-server.mjs';
-
-function toPositiveInt(value, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return fallback;
-  return Math.floor(num);
-}
 
 const stopTimeoutMs = toPositiveInt(process.env.RUNTIME_STOP_TIMEOUT_MS, 120_000);
 
@@ -35,12 +30,15 @@ async function shutdown(signal) {
 
   try {
     await runtimeManager.stop(stopTimeoutMs);
+    log.info('Runtime stop complete; closing dashboard');
   } catch (err) {
     log.error('Graceful runtime stop failed', err?.message || String(err));
+    log.info('Proceeding to dashboard shutdown after runtime stop failure');
   }
 
   try {
     await dashboard.close();
+    log.info('Dashboard shutdown complete');
   } catch (err) {
     log.error('Dashboard shutdown failed', err?.message || String(err));
   }

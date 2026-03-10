@@ -35,7 +35,9 @@ function mergeKeyFor(sourceType, sourceCode, itemCode) {
 function normalizeSourceType(value) {
   if (value === 'fight') return 'fight';
   if (value === 'gather') return 'gather';
+  if (value === 'npc_buy') return 'npc_buy';
   if (value === 'craft') return 'craft';
+  if (value === 'task_exchange') return 'task_exchange';
   return '';
 }
 
@@ -496,8 +498,8 @@ export function markCharBlocked(orderId, blockOpts = {}) {
 export function recordDeposits({ charName, items } = {}) {
   if (!initialized) return [];
 
-  const claimer = `${charName || ''}`.trim();
-  if (!claimer) return [];
+  const depositor = `${charName || ''}`.trim();
+  if (!depositor) return [];
 
   const totals = new Map();
   for (const row of (Array.isArray(items) ? items : [])) {
@@ -510,24 +512,33 @@ export function recordDeposits({ charName, items } = {}) {
 
   const atMs = nowMs();
   const changed = [];
+  const sorted = getSortedOrders(atMs);
 
-  for (const order of getSortedOrders(atMs)) {
-    if (order.status === 'fulfilled') continue;
-    if (!order.claim || order.claim.charName !== claimer) continue;
+  function applyToOrders(filterFn, opportunistic) {
+    for (const order of sorted) {
+      if (order.status === 'fulfilled') continue;
+      if (!filterFn(order)) continue;
 
-    const available = totals.get(order.itemCode) || 0;
-    if (available <= 0) continue;
+      const available = totals.get(order.itemCode) || 0;
+      if (available <= 0) continue;
 
-    const consumed = Math.min(available, order.remainingQty);
-    if (consumed <= 0) continue;
+      const consumed = Math.min(available, order.remainingQty);
+      if (consumed <= 0) continue;
 
-    order.remainingQty -= consumed;
-    totals.set(order.itemCode, available - consumed);
-    order.updatedAtMs = atMs;
+      order.remainingQty -= consumed;
+      totals.set(order.itemCode, available - consumed);
+      order.updatedAtMs = atMs;
 
-    ensureStatus(order, atMs);
-    changed.push({ orderId: order.id, itemCode: order.itemCode, quantity: consumed, status: order.status });
+      ensureStatus(order, atMs);
+      changed.push({ orderId: order.id, itemCode: order.itemCode, quantity: consumed, status: order.status, opportunistic });
+    }
   }
+
+  // Pass 1: prioritize orders claimed by the depositor
+  applyToOrders(order => order.claim && order.claim.charName === depositor, false);
+
+  // Pass 2: remaining quantities go to any non-fulfilled order
+  applyToOrders(order => !order.claim || order.claim.charName !== depositor, true);
 
   if (changed.length > 0) {
     markUpdated(atMs);
@@ -546,6 +557,22 @@ export function getOrderBoardSnapshot() {
     updatedAtMs: updatedAtMs || atMs,
     orders: list,
   };
+}
+
+export function getOpenOrderDemandByCode() {
+  const totals = new Map();
+  const snapshot = getOrderBoardSnapshot();
+  const rows = Array.isArray(snapshot?.orders) ? snapshot.orders : [];
+
+  for (const order of rows) {
+    if (!order?.itemCode) continue;
+    if (order.status === 'fulfilled') continue;
+    const remainingQty = Math.max(0, Math.floor(Number(order.remainingQty) || 0));
+    if (remainingQty <= 0) continue;
+    totals.set(order.itemCode, (totals.get(order.itemCode) || 0) + remainingQty);
+  }
+
+  return totals;
 }
 
 export function subscribeOrderBoardEvents(listener) {

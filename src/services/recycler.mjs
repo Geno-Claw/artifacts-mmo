@@ -6,13 +6,16 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
-import { bankCount, globalCount } from './inventory-manager.mjs';
-import { getClaimedTotal } from './gear-state.mjs';
 import {
   depositBankItems,
   withdrawBankItems,
 } from './bank-ops.mjs';
 import { getSellRules } from './ge-seller.mjs';
+import {
+  analyzeSurplusEquipmentCandidates,
+  _resetForTests as _resetSurplusDepsForTests,
+  _setDepsForTests as _setSurplusDepsForTests,
+} from './equipment-surplus.mjs';
 import { moveTo } from '../helpers.mjs';
 
 const TARGET_BANK_UNIQUE_SLOTS = 45;
@@ -21,9 +24,6 @@ const MAX_RECYCLE_PASSES = 6;
 let _deps = {
   gameDataSvc: gameData,
   getSellRulesFn: getSellRules,
-  getClaimedTotalFn: getClaimedTotal,
-  globalCountFn: globalCount,
-  bankCountFn: bankCount,
   withdrawBankItemsFn: withdrawBankItems,
   depositBankItemsFn: depositBankItems,
   moveToFn: moveTo,
@@ -43,36 +43,15 @@ let _deps = {
  * @returns {Array<{ code: string, quantity: number, reason: string, craftSkill: string }>}
  */
 export function analyzeRecycleCandidates(ctx, bankItems) {
-  const sellRules = _deps.getSellRulesFn();
-  if (!sellRules?.sellDuplicateEquipment) return [];
-
-  const candidates = [];
-  const neverSellSet = new Set(sellRules.neverSell || []);
-
-  for (const [code, bankQty] of bankItems.entries()) {
-    if (neverSellSet.has(code)) continue;
-
-    const item = _deps.gameDataSvc.getItem(code);
-    if (!item || !_deps.gameDataSvc.isEquipmentType(item)) continue;
-
-    // Must have craft property to be recyclable
-    if (!item.craft?.skill) continue;
-
-    const keep = _deps.getClaimedTotalFn(code);
-    const totalOwned = _deps.globalCountFn(code);
-    const surplus = totalOwned - keep;
-    const qty = Math.min(Math.max(surplus, 0), _deps.bankCountFn(code));
-    if (qty <= 0) continue;
-
-    candidates.push({
-      code,
-      quantity: qty,
-      reason: `unclaimed equipment/jewelry (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${keep})`,
-      craftSkill: item.craft.skill,
-    });
-  }
-
-  return candidates;
+  return analyzeSurplusEquipmentCandidates(ctx, bankItems, {
+    sellRules: _deps.getSellRulesFn(),
+    requireCraftable: true,
+  }).map(candidate => ({
+    code: candidate.code,
+    quantity: candidate.quantity,
+    reason: candidate.reason,
+    craftSkill: candidate.craftSkill,
+  }));
 }
 
 // --- Main recycle flow ---
@@ -170,22 +149,46 @@ async function _recycleGroup(ctx, skill, workshop, items) {
 
     const qty = Math.min(item.quantity, actualQty);
 
+    // Pre-emptive deposit if inventory is nearly full before attempting recycle
+    if (ctx.inventoryCount() >= ctx.inventoryCapacity() * 0.8) {
+      log.info(`[${ctx.name}] Recycle: inventory at ${ctx.inventoryCount()}/${ctx.inventoryCapacity()}, depositing before next recycle`);
+      await _depositInventory(ctx);
+      await _deps.moveToFn(ctx, workshop.x, workshop.y);
+    }
+
     try {
       log.info(`[${ctx.name}] Recycle: recycling ${item.code} x${qty} at ${skill} workshop`);
       const result = await _deps.recycleFn(item.code, qty, ctx.name);
+      ctx.applyActionResult(result);
       await _deps.waitForCooldownFn(result);
-      await ctx.refresh();
       recycled++;
       log.info(`[${ctx.name}] Recycle: successfully recycled ${item.code} x${qty}`);
     } catch (err) {
       if (err.code === 473) {
         log.info(`[${ctx.name}] Recycle: ${item.code} cannot be recycled (error 473), will re-deposit`);
+      } else if (err.message?.includes('inventory is full') || err.code === 497) {
+        // Inventory full — deposit materials and retry once
+        log.info(`[${ctx.name}] Recycle: inventory full, depositing and retrying ${item.code} x${qty}`);
+        await _depositInventory(ctx);
+        await _deps.moveToFn(ctx, workshop.x, workshop.y);
+        try {
+          const retryQty = Math.min(qty, ctx.itemCount(item.code));
+          if (retryQty > 0) {
+            const result = await _deps.recycleFn(item.code, retryQty, ctx.name);
+            ctx.applyActionResult(result);
+            await _deps.waitForCooldownFn(result);
+            recycled++;
+            log.info(`[${ctx.name}] Recycle: successfully recycled ${item.code} x${retryQty} (retry)`);
+          }
+        } catch (retryErr) {
+          log.warn(`[${ctx.name}] Recycle: retry failed for ${item.code}: ${retryErr.message}`);
+        }
       } else {
         log.warn(`[${ctx.name}] Recycle: failed to recycle ${item.code}: ${err.message}`);
       }
     }
 
-    // Check if inventory is getting full from recycled materials
+    // Post-recycle deposit if inventory is getting full from recycled materials
     if (ctx.inventoryCount() >= ctx.inventoryCapacity() * 0.9) {
       log.info(`[${ctx.name}] Recycle: inventory nearly full, depositing materials`);
       await _depositInventory(ctx);
@@ -215,6 +218,30 @@ async function _depositInventory(ctx) {
 
 export function _setDepsForTests(overrides = {}) {
   const input = overrides && typeof overrides === 'object' ? overrides : {};
+  const shared = {};
+  for (const key of [
+    'gameDataSvc',
+    'getClaimedTotalFn',
+    'getOpenOrderDemandByCodeFn',
+    'globalCountFn',
+    'bankCountFn',
+    'getCharacterToolProfilesSnapshotFn',
+    'getCharacterLevelsSnapshotFn',
+    'getTrackedCharacterNamesFn',
+    'computeToolNeedsByCodeFn',
+    'computeLatestToolBySkillFn',
+    'computeToolTargetsByCodeFn',
+  ]) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    shared[key] = input[key];
+    delete input[key];
+  }
+  if (Object.keys(shared).length > 0) {
+    _setSurplusDepsForTests(shared);
+  }
+  if (Object.prototype.hasOwnProperty.call(shared, 'gameDataSvc')) {
+    input.gameDataSvc = shared.gameDataSvc;
+  }
   _deps = {
     ..._deps,
     ...input,
@@ -222,12 +249,10 @@ export function _setDepsForTests(overrides = {}) {
 }
 
 export function _resetForTests() {
+  _resetSurplusDepsForTests();
   _deps = {
     gameDataSvc: gameData,
     getSellRulesFn: getSellRules,
-    getClaimedTotalFn: getClaimedTotal,
-    globalCountFn: globalCount,
-    bankCountFn: bankCount,
     withdrawBankItemsFn: withdrawBankItems,
     depositBankItemsFn: depositBankItems,
     moveToFn: moveTo,
