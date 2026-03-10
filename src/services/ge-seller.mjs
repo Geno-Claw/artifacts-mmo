@@ -13,10 +13,16 @@ import {
 } from './bank-ops.mjs';
 import { moveTo } from '../helpers.mjs';
 import { analyzeSurplusEquipmentCandidates } from './equipment-surplus.mjs';
+import { getItemsHeldForNpcSale } from './npc-seller.mjs';
 
 const geLog = log.createLogger({ scope: 'service.ge-seller' });
 
 let sellRules = null;
+let _deps = {
+  getAllGEOrdersFn: (params) => api.getAllGEOrders(params),
+  getItemFn: (code) => gameData.getItem(code),
+  findBestNpcSellOfferFn: (code) => gameData.findBestNpcSellOffer(code),
+};
 
 // --- Concurrency control ---
 
@@ -118,7 +124,8 @@ export function analyzeSellCandidates(ctx, bankItems) {
     seen.add(candidate.code);
   }
 
-  return candidates;
+  const heldForNpcSale = getItemsHeldForNpcSale(bankItems);
+  return candidates.filter(candidate => !heldForNpcSale.has(candidate.code));
 }
 
 // --- Pricing ---
@@ -129,16 +136,17 @@ export function analyzeSellCandidates(ctx, bankItems) {
  */
 export async function determinePrice(code) {
   const minPrice = sellRules?.minPrice || 1;
+  const npcFloor = _deps.findBestNpcSellOfferFn(code)?.sellPrice || 0;
 
   try {
-    const result = await api.getAllGEOrders({ code, type: 'sell', size: 100 });
+    const result = await _deps.getAllGEOrdersFn({ code, type: 'sell', size: 100 });
     const listings = Array.isArray(result) ? result : [];
 
     if (listings.length > 0) {
       const lowestPrice = Math.min(...listings.map(o => o.price));
       const undercutPct = (sellRules?.undercutPercent || 5) / 100;
       const targetPrice = Math.floor(lowestPrice * (1 - undercutPct));
-      return Math.max(targetPrice, minPrice);
+      return Math.max(targetPrice, minPrice, npcFloor);
     }
   } catch (err) {
     geLog.warn(`[GE] Could not fetch listings for ${code}: ${err.message}`, {
@@ -155,9 +163,9 @@ export async function determinePrice(code) {
   }
 
   // Fallback: price based on item level
-  const item = gameData.getItem(code);
+  const item = _deps.getItemFn(code);
   const level = item?.level || 1;
-  return Math.max(level * 10, minPrice);
+  return Math.max(level * 10, minPrice, npcFloor);
 }
 
 // --- Order management ---
@@ -499,7 +507,19 @@ export function _setSellRulesForTests(rules = null) {
   sellRules = rules;
 }
 
+export function _setDepsForTests(overrides = {}) {
+  _deps = {
+    ..._deps,
+    ...overrides,
+  };
+}
+
 export function _resetForTests() {
   sellRules = null;
   _sellLock = null;
+  _deps = {
+    getAllGEOrdersFn: (params) => api.getAllGEOrders(params),
+    getItemFn: (code) => gameData.getItem(code),
+    findBestNpcSellOfferFn: (code) => gameData.findBestNpcSellOffer(code),
+  };
 }

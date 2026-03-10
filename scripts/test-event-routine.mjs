@@ -14,6 +14,13 @@ import { EventRoutine } from '../src/routines/event-routine.mjs';
 import { _activeEvents, _eventDefinitions, setGatherResources } from '../src/services/event-manager.mjs';
 import { _setCachesForTests as setGameDataCachesForTests, _resetForTests as resetGameDataForTests } from '../src/services/game-data.mjs';
 import * as npcEventLock from '../src/services/npc-event-lock.mjs';
+import { loadNpcBuyList } from '../src/services/npc-buy-config.mjs';
+import { loadNpcSellList } from '../src/services/npc-sell-config.mjs';
+import {
+  _resetForTests as resetInventoryManagerForTests,
+  _setApiClientForTests as setInventoryApiForTests,
+  getBankItems,
+} from '../src/services/inventory-manager.mjs';
 
 // --- Helpers ---
 
@@ -453,6 +460,76 @@ function test_npcLock_blocksOtherChars() {
   console.log('  PASS: NPC lock blocks other characters from selecting NPC events');
 }
 
+async function test_canRun_npcSellOnlyEvent() {
+  resetInventoryManagerForTests();
+  setInventoryApiForTests({
+    async getBankItems() {
+      return [{ code: 'old_boots', quantity: 4 }];
+    },
+  });
+  await getBankItems(true);
+
+  loadNpcBuyList({});
+  loadNpcSellList({
+    npcSellList: {
+      nomadic_merchant: [{ code: 'old_boots', keepInBank: 0 }],
+    },
+  });
+  setGameDataCachesForTests({
+    npcSellOffers: [
+      ['nomadic_merchant', [['old_boots', { code: 'old_boots', currency: 'gold', sellPrice: 500 }]]],
+    ],
+  });
+
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: false, npcEvents: true });
+  const ctx = makeCtx();
+  setActiveEvent('nomadic_merchant', 'npc');
+
+  assert.equal(routine.canRun(ctx), true);
+  assert.equal(routine._targetEvent?.npcCode, 'nomadic_merchant');
+
+  clearEvents();
+  routine._clearTarget();
+  loadNpcSellList({});
+  resetInventoryManagerForTests();
+  console.log('  PASS: sell-only NPC events are eligible when vendor selling is enabled');
+}
+
+async function test_canRun_npcSellOnlyEventRespectsToggle() {
+  resetInventoryManagerForTests();
+  setInventoryApiForTests({
+    async getBankItems() {
+      return [{ code: 'old_boots', quantity: 4 }];
+    },
+  });
+  await getBankItems(true);
+
+  loadNpcBuyList({});
+  loadNpcSellList({
+    npcSellList: {
+      nomadic_merchant: [{ code: 'old_boots', keepInBank: 0 }],
+    },
+  });
+  setGameDataCachesForTests({
+    npcSellOffers: [
+      ['nomadic_merchant', [['old_boots', { code: 'old_boots', currency: 'gold', sellPrice: 500 }]]],
+    ],
+  });
+
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: false, npcEvents: true });
+  routine._peerRoutines = [{ configType: 'depositBank', sellToVendor: false }];
+  const ctx = makeCtx();
+  setActiveEvent('nomadic_merchant', 'npc');
+
+  assert.equal(routine.canRun(ctx), false);
+
+  clearEvents();
+  routine._clearTarget();
+  loadNpcSellList({});
+  resetInventoryManagerForTests();
+  console.log('  PASS: sell-only NPC events respect the depositBank sellToVendor toggle');
+}
+
 function test_npcLock_allowsHolder() {
   // CharA holds the lock → CharA should still see NPC events
   // (Note: without npc buy config loaded, shopping list is empty → still false.
@@ -472,6 +549,32 @@ function test_npcLock_allowsHolder() {
   routine._clearTarget();
   npcEventLock._resetForTests();
   console.log('  PASS: NPC lock allows holder character to proceed (blocked by empty shopping list, not lock)');
+}
+
+function test_buildNpcShoppingList_sellListWins() {
+  loadNpcBuyList({
+    npcBuyList: {
+      nomadic_merchant: [{ code: 'old_boots', maxTotal: 10 }],
+    },
+  });
+  loadNpcSellList({
+    npcSellList: {
+      nomadic_merchant: [{ code: 'old_boots', keepInBank: 0 }],
+    },
+  });
+  setGameDataCachesForTests({
+    npcBuyOffers: [
+      ['nomadic_merchant', [['old_boots', { code: 'old_boots', currency: 'gold', buyPrice: 100 }]]],
+    ],
+  });
+
+  const routine = new EventRoutine({ monsterEvents: false, resourceEvents: false, npcEvents: true });
+  const rows = routine._buildNpcShoppingList(makeCtx(), 'nomadic_merchant');
+  assert.deepEqual(rows, []);
+
+  loadNpcBuyList({});
+  loadNpcSellList({});
+  console.log('  PASS: npcSellList overrides npcBuyList for shopping analysis');
 }
 
 function test_clearTarget_releasesNpcLock() {
@@ -658,8 +761,11 @@ async function run() {
   test_findBestEvent_emptyGatherList();
   test_findBestEvent_gatherListNoMatch();
   test_inventoryFull_preservesTarget();
+  await test_canRun_npcSellOnlyEvent();
+  await test_canRun_npcSellOnlyEventRespectsToggle();
   test_npcLock_blocksOtherChars();
   test_npcLock_allowsHolder();
+  test_buildNpcShoppingList_sellListWins();
   test_clearTarget_releasesNpcLock();
   test_clearTarget_doesNotReleaseForNonNpc();
   test_canRun_expiryReleasesNpcLock();
@@ -674,6 +780,9 @@ async function run() {
 run().catch((err) => {
   clearEvents();
   resetGameDataForTests();
+  loadNpcBuyList({});
+  loadNpcSellList({});
+  resetInventoryManagerForTests();
   console.error(err);
   process.exit(1);
 });

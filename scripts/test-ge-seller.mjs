@@ -3,16 +3,23 @@ import assert from 'node:assert/strict';
 
 const geSeller = await import('../src/services/ge-seller.mjs');
 const surplus = await import('../src/services/equipment-surplus.mjs');
+const gameData = await import('../src/services/game-data.mjs');
 
 const {
   analyzeSellCandidates,
+  determinePrice,
   _resetForTests: resetGeSellerForTests,
+  _setDepsForTests: setGeSellerDepsForTests,
   _setSellRulesForTests,
 } = geSeller;
 const {
   _resetForTests: resetSurplusForTests,
   _setDepsForTests: setSurplusDepsForTests,
 } = surplus;
+const {
+  _resetForTests: resetGameDataForTests,
+  _setCachesForTests: setGameDataCachesForTests,
+} = gameData;
 
 function installSurplusDeps({
   itemsByCode,
@@ -272,6 +279,59 @@ function testAnalyzeSellCandidatesProtectsOpenOrderDemand() {
   );
 }
 
+function testAnalyzeSellCandidatesSkipsNpcSellableItems() {
+  resetGeSellerForTests();
+  resetSurplusForTests();
+  resetGameDataForTests();
+
+  const bankItems = new Map([
+    ['old_boots', 4],
+  ]);
+
+  installSurplusDeps({
+    itemsByCode: new Map([
+      ['old_boots', { code: 'old_boots', type: 'boots', level: 1 }],
+    ]),
+    claimedByCode: new Map([
+      ['old_boots', 0],
+    ]),
+    globalByCode: new Map([
+      ['old_boots', 4],
+    ]),
+    bankByCode: bankItems,
+  });
+
+  setGameDataCachesForTests({
+    npcSellOffers: [
+      ['nomadic_merchant', [['old_boots', { code: 'old_boots', currency: 'gold', sellPrice: 500 }]]],
+    ],
+  });
+  _setSellRulesForTests({
+    sellDuplicateEquipment: true,
+    alwaysSell: [],
+    neverSell: [],
+  });
+
+  const rows = analyzeSellCandidates({ name: 'Seller' }, bankItems);
+  assert.deepEqual(rows, [], 'NPC-sellable items should be held out of GE candidate analysis');
+}
+
+async function testDeterminePriceUsesNpcFloor() {
+  resetGeSellerForTests();
+  setGeSellerDepsForTests({
+    getAllGEOrdersFn: async () => [{ price: 420 }],
+    getItemFn: () => ({ level: 2 }),
+    findBestNpcSellOfferFn: () => ({ npcCode: 'nomadic_merchant', currency: 'gold', sellPrice: 500 }),
+  });
+  _setSellRulesForTests({
+    minPrice: 1,
+    undercutPercent: 1,
+  });
+
+  const price = await determinePrice('old_boots');
+  assert.equal(price, 500, 'GE price should never undercut the best NPC sell offer');
+}
+
 function testAnalyzeSellCandidatesRespectsOpenToolDemand() {
   resetGeSellerForTests();
   resetSurplusForTests();
@@ -322,7 +382,7 @@ function testAnalyzeSellCandidatesRespectsOpenToolDemand() {
   );
 }
 
-function run() {
+async function run() {
   try {
     testAnalyzeSellCandidatesIncludesDuplicateDroppedGear();
     testAnalyzeSellCandidatesRespectsToolReserveAndClaims();
@@ -330,11 +390,20 @@ function run() {
     testAlwaysSellOverridesDuplicateKeepLogicForMatchingCode();
     testAnalyzeSellCandidatesProtectsOpenOrderDemand();
     testAnalyzeSellCandidatesRespectsOpenToolDemand();
+    testAnalyzeSellCandidatesSkipsNpcSellableItems();
+    await testDeterminePriceUsesNpcFloor();
     console.log('test-ge-seller: PASS');
   } finally {
     resetGeSellerForTests();
     resetSurplusForTests();
+    resetGameDataForTests();
   }
 }
 
-run();
+run().catch((err) => {
+  resetGeSellerForTests();
+  resetSurplusForTests();
+  resetGameDataForTests();
+  console.error(err);
+  process.exit(1);
+});

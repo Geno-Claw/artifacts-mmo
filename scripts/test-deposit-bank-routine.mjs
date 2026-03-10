@@ -136,7 +136,7 @@ async function testCanRunWhenPendingItemsCached() {
     equipmentCountsOnCharacterFn: () => new Map(),
   });
 
-  const routine = new DepositBankRoutine({ threshold: 0.9 });
+  const routine = new DepositBankRoutine({ threshold: 0.9, sellToVendor: false });
   const ctx = makeCtx({
     inventory: [{ code: 'apple', quantity: 1 }],
     inventoryMaxItems: 20,
@@ -192,7 +192,7 @@ async function testClaimsPendingItemsAndDepositsOnlyClaimedRows() {
     getSellRulesFn: () => null,
   });
 
-  const routine = new DepositBankRoutine({ sellOnGE: false, recycleEquipment: false, depositGold: false });
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: false, recycleEquipment: false, depositGold: false });
   const ctx = makeCtx({ inventory: [], inventoryMaxItems: 20, maxSlots: 5 });
 
   await routine.execute(ctx);
@@ -232,7 +232,7 @@ async function testSkipsClaimWhenPendingQuantityWillNotFit() {
     getSellRulesFn: () => null,
   });
 
-  const routine = new DepositBankRoutine({ sellOnGE: false, recycleEquipment: false, depositGold: false });
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: false, recycleEquipment: false, depositGold: false });
   const ctx = makeCtx({ inventory: [], inventoryMaxItems: 5, maxSlots: 5 });
 
   await routine.execute(ctx);
@@ -263,7 +263,7 @@ async function testSkipsClaimWhenPendingNewItemNeedsMissingSlot() {
     getSellRulesFn: () => null,
   });
 
-  const routine = new DepositBankRoutine({ sellOnGE: false, recycleEquipment: false, depositGold: false });
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: false, recycleEquipment: false, depositGold: false });
   const ctx = makeCtx({
     inventory: [{ code: 'apple', quantity: 1 }],
     inventoryMaxItems: 20,
@@ -327,7 +327,7 @@ async function testRefreshesQueueAfterStale404AndContinues() {
     getSellRulesFn: () => null,
   });
 
-  const routine = new DepositBankRoutine({ sellOnGE: false, recycleEquipment: false, depositGold: false });
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: false, recycleEquipment: false, depositGold: false });
   const ctx = makeCtx({ inventory: [], inventoryMaxItems: 20, maxSlots: 5 });
 
   await routine.execute(ctx);
@@ -362,7 +362,7 @@ async function testInventoryErrorCodesStopClaimsGracefully(code) {
     getSellRulesFn: () => null,
   });
 
-  const routine = new DepositBankRoutine({ sellOnGE: false, recycleEquipment: false, depositGold: false });
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: false, recycleEquipment: false, depositGold: false });
   const ctx = makeCtx({ inventory: [], inventoryMaxItems: 20, maxSlots: 5 });
 
   await routine.execute(ctx);
@@ -433,7 +433,7 @@ async function testPreservesRecycleSellAndGoldFlowAfterPendingClaims() {
     },
   });
 
-  const routine = new DepositBankRoutine({ sellOnGE: true, recycleEquipment: true, depositGold: true });
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: true, recycleEquipment: true, depositGold: true });
   const ctx = makeCtx({ inventory: [], inventoryMaxItems: 20, maxSlots: 5, gold: 0 });
 
   await routine.execute(ctx);
@@ -449,6 +449,90 @@ async function testPreservesRecycleSellAndGoldFlowAfterPendingClaims() {
     'deposit-gold:25',
   ]);
   log('pending item recovery preserves recycle, GE sell, and gold deposit flow');
+}
+
+async function testNpcVendorSellRunsBeforeGe() {
+  const pendingSvc = makePendingService([]);
+  const order = [];
+
+  setDepositBankDeps({
+    pendingItemsSvc: pendingSvc,
+    getOwnedKeepByCodeForInventoryFn: () => ({}),
+    getCharacterGearStateFn: () => null,
+    equipmentCountsOnCharacterFn: () => new Map(),
+    refreshGearStateFn: async () => {
+      order.push('gear-refresh');
+    },
+    publishDesiredOrdersForCharacterFn: () => {
+      order.push('publish-orders');
+    },
+    getSellRulesFn: () => ({ alwaysSell: [], neverSell: [] }),
+    executeRecycleFlowFn: async () => {
+      order.push('recycle');
+    },
+    executeNpcSellFlowFn: async () => {
+      order.push('npc-sell');
+    },
+    executeSellFlowFn: async () => {
+      order.push('ge-sell');
+    },
+    depositGoldToBankFn: async (ctx, quantity) => {
+      order.push(`deposit-gold:${quantity}`);
+      ctx.applyActionResult({
+        character: {
+          ...ctx.get(),
+          gold: 0,
+        },
+      });
+    },
+  });
+
+  const routine = new DepositBankRoutine({ sellToVendor: true, sellOnGE: true, recycleEquipment: true, depositGold: true });
+  const ctx = makeCtx({ inventory: [], inventoryMaxItems: 20, maxSlots: 5, gold: 40 });
+
+  await routine.execute(ctx);
+
+  assert.deepEqual(order, [
+    'gear-refresh',
+    'publish-orders',
+    'recycle',
+    'npc-sell',
+    'ge-sell',
+    'deposit-gold:40',
+  ]);
+  log('NPC vendor sell runs before GE in deposit flow');
+}
+
+async function testSellToVendorToggleSkipsNpcSellFlow() {
+  const pendingSvc = makePendingService([]);
+  let npcSellCalls = 0;
+  let geSellCalls = 0;
+
+  setDepositBankDeps({
+    pendingItemsSvc: pendingSvc,
+    getOwnedKeepByCodeForInventoryFn: () => ({}),
+    getCharacterGearStateFn: () => null,
+    equipmentCountsOnCharacterFn: () => new Map(),
+    refreshGearStateFn: async () => {},
+    publishDesiredOrdersForCharacterFn: () => {},
+    getSellRulesFn: () => ({ alwaysSell: [], neverSell: [] }),
+    executeRecycleFlowFn: async () => {},
+    executeNpcSellFlowFn: async () => {
+      npcSellCalls += 1;
+    },
+    executeSellFlowFn: async () => {
+      geSellCalls += 1;
+    },
+  });
+
+  const routine = new DepositBankRoutine({ sellToVendor: false, sellOnGE: true, recycleEquipment: true, depositGold: false });
+  const ctx = makeCtx({ inventory: [], inventoryMaxItems: 20, maxSlots: 5 });
+
+  await routine.execute(ctx);
+
+  assert.equal(npcSellCalls, 0);
+  assert.equal(geSellCalls, 1);
+  log('sellToVendor toggle skips the NPC sell flow');
 }
 
 async function main() {
@@ -478,6 +562,12 @@ async function main() {
 
     resetDepositBankDeps();
     await testPreservesRecycleSellAndGoldFlowAfterPendingClaims();
+
+    resetDepositBankDeps();
+    await testNpcVendorSellRunsBeforeGe();
+
+    resetDepositBankDeps();
+    await testSellToVendorToggleSkipsNpcSellFlow();
 
     resetDepositBankDeps();
     console.log('\nDeposit bank routine tests passed');

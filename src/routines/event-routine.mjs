@@ -19,12 +19,15 @@ import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError } from '..
 import { getFightReadiness } from '../services/food-manager.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
 import { getItemsForNpc } from '../services/npc-buy-config.mjs';
+import { hasNpcSellItem } from '../services/npc-sell-config.mjs';
 import { getOrderBoardSnapshot } from '../services/order-board.mjs';
 import { globalCount, getBankSummary, bankCount } from '../services/inventory-manager.mjs';
 import { withdrawGoldFromBank, withdrawBankItems } from '../services/bank-ops.mjs';
 import { logWithdrawalWarnings } from '../utils.mjs';
 import { buildNpcCurrencyPlan, maxAffordableQuantity, missingCurrencyForQuantity } from '../services/npc-trade-planner.mjs';
 import * as npcEventLock from '../services/npc-event-lock.mjs';
+import { executeNpcSellFlow, getNpcSellCandidates } from '../services/npc-seller.mjs';
+import { getSellRules } from '../services/ge-seller.mjs';
 
 const TAG = 'Event';
 
@@ -402,56 +405,59 @@ export class EventRoutine extends BaseRoutine {
 
       const plan = this._buildCurrencyAwareShoppingPlan(ctx, npcCode);
       const { items } = plan;
-      if (items.length === 0) {
-        log.info(`[${ctx.name}] ${TAG}: nothing affordable to buy from ${npcCode}`);
+      const sellCandidates = this._buildNpcSellList(ctx, npcCode);
+      if (items.length === 0 && sellCandidates.length === 0) {
+        log.info(`[${ctx.name}] ${TAG}: nothing to buy or sell at ${npcCode}`);
         this._setCooldown(target.code);
         this._clearTarget();
         return false;
       }
 
-      const planSummary = items
-        .map(i => `${i.code}x${i.quantity} @${this._formatUnitPrice(i.unitPrice, i.currency)}`)
-        .join(', ');
-      const totalByCurrency = [...plan.spentByCurrency.entries()]
-        .map(([currency, amount]) => this._formatCost(amount, currency))
-        .join(', ') || 'none';
-      const neededFromBankSummary = [...plan.neededFromBank.entries()]
-        .filter(([, amount]) => amount > 0)
-        .map(([currency, amount]) => this._formatCost(amount, currency))
-        .join(', ') || 'none';
+      if (items.length > 0) {
+        const planSummary = items
+          .map(i => `${i.code}x${i.quantity} @${this._formatUnitPrice(i.unitPrice, i.currency)}`)
+          .join(', ');
+        const totalByCurrency = [...plan.spentByCurrency.entries()]
+          .map(([currency, amount]) => this._formatCost(amount, currency))
+          .join(', ') || 'none';
+        const neededFromBankSummary = [...plan.neededFromBank.entries()]
+          .filter(([, amount]) => amount > 0)
+          .map(([currency, amount]) => this._formatCost(amount, currency))
+          .join(', ') || 'none';
 
-      log.info(
-        `[${ctx.name}] ${TAG}: ${npcCode} shopping plan: ${planSummary} | total ${totalByCurrency}, need from bank ${neededFromBankSummary}`,
-      );
+        log.info(
+          `[${ctx.name}] ${TAG}: ${npcCode} shopping plan: ${planSummary} | total ${totalByCurrency}, need from bank ${neededFromBankSummary}`,
+        );
 
-      // Withdraw gold from bank if needed
-      const goldNeeded = plan.neededFromBank.get('gold') || 0;
-      if (goldNeeded > 0) {
-        try {
-          await withdrawGoldFromBank(ctx, goldNeeded);
-          log.info(`[${ctx.name}] ${TAG}: withdrew ${goldNeeded}g from bank for NPC purchases`);
-        } catch (err) {
-          log.warn(`[${ctx.name}] ${TAG}: gold withdrawal failed: ${err.message}, proceeding with carried currency`);
-          // Don't abort — buy what we can with carried currency
-        }
-      }
-
-      // Withdraw non-gold currencies from bank if needed
-      const itemCurrencyRows = [...plan.neededFromBank.entries()]
-        .filter(([currency, amount]) => currency !== 'gold' && amount > 0)
-        .map(([currency, amount]) => ({ code: currency, quantity: amount }));
-      if (itemCurrencyRows.length > 0) {
-        try {
-          const result = await withdrawBankItems(ctx, itemCurrencyRows, {
-            reason: `${TAG} NPC prep currency withdrawal`,
-          });
-          const withdrawnSummary = result.withdrawn.map(i => `${i.code}x${i.quantity}`).join(', ');
-          if (withdrawnSummary) {
-            log.info(`[${ctx.name}] ${TAG}: withdrew currency items from bank: ${withdrawnSummary}`);
+        // Withdraw gold from bank if needed
+        const goldNeeded = plan.neededFromBank.get('gold') || 0;
+        if (goldNeeded > 0) {
+          try {
+            await withdrawGoldFromBank(ctx, goldNeeded);
+            log.info(`[${ctx.name}] ${TAG}: withdrew ${goldNeeded}g from bank for NPC purchases`);
+          } catch (err) {
+            log.warn(`[${ctx.name}] ${TAG}: gold withdrawal failed: ${err.message}, proceeding with carried currency`);
+            // Don't abort — buy what we can with carried currency
           }
-          logWithdrawalWarnings(ctx, result, `${TAG} NPC currency withdrawal`);
-        } catch (err) {
-          log.warn(`[${ctx.name}] ${TAG}: currency item withdrawal failed: ${err.message}, proceeding with carried currency`);
+        }
+
+        // Withdraw non-gold currencies from bank if needed
+        const itemCurrencyRows = [...plan.neededFromBank.entries()]
+          .filter(([currency, amount]) => currency !== 'gold' && amount > 0)
+          .map(([currency, amount]) => ({ code: currency, quantity: amount }));
+        if (itemCurrencyRows.length > 0) {
+          try {
+            const result = await withdrawBankItems(ctx, itemCurrencyRows, {
+              reason: `${TAG} NPC prep currency withdrawal`,
+            });
+            const withdrawnSummary = result.withdrawn.map(i => `${i.code}x${i.quantity}`).join(', ');
+            if (withdrawnSummary) {
+              log.info(`[${ctx.name}] ${TAG}: withdrew currency items from bank: ${withdrawnSummary}`);
+            }
+            logWithdrawalWarnings(ctx, result, `${TAG} NPC currency withdrawal`);
+          } catch (err) {
+            log.warn(`[${ctx.name}] ${TAG}: currency item withdrawal failed: ${err.message}, proceeding with carried currency`);
+          }
         }
       }
 
@@ -499,13 +505,19 @@ export class EventRoutine extends BaseRoutine {
     // Build shopping list each iteration (quantities change after purchases)
     const shoppingList = this._buildNpcShoppingList(ctx, npcCode);
     if (shoppingList.length === 0) {
-      log.info(`[${ctx.name}] ${TAG}: nothing left to buy from ${npcCode}`);
+      const sold = await this._executeNpcSellOpportunistic(ctx, target, npcCode);
+      if (sold > 0) return true;
+
+      log.info(`[${ctx.name}] ${TAG}: nothing left to buy or sell from ${npcCode}`);
       this._clearTarget();
       return false;
     }
 
     const space = ctx.inventoryCapacity() - ctx.inventoryCount();
     if (space <= 0) {
+      const sold = await this._executeNpcSellOpportunistic(ctx, target, npcCode);
+      if (sold > 0) return true;
+
       log.info(`[${ctx.name}] ${TAG}: inventory full, can't buy from ${npcCode}`);
       this._clearTarget();
       return false;
@@ -609,6 +621,26 @@ export class EventRoutine extends BaseRoutine {
     }
 
     return true; // Continue buying loop
+  }
+
+  async _executeNpcSellOpportunistic(ctx, target, npcCode) {
+    if (!this._canSellToVendor()) return 0;
+    if (!eventManager.isEventActive(target.code)) {
+      this._clearTarget();
+      return 0;
+    }
+
+    const sold = await executeNpcSellFlow(ctx, {
+      sellRules: getSellRules(),
+      npcCode,
+    });
+
+    if (!eventManager.isEventActive(target.code)) {
+      this._clearTarget();
+      return sold;
+    }
+
+    return sold;
   }
 
   _handleNpcBuyError(ctx, target, npcCode, item, offer, err) {
@@ -719,6 +751,7 @@ export class EventRoutine extends BaseRoutine {
     // Source 1: Items from npcBuyList config
     const configItems = getItemsForNpc(npcCode);
     for (const entry of configItems) {
+      if (hasNpcSellItem(entry.code)) continue;
       if (!gameData.canNpcSell(npcCode, entry.code)) continue;
       if (this._isNpcSkipItem(npcCode, entry.code)) continue;
 
@@ -740,6 +773,7 @@ export class EventRoutine extends BaseRoutine {
       if (order.status === 'fulfilled') continue;
       if (order.remainingQty <= 0) continue;
       if (seen.has(order.itemCode)) continue;
+      if (hasNpcSellItem(order.itemCode)) continue;
       if (!gameData.canNpcSell(npcCode, order.itemCode)) continue;
       if (this._isNpcSkipItem(npcCode, order.itemCode)) continue;
 
@@ -752,6 +786,17 @@ export class EventRoutine extends BaseRoutine {
     }
 
     return result;
+  }
+
+  _buildNpcSellList(ctx, npcCode) {
+    if (!this._canSellToVendor()) return [];
+
+    const summary = getBankSummary({ includeItems: true });
+    const bankItems = new Map((summary.items || []).map(item => [item.code, item.quantity]));
+    return getNpcSellCandidates(ctx, bankItems, {
+      sellRules: getSellRules(),
+      npcCode,
+    });
   }
 
   // --- Event selection ---
@@ -869,9 +914,9 @@ export class EventRoutine extends BaseRoutine {
 
         const npcCode = evt.contentCode;
 
-        // Check if we have anything to buy from this NPC
         const shoppingList = this._buildNpcShoppingList(ctx, npcCode);
-        if (shoppingList.length === 0) continue;
+        const sellList = this._buildNpcSellList(ctx, npcCode);
+        if (shoppingList.length === 0 && sellList.length === 0) continue;
 
         // NPCs score lower than monsters — only pick if no monster event
         const score = 1;
@@ -940,5 +985,11 @@ export class EventRoutine extends BaseRoutine {
 
   _isNpcSkipItem(npcCode, itemCode) {
     return this._npcSkipItems?.get(npcCode)?.has(itemCode) || false;
+  }
+
+  _canSellToVendor() {
+    const depositRoutine = this._peerRoutines?.find(routine => routine?.configType === 'depositBank');
+    if (!depositRoutine) return true;
+    return depositRoutine.sellToVendor !== false;
   }
 }

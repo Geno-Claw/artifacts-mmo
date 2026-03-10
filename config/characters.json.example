@@ -39,6 +39,14 @@
     "timber_merchant": [],
     "fish_merchant": []
   },
+  "npcSellList": {
+    "nomadic_merchant": [
+      {
+        "code": "old_boots",
+        "keepInBank": 0
+      }
+    ]
+  },
   "events": {
     "gatherResources": []
   },
@@ -54,6 +62,7 @@
         {
           "type": "depositBank",
           "threshold": 0,
+          "sellToVendor": true,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -143,6 +152,7 @@
         {
           "type": "depositBank",
           "threshold": 0,
+          "sellToVendor": true,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -232,6 +242,7 @@
         {
           "type": "depositBank",
           "threshold": 0,
+          "sellToVendor": true,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -319,6 +330,7 @@
         {
           "type": "depositBank",
           "threshold": 0,
+          "sellToVendor": true,
           "sellOnGE": true,
           "depositGold": true
         },
@@ -406,6 +418,7 @@
         {
           "type": "depositBank",
           "threshold": 0,
+          "sellToVendor": true,
           "sellOnGE": true,
           "depositGold": true
         },

@@ -23,6 +23,8 @@ let taskRewardCodes = null;     // Set<itemCode> for fast lookup
 let npcItemsCache = null;       // Map<npcCode, Array<{code, npc, currency, buy_price, sell_price}>>
 let npcBuyableLookup = null;    // Map<npcCode, Set<itemCode>> — quick lookup for buyable items
 let npcBuyOfferLookup = null;   // Map<npcCode, Map<itemCode, { code, currency, buyPrice }>>
+let npcSellOfferLookup = null;  // Map<npcCode, Map<itemCode, { code, currency, sellPrice }>>
+let npcSellBestOffer = null;    // Map<itemCode, { npcCode, currency, sellPrice }>
 
 // --- Unreachable location tracking (session-scoped) ---
 const unreachableLocations = new Set(); // "monster:frost_slime", "resource:iron_rocks"
@@ -395,6 +397,8 @@ export async function loadNpcCatalogs(npcCodes) {
   npcItemsCache = new Map();
   npcBuyableLookup = new Map();
   npcBuyOfferLookup = new Map();
+  npcSellOfferLookup = new Map();
+  npcSellBestOffer = new Map();
 
   for (const npcCode of npcCodes) {
     try {
@@ -411,26 +415,43 @@ export async function loadNpcCatalogs(npcCodes) {
       npcItemsCache.set(npcCode, items);
 
       const buyable = new Set();
-      const offers = new Map();
+      const buyOffers = new Map();
+      const sellOffers = new Map();
       for (const item of items) {
         const code = typeof item?.code === 'string' ? item.code.trim() : '';
         const currency = typeof item?.currency === 'string' ? item.currency.trim() : '';
         const buyPriceRaw = Number(item?.buy_price);
-        if (!code || !currency || !Number.isFinite(buyPriceRaw) || buyPriceRaw <= 0) continue;
+        const sellPriceRaw = Number(item?.sell_price);
+        if (!code || !currency) continue;
 
-        const buyPrice = Math.floor(buyPriceRaw);
-        buyable.add(code);
-        offers.set(code, { code, currency, buyPrice });
+        if (Number.isFinite(buyPriceRaw) && buyPriceRaw > 0) {
+          const buyPrice = Math.floor(buyPriceRaw);
+          buyable.add(code);
+          buyOffers.set(code, { code, currency, buyPrice });
+        }
+
+        if (Number.isFinite(sellPriceRaw) && sellPriceRaw > 0) {
+          const sellPrice = Math.floor(sellPriceRaw);
+          const offer = { code, currency, sellPrice };
+          sellOffers.set(code, offer);
+
+          const existingBest = npcSellBestOffer.get(code);
+          if (!existingBest || sellPrice > existingBest.sellPrice) {
+            npcSellBestOffer.set(code, { npcCode, currency, sellPrice });
+          }
+        }
       }
       npcBuyableLookup.set(npcCode, buyable);
-      npcBuyOfferLookup.set(npcCode, offers);
+      npcBuyOfferLookup.set(npcCode, buyOffers);
+      npcSellOfferLookup.set(npcCode, sellOffers);
 
-      log.info(`[GameData] NPC ${npcCode}: ${items.length} items (${buyable.size} buyable)`);
+      log.info(`[GameData] NPC ${npcCode}: ${items.length} items (${buyable.size} buyable, ${sellOffers.size} sellable)`);
     } catch (err) {
       log.warn(`[GameData] Could not load NPC items for ${npcCode}: ${err.message}`);
       npcItemsCache.set(npcCode, []);
       npcBuyableLookup.set(npcCode, new Set());
       npcBuyOfferLookup.set(npcCode, new Map());
+      npcSellOfferLookup.set(npcCode, new Map());
     }
   }
 }
@@ -446,7 +467,7 @@ export function getNpcBuyableItems(npcCode) {
 export function getNpcSellableItems(npcCode) {
   const items = npcItemsCache?.get(npcCode);
   if (!items) return [];
-  return items.filter(i => i.sell_price != null);
+  return items.filter(i => getNpcSellOffer(npcCode, i.code) != null);
 }
 
 /** Quick check: does this NPC sell this item? */
@@ -478,6 +499,34 @@ export function findNpcForItem(itemCode) {
 export function getNpcBuyPrice(npcCode, itemCode) {
   const offer = getNpcBuyOffer(npcCode, itemCode);
   return offer?.buyPrice ?? null;
+}
+
+/** Quick check: does this NPC buy this item from us? */
+export function canSellToNpc(npcCode, itemCode) {
+  return npcSellOfferLookup?.get(npcCode)?.has(itemCode) || false;
+}
+
+/** Returns normalized sell-offer metadata for an NPC item, or null if unavailable. */
+export function getNpcSellOffer(npcCode, itemCode) {
+  const offer = npcSellOfferLookup?.get(npcCode)?.get(itemCode);
+  if (!offer) return null;
+  return { ...offer };
+}
+
+/**
+ * Find the best NPC sell offer for an item across all loaded NPC catalogs.
+ * Returns { npcCode, currency, sellPrice } or null.
+ */
+export function findBestNpcSellOffer(itemCode) {
+  const offer = npcSellBestOffer?.get(itemCode);
+  if (!offer) return null;
+  return { ...offer };
+}
+
+/** Returns the sell price for an item at a given NPC, or null if unavailable. */
+export function getNpcSellPrice(npcCode, itemCode) {
+  const offer = getNpcSellOffer(npcCode, itemCode);
+  return offer?.sellPrice ?? null;
 }
 
 // --- Equipment type helpers ---
@@ -738,6 +787,7 @@ export function _setCachesForTests({
   monsters = null,
   resources = null,
   npcBuyOffers = null,
+  npcSellOffers = null,
 } = {}) {
   if (items !== null) {
     itemsCache = new Map(items);
@@ -772,9 +822,32 @@ export function _setCachesForTests({
   }
 
   if (npcBuyOffers !== null) {
+    npcBuyableLookup = new Map();
     npcBuyOfferLookup = new Map();
     for (const [npcCode, offers] of npcBuyOffers) {
-      npcBuyOfferLookup.set(npcCode, new Map(offers));
+      const normalizedOffers = new Map(offers);
+      npcBuyOfferLookup.set(npcCode, normalizedOffers);
+      npcBuyableLookup.set(npcCode, new Set(normalizedOffers.keys()));
+    }
+  }
+
+  if (npcSellOffers !== null) {
+    npcSellOfferLookup = new Map();
+    npcSellBestOffer = new Map();
+    for (const [npcCode, offers] of npcSellOffers) {
+      const normalizedOffers = new Map(offers);
+      npcSellOfferLookup.set(npcCode, normalizedOffers);
+      for (const [itemCode, offer] of normalizedOffers) {
+        if (!offer) continue;
+        const existing = npcSellBestOffer.get(itemCode);
+        if (!existing || Number(offer.sellPrice) > Number(existing.sellPrice)) {
+          npcSellBestOffer.set(itemCode, {
+            npcCode,
+            currency: offer.currency,
+            sellPrice: offer.sellPrice,
+          });
+        }
+      }
     }
   }
 }
@@ -793,6 +866,8 @@ export function _resetForTests() {
   npcItemsCache = null;
   npcBuyableLookup = null;
   npcBuyOfferLookup = null;
+  npcSellOfferLookup = null;
+  npcSellBestOffer = null;
   unreachableLocations.clear();
   for (const key of Object.keys(monsterLocationCache)) {
     delete monsterLocationCache[key];

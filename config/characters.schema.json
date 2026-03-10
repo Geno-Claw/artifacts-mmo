@@ -38,6 +38,32 @@
         }
       }
     },
+    "npcSellList": {
+      "type": "object",
+      "description": "Items to sell to NPC merchants. Keys are NPC codes (e.g. 'nomadic_merchant') or '_any' for best-offer routing. `keepInBank` preserves a bank reserve and sells the rest to NPC vendors when available.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Item code to sell"
+            },
+            "keepInBank": {
+              "type": "number",
+              "minimum": 0,
+              "default": 0,
+              "description": "Quantity to retain in bank before selling the surplus"
+            }
+          }
+        }
+      }
+    },
     "characters": {
       "type": "array",
       "items": {
@@ -344,6 +370,11 @@
           "type": "boolean",
           "default": true,
           "description": "Sell GE candidates during deposit, including duplicate gear disposal plus any alwaysSell overrides"
+        },
+        "sellToVendor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sell NPC-eligible items to vendors during deposit before considering GE"
         },
         "recycleEquipment": {
           "type": "boolean",

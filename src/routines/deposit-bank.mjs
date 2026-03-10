@@ -3,6 +3,7 @@ import { depositAll } from '../helpers.mjs';
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as geSeller from '../services/ge-seller.mjs';
+import * as npcSeller from '../services/npc-seller.mjs';
 import * as pendingItems from '../services/pending-items.mjs';
 import * as recycler from '../services/recycler.mjs';
 import {
@@ -25,6 +26,7 @@ const deps = {
   depositBankItemsFn: depositBankItems,
   depositGoldToBankFn: depositGoldToBank,
   getSellRulesFn: () => geSeller.getSellRules(),
+  executeNpcSellFlowFn: (ctx, opts) => npcSeller.executeNpcSellFlow(ctx, opts),
   executeSellFlowFn: (ctx) => geSeller.executeSellFlow(ctx),
   executeRecycleFlowFn: (ctx) => recycler.executeRecycleFlow(ctx),
   refreshGearStateFn: () => refreshGearState(),
@@ -42,6 +44,7 @@ export class DepositBankRoutine extends BaseRoutine {
     threshold = 0.8,
     priority = 50,
     sellOnGE = true,
+    sellToVendor = true,
     recycleEquipment = true,
     depositGold = true,
     ...rest
@@ -49,13 +52,15 @@ export class DepositBankRoutine extends BaseRoutine {
     super({ name: 'Deposit to Bank', priority, loop: false, ...rest });
     this.threshold = threshold;
     this.sellOnGE = sellOnGE;
+    this.sellToVendor = sellToVendor;
     this.recycleEquipment = recycleEquipment;
     this.depositGold = depositGold;
   }
 
-  updateConfig({ threshold, sellOnGE, recycleEquipment, depositGold } = {}) {
+  updateConfig({ threshold, sellOnGE, sellToVendor, recycleEquipment, depositGold } = {}) {
     if (threshold !== undefined) this.threshold = threshold;
     if (sellOnGE !== undefined) this.sellOnGE = sellOnGE;
+    if (sellToVendor !== undefined) this.sellToVendor = sellToVendor;
     if (recycleEquipment !== undefined) this.recycleEquipment = recycleEquipment;
     if (depositGold !== undefined) this.depositGold = depositGold;
   }
@@ -113,14 +118,70 @@ export class DepositBankRoutine extends BaseRoutine {
       await this._recycleEquipment(ctx);
     }
 
-    // Step 3: Sell items on GE — duplicate gear plus alwaysSell rules
+    // Step 3: Sell items to NPC vendors when available
+    if (this.sellToVendor) {
+      await this._sellToVendor(ctx);
+    }
+
+    // Step 4: Sell items on GE — duplicate gear plus alwaysSell rules
     if (this.sellOnGE && deps.getSellRulesFn()) {
       await this._sellOnGE(ctx);
     }
 
-    // Step 4: Deposit gold to bank (after GE so listing fees are paid first)
+    // Step 5: Deposit gold to bank (after GE so listing fees are paid first)
     if (this.depositGold) {
       await this._depositGold(ctx);
+    }
+  }
+
+  async _sellToVendor(ctx) {
+    try {
+      await deps.executeNpcSellFlowFn(ctx, {
+        sellRules: deps.getSellRulesFn(),
+      });
+    } catch (err) {
+      depositLog.error(`[${ctx.name}] NPC sell flow error: ${err.message}`, {
+        event: 'routine.deposit.npc_sell.error',
+        reasonCode: 'request_failed',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        error: err,
+      });
+    }
+
+    const keepByCode = this._buildKeepByCode(ctx);
+    const depositableCount = this._countDepositableInventory(ctx, keepByCode);
+    if (depositableCount <= 0) return;
+
+    depositLog.info(`[${ctx.name}] Re-depositing unsold vendor inventory`, {
+      event: 'routine.deposit.npc_sell.cleanup',
+      reasonCode: 'yield_for_deposit',
+      context: {
+        character: ctx.name,
+        routine: this.name,
+      },
+      data: {
+        depositableCount,
+      },
+    });
+
+    try {
+      await deps.depositAllFn(ctx, {
+        reason: 'deposit routine vendor cleanup',
+        keepByCode,
+      });
+    } catch (err) {
+      depositLog.warn(`[${ctx.name}] Could not re-deposit vendor items: ${err.message}`, {
+        event: 'routine.deposit.npc_sell.cleanup_failed',
+        reasonCode: 'bank_unavailable',
+        context: {
+          character: ctx.name,
+          routine: this.name,
+        },
+        error: err,
+      });
     }
   }
 
@@ -510,6 +571,7 @@ export function _resetDepsForTests() {
   deps.depositBankItemsFn = depositBankItems;
   deps.depositGoldToBankFn = depositGoldToBank;
   deps.getSellRulesFn = () => geSeller.getSellRules();
+  deps.executeNpcSellFlowFn = (ctx, opts) => npcSeller.executeNpcSellFlow(ctx, opts);
   deps.executeSellFlowFn = (ctx) => geSeller.executeSellFlow(ctx);
   deps.executeRecycleFlowFn = (ctx) => recycler.executeRecycleFlow(ctx);
   deps.refreshGearStateFn = () => refreshGearState();
