@@ -1236,6 +1236,7 @@ async function run() {
     assert.equal(getConfigOptions.res.status, 200, `Expected /api/config/options 200, got ${getConfigOptions.res.status}`);
     assert.ok(Array.isArray(getConfigOptions.payload?.resources), '/api/config/options should include resources array');
     assert.ok(Array.isArray(getConfigOptions.payload?.npcEvents), '/api/config/options should include npcEvents array');
+    assert.ok(Array.isArray(getConfigOptions.payload?.npcVendors), '/api/config/options should include npcVendors array');
     assert.ok(Array.isArray(getConfigOptions.payload?.skillNames), '/api/config/options should include skillNames array');
     assert.ok(Array.isArray(getConfigOptions.payload?.achievementTypes), '/api/config/options should include achievementTypes array');
     assert.ok(Array.isArray(getConfigOptions.payload?.routines), '/api/config/options should include routines array');
@@ -1256,9 +1257,23 @@ async function run() {
       '/api/config/options should expose combat win rate threshold description',
     );
     assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.npcSellList,
+      'string',
+      '/api/config/options should expose npcSellList description',
+    );
+    assert.equal(
+      typeof getConfigOptions.payload?.descriptions?.['characters[].routines.depositBank.sellToVendor'],
+      'string',
+      '/api/config/options should expose depositBank sellToVendor description',
+    );
+    assert.equal(
       getConfigOptions.payload?.descriptions?.['characters[].routines.event.minWinrate'],
       undefined,
       '/api/config/options should not advertise removed event minWinrate field',
+    );
+    assert.ok(
+      getConfigOptions.payload.npcVendors.every((entry) => Array.isArray(entry?.sellableItems)),
+      '/api/config/options should expose sellableItems for NPC vendors',
     );
     assert.ok(
       getConfigOptions.payload.routines.some((entry) => entry?.type === 'skillRotation' && entry?.defaultConfig?.enabled === false),

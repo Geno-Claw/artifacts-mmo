@@ -15,6 +15,7 @@ const CONFIG_EDITOR_FALLBACK_ROUTINES = Object.freeze([
       type: 'depositBank',
       priority: 50,
       threshold: 0.8,
+      sellToVendor: true,
       sellOnGE: true,
       recycleEquipment: true,
       depositGold: true,
@@ -602,6 +603,16 @@ function configEditorNpcCodes(draft) {
     .filter((code, index, list) => list.indexOf(code) === index);
 }
 
+function configEditorNpcVendorCodes(draft) {
+  const optionCodes = (Array.isArray(getConfigEditorOptions().npcVendors) ? getConfigEditorOptions().npcVendors : [])
+    .map((entry) => safeText(entry?.code, ''))
+    .filter(Boolean);
+  const draftCodes = Object.keys(isConfigEditorObject(draft?.npcSellList) ? draft.npcSellList : {});
+  return ['_any']
+    .concat([...new Set(optionCodes.concat(draftCodes).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
+    .filter((code, index, list) => list.indexOf(code) === index);
+}
+
 function getConfigEditorNpcOptionsMap() {
   const map = new Map();
   const npcEvents = Array.isArray(getConfigEditorOptions().npcEvents) ? getConfigEditorOptions().npcEvents : [];
@@ -609,6 +620,30 @@ function getConfigEditorNpcOptionsMap() {
     const code = safeText(npcEvent?.code, '');
     if (!code) continue;
     map.set(code, Array.isArray(npcEvent?.buyableItems) ? npcEvent.buyableItems : []);
+  }
+
+  const anyItems = [];
+  const seen = new Set();
+  for (const items of map.values()) {
+    for (const item of items) {
+      const code = safeText(item?.code, '');
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      anyItems.push(item);
+    }
+  }
+  anyItems.sort((a, b) => `${a?.code ?? ''}`.localeCompare(`${b?.code ?? ''}`));
+  map.set('_any', anyItems);
+  return map;
+}
+
+function getConfigEditorNpcVendorOptionsMap() {
+  const map = new Map();
+  const npcVendors = Array.isArray(getConfigEditorOptions().npcVendors) ? getConfigEditorOptions().npcVendors : [];
+  for (const npcVendor of npcVendors) {
+    const code = safeText(npcVendor?.code, '');
+    if (!code) continue;
+    map.set(code, Array.isArray(npcVendor?.sellableItems) ? npcVendor.sellableItems : []);
   }
 
   const anyItems = [];
@@ -702,11 +737,88 @@ function renderNpcBuySection(draft) {
   `;
 }
 
+function renderNpcSellSection(draft) {
+  const npcSellList = isConfigEditorObject(draft?.npcSellList) ? draft.npcSellList : {};
+  const npcOptionsMap = getConfigEditorNpcVendorOptionsMap();
+  const npcCodes = configEditorNpcVendorCodes(draft);
+
+  return `
+    <section class="modal-section">
+      ${renderConfigSectionTitle('NPC Sell List', getConfigEditorDescription('npcSellList'))}
+      <div class="config-editor-help">Configure NPC vendor sale overrides by NPC. The special <code>_any</code> group uses the best loaded vendor offer for matching items.</div>
+      <div class="config-npc-groups">
+        ${npcCodes.map((npcCode) => {
+          const rows = Array.isArray(npcSellList[npcCode]) ? npcSellList[npcCode] : [];
+          const options = npcOptionsMap.get(npcCode) || [];
+          const seen = new Set(options.map((item) => safeText(item?.code, '')));
+          const mergedOptions = options.slice();
+          for (const row of rows) {
+            const code = safeText(row?.code, '');
+            if (!code || seen.has(code)) continue;
+            seen.add(code);
+            mergedOptions.push({ code, name: code, level: 0, type: '' });
+          }
+          mergedOptions.sort((a, b) => `${a?.code ?? ''}`.localeCompare(`${b?.code ?? ''}`));
+
+          return `
+            <article class="config-npc-group">
+              <div class="config-card-header">
+                <div>
+                  <div class="config-card-title">${escapeHtml(npcCode === '_any' ? 'All NPC Vendors (_any)' : npcCode)}</div>
+                  <div class="config-card-meta">${escapeHtml(rows.length > 0 ? `${rows.length} row${rows.length === 1 ? '' : 's'}` : 'No items configured')}</div>
+                </div>
+                <button type="button" class="config-mini-btn" data-config-scope="npc-sell-add-row" data-config-npc="${escapeHtml(npcCode)}">ADD ROW</button>
+              </div>
+              ${rows.length === 0 ? '<div class="config-editor-help">No NPC vendor sale overrides configured.</div>' : ''}
+              ${rows.map((row, index) => `
+                <div class="config-inline-grid">
+                  <label class="config-field-block">
+                    <span class="config-field-label">${renderConfigFieldLabelMarkup('Item', getConfigEditorDescription('npcSellList[].code'))}</span>
+                    <select
+                      class="config-select"
+                      data-config-scope="npc-sell-item"
+                      data-config-npc="${escapeHtml(npcCode)}"
+                      data-config-index="${index}"
+                    >
+                      ${mergedOptions.map((item) => `
+                        <option value="${escapeHtml(item.code)}"${safeText(row?.code, '') === item.code ? ' selected' : ''}>
+                          ${escapeHtml(item.code)}${item.name && item.name !== item.code ? ` · ${escapeHtml(item.name)}` : ''}
+                        </option>
+                      `).join('')}
+                    </select>
+                  </label>
+                  <label class="config-field-block">
+                    <span class="config-field-label">${renderConfigFieldLabelMarkup('Keep In Bank', getConfigEditorDescription('npcSellList[].keepInBank'))}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      class="sandbox-input"
+                      value="${escapeHtml(formatNumberish(row?.keepInBank, '0').replace(/,/g, ''))}"
+                      data-config-scope="npc-sell-keep-in-bank"
+                      data-config-npc="${escapeHtml(npcCode)}"
+                      data-config-index="${index}"
+                    >
+                  </label>
+                  <div class="config-inline-actions">
+                    <button type="button" class="config-mini-btn config-danger-btn" data-config-scope="npc-sell-remove-row" data-config-npc="${escapeHtml(npcCode)}" data-config-index="${index}">REMOVE</button>
+                  </div>
+                </div>
+              `).join('')}
+            </article>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function renderConfigGlobalView(draft) {
   return `
     ${renderGlobalCombatSection(draft)}
     ${renderGlobalEventsSection(draft)}
     ${renderNpcBuySection(draft)}
+    ${renderNpcSellSection(draft)}
   `;
 }
 
@@ -949,6 +1061,7 @@ function renderConfigRoutineCard(character, routineMeta) {
     body = `
       <div class="config-field-grid">
         ${renderConfigSettingField('Threshold', fieldAttrs('threshold'), getConfigEditorPathValue(routineConfig, 'threshold', 0.8), 'number', 'min="0" max="1" step="0.05"', routineDesc('threshold'))}
+        ${renderConfigSettingField('Sell To Vendor', fieldAttrs('sellToVendor'), getConfigEditorPathValue(routineConfig, 'sellToVendor', true) === true, 'checkbox', '', routineDesc('sellToVendor'))}
         ${renderConfigSettingField('Sell On GE', fieldAttrs('sellOnGE'), getConfigEditorPathValue(routineConfig, 'sellOnGE', true) === true, 'checkbox', '', routineDesc('sellOnGE'))}
         ${renderConfigSettingField('Recycle Equipment', fieldAttrs('recycleEquipment'), getConfigEditorPathValue(routineConfig, 'recycleEquipment', true) === true, 'checkbox', '', routineDesc('recycleEquipment'))}
         ${renderConfigSettingField('Deposit Gold', fieldAttrs('depositGold'), getConfigEditorPathValue(routineConfig, 'depositGold', true) === true, 'checkbox', '', routineDesc('depositGold'))}
@@ -1447,6 +1560,23 @@ function handleConfigNpcRowChange(element, updater) {
   });
 }
 
+function handleConfigNpcSellRowChange(element, updater) {
+  const npcCode = safeText(element?.dataset?.configNpc, '');
+  const index = Number(element?.dataset?.configIndex);
+  if (!npcCode || !Number.isInteger(index) || index < 0) return false;
+
+  return applyConfigEditorMutation((draft) => {
+    if (!isConfigEditorObject(draft.npcSellList)) draft.npcSellList = {};
+    if (!Array.isArray(draft.npcSellList[npcCode])) draft.npcSellList[npcCode] = [];
+    const rows = draft.npcSellList[npcCode];
+    if (!isConfigEditorObject(rows[index])) {
+      rows[index] = { code: '', keepInBank: 0 };
+    }
+    updater(rows[index], rows, draft);
+    return true;
+  });
+}
+
 function handleConfigModalClick(event) {
   const rootTabBtn = closestFromEventTarget(event, 'button[data-config-root-tab]');
   if (rootTabBtn && modalRefs.content.contains(rootTabBtn)) {
@@ -1499,6 +1629,35 @@ function handleConfigModalClick(event) {
     return applyConfigEditorMutation((draft) => {
       if (!isConfigEditorObject(draft.npcBuyList) || !Array.isArray(draft.npcBuyList[npcCode])) return false;
       draft.npcBuyList[npcCode].splice(index, 1);
+      return true;
+    });
+  }
+
+  const npcSellAddBtn = closestFromEventTarget(event, 'button[data-config-scope="npc-sell-add-row"]');
+  if (npcSellAddBtn && modalRefs.content.contains(npcSellAddBtn)) {
+    const npcCode = safeText(npcSellAddBtn.dataset.configNpc, '');
+    if (!npcCode) return false;
+    return applyConfigEditorMutation((draft) => {
+      if (!isConfigEditorObject(draft.npcSellList)) draft.npcSellList = {};
+      if (!Array.isArray(draft.npcSellList[npcCode])) draft.npcSellList[npcCode] = [];
+      const options = getConfigEditorNpcVendorOptionsMap().get(npcCode) || [];
+      const code = safeText(options[0]?.code, '');
+      draft.npcSellList[npcCode].push({
+        code,
+        keepInBank: 0,
+      });
+      return true;
+    });
+  }
+
+  const npcSellRemoveBtn = closestFromEventTarget(event, 'button[data-config-scope="npc-sell-remove-row"]');
+  if (npcSellRemoveBtn && modalRefs.content.contains(npcSellRemoveBtn)) {
+    const npcCode = safeText(npcSellRemoveBtn.dataset.configNpc, '');
+    const index = Number(npcSellRemoveBtn.dataset.configIndex);
+    if (!npcCode || !Number.isInteger(index) || index < 0) return false;
+    return applyConfigEditorMutation((draft) => {
+      if (!isConfigEditorObject(draft.npcSellList) || !Array.isArray(draft.npcSellList[npcCode])) return false;
+      draft.npcSellList[npcCode].splice(index, 1);
       return true;
     });
   }
@@ -1581,6 +1740,20 @@ function handleConfigModalInput(event) {
   if (npcMaxTotal && modalRefs.content.contains(npcMaxTotal)) {
     return handleConfigNpcRowChange(npcMaxTotal, (row) => {
       row.maxTotal = Math.max(1, configEditorNumberValue(npcMaxTotal, Number(row.maxTotal) || 1));
+    });
+  }
+
+  const npcSellItem = closestFromEventTarget(event, '[data-config-scope="npc-sell-item"]');
+  if (npcSellItem && modalRefs.content.contains(npcSellItem)) {
+    return handleConfigNpcSellRowChange(npcSellItem, (row) => {
+      row.code = safeText(npcSellItem.value, row.code);
+    });
+  }
+
+  const npcSellKeep = closestFromEventTarget(event, '[data-config-scope="npc-sell-keep-in-bank"]');
+  if (npcSellKeep && modalRefs.content.contains(npcSellKeep)) {
+    return handleConfigNpcSellRowChange(npcSellKeep, (row) => {
+      row.keepInBank = Math.max(0, configEditorNumberValue(npcSellKeep, Number(row.keepInBank) || 0));
     });
   }
 

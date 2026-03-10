@@ -157,6 +157,11 @@ function testStructuredWriteSupportsGlobalCombatThreshold(internals) {
   );
 }
 
+function testDepositBankDefaultIncludesSellToVendor(internals) {
+  const routine = internals.buildDefaultRoutineConfig('depositBank');
+  assert.equal(routine.sellToVendor, true, 'depositBank fallback config should expose sellToVendor in the structured editor');
+}
+
 function testRawParseFailure(internals) {
   const parsed = internals.parseConfigEditorRawText('{"characters": [');
   assert.equal(parsed.ok, false, 'raw parser should reject malformed JSON');
@@ -172,6 +177,7 @@ async function run() {
   testConfigEditorRawRoundTripAndCharacterMapping(internals);
   testStructuredWritePreservesUnsupportedFields(internals);
   testStructuredWriteSupportsGlobalCombatThreshold(internals);
+  testDepositBankDefaultIncludesSellToVendor(internals);
   testRawParseFailure(internals);
 
   console.log('test-config-editor: PASS');

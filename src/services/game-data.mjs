@@ -463,6 +463,10 @@ export function getNpcBuyableItems(npcCode) {
   return items.filter(i => getNpcBuyOffer(npcCode, i.code) != null);
 }
 
+export function getNpcCatalogCodes() {
+  return npcItemsCache ? [...npcItemsCache.keys()] : [];
+}
+
 /** Returns all items a given NPC has with sell_price set (items we can sell to them). */
 export function getNpcSellableItems(npcCode) {
   const items = npcItemsCache?.get(npcCode);

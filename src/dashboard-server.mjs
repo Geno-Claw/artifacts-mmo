@@ -34,7 +34,13 @@ import {
 } from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
 import { getNpcEventCodes } from './services/event-manager.mjs';
-import { findItems, getAllResources, getNpcBuyableItems } from './services/game-data.mjs';
+import {
+  findItems,
+  getAllResources,
+  getNpcBuyableItems,
+  getNpcCatalogCodes,
+  getNpcSellableItems,
+} from './services/game-data.mjs';
 import { toPositiveInt } from './utils.mjs';
 import {
   isSandbox,
@@ -309,9 +315,26 @@ async function buildConfigOptionsPayload() {
       .sort(compareByCode),
   }));
 
+  const npcVendorCodes = [...new Set(getNpcCatalogCodes().filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const npcVendors = npcVendorCodes.map((code) => ({
+    code,
+    sellableItems: getNpcSellableItems(code)
+      .map((item) => ({
+        code: `${item?.code ?? ''}`.trim(),
+        name: `${item?.name ?? item?.code ?? ''}`.trim(),
+        type: `${item?.type ?? ''}`.trim(),
+        level: Number(item?.level) || 0,
+        currency: `${item?.currency ?? ''}`.trim(),
+        sellPrice: Number(item?.sell_price) || 0,
+      }))
+      .filter((item) => item.code)
+      .sort(compareByCode),
+  }));
+
   return {
     resources: resourceOptions,
     npcEvents,
+    npcVendors,
     skillNames: [...CONFIG_EDITOR_SKILL_NAMES],
     achievementTypes: [...CONFIG_EDITOR_ACHIEVEMENT_TYPES],
     routines: await getRoutineEditorMetadata(),
