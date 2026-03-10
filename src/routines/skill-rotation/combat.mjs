@@ -4,7 +4,7 @@
 import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult, NoPathError } from '../../helpers.mjs';
-import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
+import { getFightReadiness } from '../../services/food-manager.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 
@@ -12,11 +12,6 @@ const combatLog = log.createLogger({ scope: 'routine.skill-rotation.combat' });
 
 export async function executeCombat(ctx, routine) {
   const logger = log.forCharacter(combatLog, ctx);
-  // Re-withdraw food if bank routine deposited it mid-goal
-  if (routine._foodWithdrawn && ctx.inventoryCount() === 0) {
-    routine._foodWithdrawn = false;
-  }
-
   let claim = await routine._ensureOrderClaim(ctx, 'fight');
 
   let monsterCode = routine.rotation.monster?.code || null;
@@ -68,14 +63,10 @@ export async function executeCombat(ctx, routine) {
   }
   await prepareCombatPotions(ctx, monsterCode);
 
-  // Withdraw food from bank for remaining fights (once per combat goal/claim)
-  if (!routine._foodWithdrawn) {
-    const remaining = claim
-      ? gameData.estimatedFightsForDrops(monsterCode, claim.itemCode, claim.remainingQty || 20)
-      : (routine.rotation.goalTarget - routine.rotation.goalProgress);
-    await withdrawFoodForFights(ctx, monsterCode, remaining);
-    routine._foodWithdrawn = true;
-  }
+  const remaining = claim
+    ? gameData.estimatedFightsForDrops(monsterCode, claim.itemCode, claim.remainingQty || 20)
+    : (routine.rotation.goalTarget - routine.rotation.goalProgress);
+  await routine._ensureFightFood(ctx, monsterCode, remaining);
 
   try {
     await moveTo(ctx, loc.x, loc.y);

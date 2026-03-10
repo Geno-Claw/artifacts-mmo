@@ -7,7 +7,7 @@ import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import {
-  depositBankItems,
+  depositAllInventory,
   withdrawBankItems,
 } from './bank-ops.mjs';
 import { getSellRules } from './ge-seller.mjs';
@@ -25,7 +25,7 @@ let _deps = {
   gameDataSvc: gameData,
   getSellRulesFn: getSellRules,
   withdrawBankItemsFn: withdrawBankItems,
-  depositBankItemsFn: depositBankItems,
+  depositAllInventoryFn: depositAllInventory,
   moveToFn: moveTo,
   recycleFn: (code, qty, name) => api.recycle(code, qty, name),
   waitForCooldownFn: (result) => api.waitForCooldown(result),
@@ -203,14 +203,17 @@ async function _recycleGroup(ctx, skill, workshop, items) {
 }
 
 async function _depositInventory(ctx) {
-  const items = ctx.get().inventory
-    .filter(slot => slot.code)
-    .map(slot => ({ code: slot.code, quantity: slot.quantity }));
-  if (items.length === 0) return;
-
-  log.info(`[${ctx.name}] Recycle: depositing ${items.length} item(s) to bank`);
   try {
-    await _deps.depositBankItemsFn(ctx, items, { reason: 'recycler deposit' });
+    const count = (ctx.get().inventory || []).filter(slot => slot?.code).length;
+    if (count > 0) {
+      log.info(`[${ctx.name}] Recycle: depositing inventory to bank`);
+    }
+    await _deps.depositAllInventoryFn(ctx, {
+      reason: 'recycler deposit',
+      keepByCode: typeof ctx.getRoutineKeepCodes === 'function'
+        ? (ctx.getRoutineKeepCodes() || {})
+        : {},
+    });
   } catch (err) {
     log.warn(`[${ctx.name}] Recycle: could not deposit items: ${err.message}`);
   }
@@ -254,7 +257,7 @@ export function _resetForTests() {
     gameDataSvc: gameData,
     getSellRulesFn: getSellRules,
     withdrawBankItemsFn: withdrawBankItems,
-    depositBankItemsFn: depositBankItems,
+    depositAllInventoryFn: depositAllInventory,
     moveToFn: moveTo,
     recycleFn: (code, qty, name) => api.recycle(code, qty, name),
     waitForCooldownFn: (result) => api.waitForCooldown(result),

@@ -13,7 +13,7 @@ import { getCachedAccountDetails, getCachedAccountAchievements } from '../../ser
 import { isCombatResultViable } from '../../services/combat-simulator.mjs';
 import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
-import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
+import { getFightReadiness } from '../../services/food-manager.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError, withdrawPlanFromBank, rawMaterialNeeded } from '../../helpers.mjs';
 
@@ -93,17 +93,8 @@ async function executeFightObjective(ctx, routine, action) {
   }
   await prepareCombatPotions(ctx, monsterCode);
 
-  // Withdraw food once per achievement goal
-  if (!routine._foodWithdrawn) {
-    const remaining = routine.rotation.goalTarget - routine.rotation.goalProgress;
-    await withdrawFoodForFights(ctx, monsterCode, remaining);
-    routine._foodWithdrawn = true;
-  }
-
-  // Re-withdraw food if bank routine deposited it mid-goal
-  if (routine._foodWithdrawn && ctx.inventoryCount() === 0) {
-    routine._foodWithdrawn = false;
-  }
+  const remaining = routine.rotation.goalTarget - routine.rotation.goalProgress;
+  await routine._ensureFightFood(ctx, monsterCode, remaining);
 
   // Navigate to monster
   try {

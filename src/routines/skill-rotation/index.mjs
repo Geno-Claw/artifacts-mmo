@@ -20,6 +20,7 @@ import * as gameData from '../../services/game-data.mjs';
 import { SkillRotation } from '../../services/skill-rotation.mjs';
 import { MAX_LOSSES_DEFAULT } from '../../data/locations.mjs';
 import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
+import { hasHealingFood, withdrawFoodForFights } from '../../services/food-manager.mjs';
 import { GATHERING_SKILLS, CRAFTING_SKILLS, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
 
 // Executor imports
@@ -68,6 +69,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     this.orderBoard = normalizeOrderBoardConfig(orderBoard);
     this._currentBatch = 1;
     this._foodWithdrawn = false;
+    this._foodResupplyAttempted = false;
     this._activeOrderClaim = null;
     this._nextProactiveExchangeAt = 0;
     this._nextExchangeClaimAttemptAt = 0;
@@ -103,6 +105,7 @@ export class SkillRotationRoutine extends BaseRoutine {
         });
       }
       this._foodWithdrawn = false;
+      this._foodResupplyAttempted = false;
       if (typeof ctx.clearRoutineKeepCodes === 'function') ctx.clearRoutineKeepCodes();
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
     }
@@ -250,6 +253,18 @@ export class SkillRotationRoutine extends BaseRoutine {
   async _trySmelting(ctx) { return trySmelting(ctx, this); }
 
   // --- Combat ---
+  _hasHealingFood(ctx) { return hasHealingFood(ctx); }
+  async _withdrawFoodForFights(ctx, monsterCode, numFights) { return withdrawFoodForFights(ctx, monsterCode, numFights); }
+  async _ensureFightFood(ctx, monsterCode, numFights) {
+    if (!this._foodWithdrawn) {
+      await this._withdrawFoodForFights(ctx, monsterCode, numFights);
+      this._foodWithdrawn = true;
+      this._foodResupplyAttempted = false;
+    } else if (!this._hasHealingFood(ctx) && !this._foodResupplyAttempted) {
+      this._foodResupplyAttempted = true;
+      await this._withdrawFoodForFights(ctx, monsterCode, numFights);
+    }
+  }
   async _executeCombat(ctx) { return executeCombat(ctx, this); }
 
   // --- Crafting ---

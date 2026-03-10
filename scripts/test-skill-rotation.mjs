@@ -1851,6 +1851,81 @@ async function testCombatReadyFalseWithoutClaimStillDefers() {
   }
 }
 
+async function testEnsureFightFoodRewithdrawsWhenHealingFoodMissing() {
+  const routine = new SkillRotationRoutine();
+  routine._foodWithdrawn = true;
+
+  let withdrawArgs = null;
+  routine._hasHealingFood = () => false;
+  routine._withdrawFoodForFights = async (_ctx, monsterCode, numFights) => {
+    withdrawArgs = { monsterCode, numFights };
+  };
+
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 12);
+
+  assert.deepEqual(
+    withdrawArgs,
+    { monsterCode: 'cow', numFights: 12 },
+    'missing healing food should trigger a same-call re-withdraw',
+  );
+  assert.equal(routine._foodWithdrawn, true, 'helper should leave food-withdrawn state armed after re-withdraw');
+  assert.equal(routine._foodResupplyAttempted, true, 'same-goal resupply should be marked attempted after re-withdraw');
+}
+
+async function testEnsureFightFoodSkipsWithdrawWhenHealingFoodPresent() {
+  const routine = new SkillRotationRoutine();
+  routine._foodWithdrawn = true;
+
+  let withdrawCalls = 0;
+  routine._hasHealingFood = () => true;
+  routine._withdrawFoodForFights = async () => {
+    withdrawCalls += 1;
+  };
+
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 8);
+
+  assert.equal(withdrawCalls, 0, 'existing healing food should keep the routine from re-withdrawing');
+  assert.equal(routine._foodWithdrawn, true, 'food-withdrawn state should stay true when food is still present');
+}
+
+async function testEnsureFightFoodWithdrawsWhenFlagIsFalse() {
+  const routine = new SkillRotationRoutine();
+  routine._foodWithdrawn = false;
+
+  let withdrawArgs = null;
+  routine._hasHealingFood = () => true;
+  routine._withdrawFoodForFights = async (_ctx, monsterCode, numFights) => {
+    withdrawArgs = { monsterCode, numFights };
+  };
+
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 5);
+
+  assert.deepEqual(
+    withdrawArgs,
+    { monsterCode: 'cow', numFights: 5 },
+    'fresh combat goals should withdraw food once',
+  );
+  assert.equal(routine._foodWithdrawn, true, 'helper should arm food-withdrawn state after the first withdrawal');
+  assert.equal(routine._foodResupplyAttempted, false, 'initial withdrawal should clear any stale resupply guard');
+}
+
+async function testEnsureFightFoodDoesNotRetryResupplyAfterFailure() {
+  const routine = new SkillRotationRoutine();
+  routine._foodWithdrawn = true;
+
+  let withdrawCalls = 0;
+  routine._hasHealingFood = () => false;
+  routine._withdrawFoodForFights = async () => {
+    withdrawCalls += 1;
+  };
+
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 7);
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 7);
+
+  assert.equal(withdrawCalls, 1, 'missing food should trigger at most one mid-goal resupply attempt');
+  assert.equal(routine._foodResupplyAttempted, true, 'failed resupply path should remain guarded for the rest of the goal');
+}
+
 async function testRoutineCanDisableOrderFulfillment() {
   const routine = new SkillRotationRoutine({
     orderBoard: {
@@ -3235,6 +3310,10 @@ async function run() {
   await testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates();
   await testCombatReadyFalseWithClaimBlocksAndReleasesClaim();
   await testCombatReadyFalseWithoutClaimStillDefers();
+  await testEnsureFightFoodRewithdrawsWhenHealingFoodMissing();
+  await testEnsureFightFoodSkipsWithdrawWhenHealingFoodPresent();
+  await testEnsureFightFoodWithdrawsWhenFlagIsFalse();
+  await testEnsureFightFoodDoesNotRetryResupplyAfterFailure();
   await testRoutineCanDisableOrderFulfillment();
   await testRoutineRoutesCraftClaimsBySkill();
   await testRoutineCraftingFallsBackWhenNoCraftClaim();

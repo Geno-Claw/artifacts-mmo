@@ -6,7 +6,7 @@ import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { moveTo, fightOnce, parseFightResult } from '../../helpers.mjs';
 import { isCombatResultViable } from '../../services/combat-simulator.mjs';
-import { getFightReadiness, withdrawFoodForFights } from '../../services/food-manager.mjs';
+import { getFightReadiness } from '../../services/food-manager.mjs';
 import { equipForCombat } from '../../services/gear-loadout.mjs';
 import { TASKS_MASTER } from '../../data/locations.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
@@ -84,11 +84,6 @@ export async function runNpcTaskFlow(ctx, routine) {
     return true;
   }
 
-  // Re-withdraw food if bank routine deposited it between goals
-  if (routine._foodWithdrawn && ctx.inventoryCount() === 0) {
-    routine._foodWithdrawn = false;
-  }
-
   // Fight the task monster
   const c = ctx.get();
   const monster = c.task;
@@ -126,14 +121,10 @@ export async function runNpcTaskFlow(ctx, routine) {
   }
   await prepareCombatPotions(ctx, monster);
 
-  // Withdraw food from bank for all remaining task fights (once per NPC task)
-  if (!routine._foodWithdrawn) {
-    const taskRemaining = c.task_total - c.task_progress;
-    const goalRemaining = routine.rotation.goalTarget - routine.rotation.goalProgress;
-    const fightBudget = Math.min(taskRemaining, goalRemaining);
-    await withdrawFoodForFights(ctx, monster, fightBudget);
-    routine._foodWithdrawn = true;
-  }
+  const taskRemaining = c.task_total - c.task_progress;
+  const goalRemaining = routine.rotation.goalTarget - routine.rotation.goalProgress;
+  const fightBudget = Math.min(taskRemaining, goalRemaining);
+  await routine._ensureFightFood(ctx, monster, fightBudget);
 
   await moveTo(ctx, monsterLoc.x, monsterLoc.y);
   const readiness = await getFightReadiness(ctx, monster);

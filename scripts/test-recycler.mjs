@@ -52,6 +52,35 @@ function makeCtx(name = 'Recycler', capacity = 100) {
   };
 }
 
+function makeDepositAllInventoryStub(ctx, state) {
+  return async (_ctx, opts = {}) => {
+    const keepRemainder = new Map(
+      Object.entries(opts.keepByCode || {})
+        .map(([code, quantity]) => [code, Math.max(0, Number(quantity) || 0)])
+        .filter(([code, quantity]) => code && quantity > 0),
+    );
+
+    const rows = [];
+    for (const slot of ctx.get().inventory) {
+      const code = slot?.code;
+      const quantity = Math.max(0, Number(slot?.quantity) || 0);
+      if (!code || quantity <= 0) continue;
+
+      const keepQty = keepRemainder.get(code) || 0;
+      const depositQty = Math.max(0, quantity - keepQty);
+      keepRemainder.set(code, Math.max(0, keepQty - quantity));
+      if (depositQty <= 0) continue;
+
+      rows.push({ code, quantity: depositQty });
+      ctx.removeInventory(code, depositQty);
+      state.bank.set(code, (state.bank.get(code) || 0) + depositQty);
+    }
+
+    state.depositCalls?.push(rows.map(row => ({ ...row })));
+    return rows;
+  };
+}
+
 function installAnalyzeDeps({
   sellRules,
   itemsByCode,
@@ -431,16 +460,7 @@ async function testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget() {
       return { cooldown: { remaining_seconds: 0 } };
     },
     waitForCooldownFn: async () => {},
-    depositBankItemsFn: async (_ctx, rows) => {
-      state.depositCalls.push(rows.map(row => ({ ...row })));
-      for (const row of rows) {
-        const code = row.code;
-        const qty = Number(row.quantity) || 0;
-        if (!code || qty <= 0) continue;
-        ctx.removeInventory(code, qty);
-        state.bank.set(code, (state.bank.get(code) || 0) + qty);
-      }
-    },
+    depositAllInventoryFn: makeDepositAllInventoryStub(ctx, state),
   });
 
   const recycled = await executeRecycleFlow(ctx);
@@ -450,6 +470,94 @@ async function testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget() {
   assert.equal(state.moveCalls.length >= 1, true, 'recycler should travel to matching workshop');
   assert.equal(state.bank.has('recyclable_blade'), false, 'recycled equipment should be removed from bank');
   assert.equal(state.bank.size <= 45, true, 'bank unique codes should be pushed at or below 45 when possible');
+}
+
+async function testRecycleDepositKeepsRoutineItemsInInventory() {
+  _resetForTests();
+
+  const ctx = makeCtx('KeepSafeRecycler', 100);
+  ctx.addInventory('cooked_shrimp', 5);
+  ctx.getRoutineKeepCodes = () => ({ cooked_shrimp: 5 });
+
+  const state = {
+    bank: new Map([
+      ['recyclable_blade', 1],
+    ]),
+    moveCalls: [],
+    recycleCalls: [],
+    depositCalls: [],
+  };
+
+  _setDepsForTests({
+    getSellRulesFn: () => ({
+      sellDuplicateEquipment: true,
+      neverSell: [],
+    }),
+    gameDataSvc: {
+      async getWorkshops() {
+        return { gearcrafting: { x: 7, y: 7 } };
+      },
+      async getBankItems() {
+        return new Map(state.bank);
+      },
+      getItem(code) {
+        if (code === 'recyclable_blade') {
+          return { code, type: 'weapon', craft: { skill: 'gearcrafting' } };
+        }
+        if (code === 'iron_scrap') {
+          return { code, type: 'resource' };
+        }
+        if (code === 'cooked_shrimp') {
+          return { code, type: 'consumable' };
+        }
+        return { code, type: 'resource' };
+      },
+      isEquipmentType(item) {
+        return item?.type === 'weapon' || item?.type === 'ring' || item?.type === 'amulet';
+      },
+    },
+    getClaimedTotalFn: () => 0,
+    globalCountFn: (code) => (state.bank.get(code) || 0) + ctx.itemCount(code),
+    bankCountFn: (code) => state.bank.get(code) || 0,
+    withdrawBankItemsFn: async (_ctx, rows) => {
+      const withdrawn = [];
+      for (const row of rows) {
+        const code = row.code;
+        const qty = Number(row.quantity) || 0;
+        const available = state.bank.get(code) || 0;
+        const used = Math.min(available, qty);
+        if (used <= 0) continue;
+        const next = available - used;
+        if (next > 0) state.bank.set(code, next);
+        else state.bank.delete(code);
+        ctx.addInventory(code, used);
+        withdrawn.push({ code, quantity: used });
+      }
+      return { withdrawn, skipped: [], failed: [] };
+    },
+    moveToFn: async (_ctx, x, y) => {
+      state.moveCalls.push({ x, y });
+    },
+    recycleFn: async (code, qty) => {
+      state.recycleCalls.push({ code, qty });
+      ctx.removeInventory(code, qty);
+      ctx.addInventory('iron_scrap', qty);
+      return { cooldown: { remaining_seconds: 0 } };
+    },
+    waitForCooldownFn: async () => {},
+    depositAllInventoryFn: makeDepositAllInventoryStub(ctx, state),
+  });
+
+  const recycled = await executeRecycleFlow(ctx);
+  assert.equal(recycled, 1, 'recycler should still process recyclable equipment');
+  assert.equal(ctx.itemCount('cooked_shrimp'), 5, 'routine-kept food should stay on character');
+  assert.equal(state.bank.get('iron_scrap'), 1, 'recycled materials should still be deposited');
+  assert.equal(state.bank.get('cooked_shrimp') || 0, 0, 'routine-kept food should not be banked');
+  assert.deepEqual(
+    state.depositCalls.flat().map(row => row.code).sort(),
+    ['iron_scrap'],
+    'recycler deposit should exclude keep-coded food',
+  );
 }
 
 async function testClaimedEquipmentIsProtectedFromRecycle() {
@@ -499,7 +607,7 @@ async function testClaimedEquipmentIsProtectedFromRecycle() {
       return { cooldown: { remaining_seconds: 0 } };
     },
     waitForCooldownFn: async () => {},
-    depositBankItemsFn: async () => {},
+    depositAllInventoryFn: async () => [],
   });
 
   const recycled = await executeRecycleFlow(ctx);
@@ -516,6 +624,7 @@ async function run() {
   await testAnalyzeToolSurplusStillHonorsClaimedProtection();
   await testAnalyzeSkipsToolRecycleOnIncompleteLevelSnapshot();
   await testExecuteRecycleFlowPushesBankTowardUniqueSlotTarget();
+  await testRecycleDepositKeepsRoutineItemsInInventory();
   await testClaimedEquipmentIsProtectedFromRecycle();
   _resetForTests();
   console.log('test-recycler: PASS');
