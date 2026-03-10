@@ -108,6 +108,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     }
 
     const skill = this.rotation.currentSkill;
+    log.info(`[${ctx.name}] Rotation: executing skill=${skill}, progress=${this.rotation.goalProgress}/${this.rotation.goalTarget}`);
     const proactive = await this._maybeRunProactiveExchange(ctx, {
       trigger: 'rotation_setup',
     });

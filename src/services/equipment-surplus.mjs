@@ -104,7 +104,10 @@ export function analyzeSurplusEquipmentCandidates(ctx, bankItems, opts = {}) {
     if (neverSellSet.has(code)) continue;
 
     const item = _deps.gameDataSvc.getItem(code);
-    if (!item || !_deps.gameDataSvc.isEquipmentType(item)) continue;
+    if (!item || !_deps.gameDataSvc.isEquipmentType(item)) {
+      if (code === 'forest_ring') log.info(`[${ctx.name}] SURPLUS-DEBUG forest_ring SKIPPED: item=${!!item}, isEquip=${item ? _deps.gameDataSvc.isEquipmentType(item) : 'N/A'}, type=${item?.type}`);
+      continue;
+    }
     if (requireCraftable && !item?.craft?.skill) continue;
 
     const claimed = _deps.getClaimedTotalFn(code);
@@ -131,6 +134,10 @@ export function analyzeSurplusEquipmentCandidates(ctx, bankItems, opts = {}) {
       const surplus = totalOwned - reservedTotal;
       qty = Math.min(Math.max(surplus, 0), liveBankQty);
       reason = `unclaimed equipment (owned: ${totalOwned}, bank: ${bankQty}, claimed: ${claimed}, open_orders: ${openOrderDemand})`;
+    }
+
+    if (code === 'forest_ring') {
+      log.info(`[${ctx.name}] SURPLUS-DEBUG forest_ring: isTool=${isTool}, totalOwned=${totalOwned}, bankQty=${bankQty}, liveBankQty=${liveBankQty}, claimed=${claimed}, openOrderDemand=${openOrderDemand}, qty=${qty}, reason=${reason}`);
     }
 
     if (qty <= 0) continue;

@@ -296,6 +296,15 @@ export async function executeSellFlow(ctx) {
     const bankItems = await gameData.getBankItems(true);
 
     const candidates = analyzeSellCandidates(ctx, bankItems);
+    // TEMP DEBUG: log forest_ring analysis
+    const frBank = bankItems.get('forest_ring') || 0;
+    if (frBank > 0) {
+      const { getClaimedTotal } = await import('./gear-state.mjs');
+      const { globalCount: gc, bankCount: bc } = await import('./inventory-manager.mjs');
+      const { getOpenOrderDemandByCode } = await import('./order-board.mjs');
+      const demand = getOpenOrderDemandByCode();
+      geLog.info(`[${ctx.name}] GE-DEBUG forest_ring: bankMap=${frBank}, globalCount=${gc('forest_ring')}, bankCount=${bc('forest_ring')}, claimed=${getClaimedTotal('forest_ring')}, orderDemand=${demand.get('forest_ring')||0}, candidates=${candidates.filter(c=>c.code==='forest_ring').length}, totalCandidates=${candidates.length}`);
+    }
     if (candidates.length === 0) {
       geLog.debug(`[${ctx.name}] GE: no items to sell`, {
         event: 'ge.sell.skipped',

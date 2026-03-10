@@ -215,6 +215,10 @@ export function computeFallbackClaims(ctx, desired, assigned, previousAvailable 
     for (const row of rows) {
       if (remaining <= 0) break;
 
+      // Don't hoard duplicates of already-assigned items — they consume
+      // from the shared pool and starve other characters' primary needs.
+      if ((assigned.get(row.code) || 0) > 0) continue;
+
       const alreadyExtra = extraByCode.get(row.code) || 0;
       let roomForCode;
       if (sharedAvailability) {

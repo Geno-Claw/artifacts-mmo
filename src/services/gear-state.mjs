@@ -461,6 +461,23 @@ export async function refreshGearState(opts = {}) {
       availability.set(code, Math.max(0, available - assignQty));
     }
 
+    // Filter out desired items the character already has equipped —
+    // no point ordering duplicates of what you're already wearing.
+    // But only when the optimizer's total selected qty <= equipped qty,
+    // meaning the character doesn't genuinely need extras (e.g. 2 ring slots).
+    if (ctx) {
+      const eqCounts = _equipmentCountsOnCharacter(ctx);
+      for (const [code, desiredQty] of [...desired.entries()]) {
+        const equippedQty = eqCounts.get(code) || 0;
+        if (equippedQty <= 0) continue;
+        const selectedQty = selected.get(code) || 0;
+        if (selectedQty > equippedQty) continue; // genuinely needs more than equipped
+        const reducedQty = desiredQty - equippedQty;
+        if (reducedQty <= 0) desired.delete(code);
+        else desired.set(code, reducedQty);
+      }
+    }
+
     const {
       fallbackClaims,
       missingByCategory,
