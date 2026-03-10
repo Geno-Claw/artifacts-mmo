@@ -16,6 +16,7 @@ import {
 import { getOwnedKeepByCodeForInventory } from './gear-state.mjs';
 import { logWithdrawalWarnings } from '../utils.mjs';
 import { swapEquipment, depositAll } from '../helpers.mjs';
+import { restUntil } from './food-manager.mjs';
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -115,6 +116,15 @@ export async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abo
   }
   if (abortOnMissing && missingSlots.length > 0) {
     return { changed: false, swapsFailed: true, missingSlots };
+  }
+
+  // Rest to full HP before swaps — unequipping HP-boosting gear at low HP
+  // triggers API error 483 ("not enough HP to unequip").
+  const c = ctx.get();
+  const hpPct = c.max_hp > 0 ? (c.hp / c.max_hp * 100) : 100;
+  if (hpPct < 100) {
+    log.info(`[${ctx.name}] Resting to full HP before gear swap (${Math.round(hpPct)}%)`);
+    await restUntil(ctx, 100);
   }
 
   // Perform equipment swaps
