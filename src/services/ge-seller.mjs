@@ -21,6 +21,7 @@ let sellRules = null;
 let _deps = {
   getAllGEOrdersFn: (params) => api.getAllGEOrders(params),
   getItemFn: (code) => gameData.getItem(code),
+  findBestNpcBuyOfferFn: (code) => gameData.findBestNpcBuyOffer(code),
   findBestNpcSellOfferFn: (code) => gameData.findBestNpcSellOffer(code),
 };
 
@@ -136,7 +137,12 @@ export function analyzeSellCandidates(ctx, bankItems) {
  */
 export async function determinePrice(code) {
   const minPrice = sellRules?.minPrice || 1;
+  const undercutPct = (sellRules?.undercutPercent || 5) / 100;
   const npcFloor = _deps.findBestNpcSellOfferFn(code)?.sellPrice || 0;
+  const npcBuyOffer = _deps.findBestNpcBuyOfferFn(code);
+  const npcBuyAnchor = npcBuyOffer
+    ? Math.max(0, Math.floor(npcBuyOffer.buyPrice * (1 - undercutPct)))
+    : 0;
 
   try {
     const result = await _deps.getAllGEOrdersFn({ code, type: 'sell', size: 100 });
@@ -144,9 +150,27 @@ export async function determinePrice(code) {
 
     if (listings.length > 0) {
       const lowestPrice = Math.min(...listings.map(o => o.price));
-      const undercutPct = (sellRules?.undercutPercent || 5) / 100;
-      const targetPrice = Math.floor(lowestPrice * (1 - undercutPct));
-      return Math.max(targetPrice, minPrice, npcFloor);
+      const listingAnchor = Math.floor(lowestPrice * (1 - undercutPct));
+      const finalPrice = Math.max(listingAnchor, minPrice, npcFloor, npcBuyAnchor);
+
+      if (npcBuyAnchor > 0 && finalPrice === npcBuyAnchor && npcBuyAnchor > listingAnchor) {
+        geLog.debug(`[GE] Pricing ${code}: NPC buy anchor raised price above GE listing undercut (${listingAnchor}g -> ${npcBuyAnchor}g via ${npcBuyOffer.npcCode})`, {
+          event: 'ge.pricing.npc_buy_anchor',
+          context: {
+            operation: 'determine_price',
+          },
+          data: {
+            code,
+            lowestListing: lowestPrice,
+            listingAnchor,
+            npcBuyAnchor,
+            npcBuyPrice: npcBuyOffer.buyPrice,
+            npcCode: npcBuyOffer.npcCode,
+          },
+        });
+      }
+
+      return finalPrice;
     }
   } catch (err) {
     geLog.warn(`[GE] Could not fetch listings for ${code}: ${err.message}`, {
@@ -165,7 +189,26 @@ export async function determinePrice(code) {
   // Fallback: price based on item level
   const item = _deps.getItemFn(code);
   const level = item?.level || 1;
-  return Math.max(level * 10, minPrice, npcFloor);
+  const fallbackPrice = level * 10;
+  const finalPrice = Math.max(fallbackPrice, minPrice, npcFloor, npcBuyAnchor);
+
+  if (npcBuyAnchor > 0 && finalPrice === npcBuyAnchor && npcBuyAnchor > fallbackPrice) {
+    geLog.debug(`[GE] Pricing ${code}: NPC buy anchor raised fallback price (${fallbackPrice}g -> ${npcBuyAnchor}g via ${npcBuyOffer.npcCode})`, {
+      event: 'ge.pricing.npc_buy_anchor',
+      context: {
+        operation: 'determine_price',
+      },
+      data: {
+        code,
+        fallbackPrice,
+        npcBuyAnchor,
+        npcBuyPrice: npcBuyOffer.buyPrice,
+        npcCode: npcBuyOffer.npcCode,
+      },
+    });
+  }
+
+  return finalPrice;
 }
 
 // --- Order management ---
@@ -520,6 +563,7 @@ export function _resetForTests() {
   _deps = {
     getAllGEOrdersFn: (params) => api.getAllGEOrders(params),
     getItemFn: (code) => gameData.getItem(code),
+    findBestNpcBuyOfferFn: (code) => gameData.findBestNpcBuyOffer(code),
     findBestNpcSellOfferFn: (code) => gameData.findBestNpcSellOffer(code),
   };
 }

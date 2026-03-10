@@ -321,6 +321,7 @@ async function testDeterminePriceUsesNpcFloor() {
   setGeSellerDepsForTests({
     getAllGEOrdersFn: async () => [{ price: 420 }],
     getItemFn: () => ({ level: 2 }),
+    findBestNpcBuyOfferFn: () => null,
     findBestNpcSellOfferFn: () => ({ npcCode: 'nomadic_merchant', currency: 'gold', sellPrice: 500 }),
   });
   _setSellRulesForTests({
@@ -330,6 +331,74 @@ async function testDeterminePriceUsesNpcFloor() {
 
   const price = await determinePrice('old_boots');
   assert.equal(price, 500, 'GE price should never undercut the best NPC sell offer');
+}
+
+async function testDeterminePriceUsesGoldNpcBuyAnchorWhenListingsAreTooLow() {
+  resetGeSellerForTests();
+  setGeSellerDepsForTests({
+    getAllGEOrdersFn: async () => [{ price: 200 }],
+    getItemFn: () => ({ level: 20 }),
+    findBestNpcBuyOfferFn: () => ({ npcCode: 'rune_vendor', currency: 'gold', buyPrice: 10000 }),
+    findBestNpcSellOfferFn: () => null,
+  });
+  _setSellRulesForTests({
+    minPrice: 1,
+    undercutPercent: 1,
+  });
+
+  const price = await determinePrice('healing_rune');
+  assert.equal(price, 9900, 'GE price should anchor to NPC gold buy price when listings are far too low');
+}
+
+async function testDeterminePricePrefersListingAnchorWhenMarketIsHigher() {
+  resetGeSellerForTests();
+  setGeSellerDepsForTests({
+    getAllGEOrdersFn: async () => [{ price: 12000 }],
+    getItemFn: () => ({ level: 20 }),
+    findBestNpcBuyOfferFn: () => ({ npcCode: 'rune_vendor', currency: 'gold', buyPrice: 10000 }),
+    findBestNpcSellOfferFn: () => null,
+  });
+  _setSellRulesForTests({
+    minPrice: 1,
+    undercutPercent: 1,
+  });
+
+  const price = await determinePrice('healing_rune');
+  assert.equal(price, 11880, 'higher GE listings should still use the normal listing undercut');
+}
+
+async function testDeterminePriceUsesGoldNpcBuyAnchorWithoutListings() {
+  resetGeSellerForTests();
+  setGeSellerDepsForTests({
+    getAllGEOrdersFn: async () => [],
+    getItemFn: () => ({ level: 20 }),
+    findBestNpcBuyOfferFn: () => ({ npcCode: 'rune_vendor', currency: 'gold', buyPrice: 10000 }),
+    findBestNpcSellOfferFn: () => null,
+  });
+  _setSellRulesForTests({
+    minPrice: 1,
+    undercutPercent: 1,
+  });
+
+  const price = await determinePrice('healing_rune');
+  assert.equal(price, 9900, 'fallback pricing should still respect the NPC gold buy anchor');
+}
+
+async function testDeterminePriceIgnoresNonGoldNpcBuyOffers() {
+  resetGeSellerForTests();
+  setGeSellerDepsForTests({
+    getAllGEOrdersFn: async () => [{ price: 200 }],
+    getItemFn: () => ({ level: 40 }),
+    findBestNpcBuyOfferFn: () => null,
+    findBestNpcSellOfferFn: () => null,
+  });
+  _setSellRulesForTests({
+    minPrice: 1,
+    undercutPercent: 1,
+  });
+
+  const price = await determinePrice('greater_healing_rune');
+  assert.equal(price, 198, 'non-gold NPC buy offers should not affect GE pricing');
 }
 
 function testAnalyzeSellCandidatesRespectsOpenToolDemand() {
@@ -392,6 +461,10 @@ async function run() {
     testAnalyzeSellCandidatesRespectsOpenToolDemand();
     testAnalyzeSellCandidatesSkipsNpcSellableItems();
     await testDeterminePriceUsesNpcFloor();
+    await testDeterminePriceUsesGoldNpcBuyAnchorWhenListingsAreTooLow();
+    await testDeterminePricePrefersListingAnchorWhenMarketIsHigher();
+    await testDeterminePriceUsesGoldNpcBuyAnchorWithoutListings();
+    await testDeterminePriceIgnoresNonGoldNpcBuyOffers();
     console.log('test-ge-seller: PASS');
   } finally {
     resetGeSellerForTests();

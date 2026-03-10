@@ -4,11 +4,47 @@ import assert from 'node:assert/strict';
 import {
   _resetForTests,
   _setCachesForTests,
+  findBestNpcBuyOffer,
   canSellToNpc,
   findBestNpcSellOffer,
+  getNpcBuyOffer,
+  getNpcBuyPrice,
   getNpcSellOffer,
   getNpcSellPrice,
 } from '../src/services/game-data.mjs';
+
+function testNpcBuyOfferAccessors() {
+  _resetForTests();
+  _setCachesForTests({
+    npcBuyOffers: [
+      ['rune_vendor', [
+        ['healing_rune', { code: 'healing_rune', currency: 'gold', buyPrice: 10000 }],
+        ['greater_healing_rune', { code: 'greater_healing_rune', currency: 'sand_token', buyPrice: 30 }],
+      ]],
+      ['capital_vendor', [
+        ['healing_rune', { code: 'healing_rune', currency: 'gold', buyPrice: 9200 }],
+      ]],
+      ['trader', [
+        ['healing_rune', { code: 'healing_rune', currency: 'shell_token', buyPrice: 15 }],
+        ['broken_offer', { code: 'broken_offer', currency: 'gold', buyPrice: 0 }],
+      ]],
+    ],
+  });
+
+  assert.deepEqual(getNpcBuyOffer('rune_vendor', 'healing_rune'), {
+    code: 'healing_rune',
+    currency: 'gold',
+    buyPrice: 10000,
+  });
+  assert.equal(getNpcBuyPrice('capital_vendor', 'healing_rune'), 9200);
+  assert.deepEqual(findBestNpcBuyOffer('healing_rune'), {
+    npcCode: 'capital_vendor',
+    currency: 'gold',
+    buyPrice: 9200,
+  });
+  assert.equal(findBestNpcBuyOffer('greater_healing_rune'), null, 'non-gold NPC buy offers should be ignored for GE pricing');
+  assert.equal(findBestNpcBuyOffer('missing_item'), null);
+}
 
 function testNpcSellOfferAccessors() {
   _resetForTests();
@@ -48,6 +84,7 @@ function testNpcSellOfferAccessors() {
 
 function run() {
   try {
+    testNpcBuyOfferAccessors();
     testNpcSellOfferAccessors();
     console.log('test-game-data: PASS');
   } finally {

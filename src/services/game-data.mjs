@@ -23,6 +23,7 @@ let taskRewardCodes = null;     // Set<itemCode> for fast lookup
 let npcItemsCache = null;       // Map<npcCode, Array<{code, npc, currency, buy_price, sell_price}>>
 let npcBuyableLookup = null;    // Map<npcCode, Set<itemCode>> — quick lookup for buyable items
 let npcBuyOfferLookup = null;   // Map<npcCode, Map<itemCode, { code, currency, buyPrice }>>
+let npcBuyBestGoldOffer = null; // Map<itemCode, { npcCode, currency, buyPrice }>
 let npcSellOfferLookup = null;  // Map<npcCode, Map<itemCode, { code, currency, sellPrice }>>
 let npcSellBestOffer = null;    // Map<itemCode, { npcCode, currency, sellPrice }>
 
@@ -397,6 +398,7 @@ export async function loadNpcCatalogs(npcCodes) {
   npcItemsCache = new Map();
   npcBuyableLookup = new Map();
   npcBuyOfferLookup = new Map();
+  npcBuyBestGoldOffer = new Map();
   npcSellOfferLookup = new Map();
   npcSellBestOffer = new Map();
 
@@ -428,6 +430,13 @@ export async function loadNpcCatalogs(npcCodes) {
           const buyPrice = Math.floor(buyPriceRaw);
           buyable.add(code);
           buyOffers.set(code, { code, currency, buyPrice });
+
+          if (currency === 'gold') {
+            const existingBest = npcBuyBestGoldOffer.get(code);
+            if (!existingBest || buyPrice < existingBest.buyPrice) {
+              npcBuyBestGoldOffer.set(code, { npcCode, currency, buyPrice });
+            }
+          }
         }
 
         if (Number.isFinite(sellPriceRaw) && sellPriceRaw > 0) {
@@ -503,6 +512,17 @@ export function findNpcForItem(itemCode) {
 export function getNpcBuyPrice(npcCode, itemCode) {
   const offer = getNpcBuyOffer(npcCode, itemCode);
   return offer?.buyPrice ?? null;
+}
+
+/**
+ * Find the cheapest gold NPC buy offer for an item across all loaded NPC catalogs.
+ * Returns { npcCode, currency, buyPrice } or null.
+ */
+export function findBestNpcBuyOffer(itemCode, { currency = 'gold' } = {}) {
+  if (currency !== 'gold') return null;
+  const offer = npcBuyBestGoldOffer?.get(itemCode);
+  if (!offer) return null;
+  return { ...offer };
 }
 
 /** Quick check: does this NPC buy this item from us? */
@@ -828,10 +848,22 @@ export function _setCachesForTests({
   if (npcBuyOffers !== null) {
     npcBuyableLookup = new Map();
     npcBuyOfferLookup = new Map();
+    npcBuyBestGoldOffer = new Map();
     for (const [npcCode, offers] of npcBuyOffers) {
       const normalizedOffers = new Map(offers);
       npcBuyOfferLookup.set(npcCode, normalizedOffers);
       npcBuyableLookup.set(npcCode, new Set(normalizedOffers.keys()));
+      for (const [itemCode, offer] of normalizedOffers) {
+        if (!offer || offer.currency !== 'gold') continue;
+        const existing = npcBuyBestGoldOffer.get(itemCode);
+        if (!existing || Number(offer.buyPrice) < Number(existing.buyPrice)) {
+          npcBuyBestGoldOffer.set(itemCode, {
+            npcCode,
+            currency: offer.currency,
+            buyPrice: offer.buyPrice,
+          });
+        }
+      }
     }
   }
 
@@ -870,6 +902,7 @@ export function _resetForTests() {
   npcItemsCache = null;
   npcBuyableLookup = null;
   npcBuyOfferLookup = null;
+  npcBuyBestGoldOffer = null;
   npcSellOfferLookup = null;
   npcSellBestOffer = null;
   unreachableLocations.clear();
