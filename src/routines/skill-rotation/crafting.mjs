@@ -65,6 +65,56 @@ export async function executeCrafting(ctx, routine) {
     plan.push({ type: 'craft', itemCode: recipe.code, recipe: recipe.craft, quantity: 1 });
   }
 
+  let bankItems = null;
+  let pendingRewithdraw = null;
+
+  const getBankItems = async () => {
+    if (bankItems instanceof Map) return bankItems;
+    const nextBank = await routine._getBankItems();
+    bankItems = nextBank instanceof Map ? nextBank : new Map();
+    return bankItems;
+  };
+
+  const notePendingRewithdraw = (step, needed, inInventory, inBank) => {
+    const inventoryQuantity = Math.max(0, Number(inInventory) || 0);
+    const bankQuantity = Math.max(0, Number(inBank) || 0);
+    if (inventoryQuantity >= needed || bankQuantity <= 0 || (inventoryQuantity + bankQuantity) < needed) {
+      return false;
+    }
+
+    if (!pendingRewithdraw) {
+      pendingRewithdraw = {
+        stepType: step.type,
+        itemCode: step.itemCode,
+        needed,
+        inventoryQuantity,
+        bankQuantity,
+      };
+    }
+    return true;
+  };
+
+  const queueRewithdrawIfNeeded = () => {
+    if (!pendingRewithdraw) return;
+    routine.rotation.bankChecked = false;
+    craftingLog.info(
+      `[${ctx.name}] ${routine.rotation.currentSkill}: ${pendingRewithdraw.itemCode} still in bank after partial withdrawal, forcing re-withdraw next tick`,
+      {
+        event: 'craft.bank_withdraw.retry',
+        reasonCode: 'inventory_full',
+        context: { character: ctx.name },
+        data: {
+          skill: routine.rotation.currentSkill,
+          recipeCode: recipe.code,
+          ...pendingRewithdraw,
+          inventoryCount: ctx.inventoryCount(),
+          inventoryCapacity: ctx.inventoryCapacity(),
+        },
+      },
+    );
+    pendingRewithdraw = null;
+  };
+
   // Re-withdraw if bank routine deposited our materials
   if (routine.rotation.bankChecked && ctx.inventoryCount() === 0) {
     routine.rotation.bankChecked = false;
@@ -75,21 +125,23 @@ export async function executeCrafting(ctx, routine) {
     routine.rotation.bankChecked = true;
     routine._currentBatch = claimMode ? 1 : routine._batchSize(ctx);
     await routine._withdrawFromBank(ctx, plan, recipe.code, routine._currentBatch);
+    await getBankItems();
 
     // When fulfilling an order claim, enqueue sub-orders for any gather/fight
     // materials we still need after bank withdrawal.  This lets other characters
     // contribute the raw materials while we also farm them ourselves.
     if (claimMode && routine.orderBoard?.createOrders) {
+      const bank = await getBankItems();
       for (const step of plan) {
         if (step.type === 'gather' && step.resource) {
           const needed = rawMaterialNeeded(ctx, plan, step.itemCode, routine._currentBatch);
-          const have = ctx.itemCount(step.itemCode);
+          const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
           if (needed > have) {
             routine._enqueueGatherOrderForDeficit(step, claim, ctx, needed - have);
           }
         } else if (step.type === 'fight' && step.monster) {
           const needed = step.quantity * routine._currentBatch;
-          const have = ctx.itemCount(step.itemCode);
+          const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
           if (needed > have) {
             routine._enqueueFightOrderForDeficit(step, claim, ctx, needed - have);
           }
@@ -108,10 +160,17 @@ export async function executeCrafting(ctx, routine) {
       // Must come from bank (event items, etc.) — already withdrawn above
       const have = ctx.itemCount(step.itemCode);
       if (have >= step.quantity) continue; // have enough for at least 1 craft
+
+      const bank = await getBankItems();
+      const inBank = bank.get(step.itemCode) || 0;
+      const totalHave = have + inBank;
+      if (notePendingRewithdraw(step, step.quantity, have, inBank)) continue;
+
       if (routine._isTaskRewardCode(step.itemCode)) {
+        const missingQty = step.quantity - totalHave;
         if (routine.orderBoard.createOrders) {
           // Order-first: post exchange order and defer to workers
-          routine._enqueueTaskExchangeOrder(ctx, step.itemCode, step.quantity - have);
+          routine._enqueueTaskExchangeOrder(ctx, step.itemCode, missingQty);
         } else {
           // Legacy: try proactive self-exchange
           const proactive = await routine._maybeRunProactiveExchange(ctx, {
@@ -128,7 +187,7 @@ export async function executeCrafting(ctx, routine) {
       if (claimMode) {
         await routine._blockAndReleaseClaim(ctx, 'missing_bank_dependency');
       } else {
-        craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${have} — skipping recipe`, {
+        craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${step.quantity}x ${step.itemCode} from bank, have ${totalHave} — skipping recipe`, {
           event: 'craft.bank_dependency.missing',
           reasonCode: 'bank_unavailable',
           context: { character: ctx.name },
@@ -136,7 +195,7 @@ export async function executeCrafting(ctx, routine) {
             skill: routine.rotation.currentSkill,
             itemCode: step.itemCode,
             requiredQuantity: step.quantity,
-            availableQuantity: have,
+            availableQuantity: totalHave,
             recipeCode: recipe.code,
           },
         });
@@ -148,7 +207,12 @@ export async function executeCrafting(ctx, routine) {
     if (step.type === 'gather') {
       // Check if we already have enough (accounting for batch + intermediates)
       const needed = rawMaterialNeeded(ctx, plan, step.itemCode, routine._currentBatch);
-      if (ctx.itemCount(step.itemCode) >= needed) continue;
+      const have = ctx.itemCount(step.itemCode);
+      if (have >= needed) continue;
+
+      const bank = await getBankItems();
+      const inBank = bank.get(step.itemCode) || 0;
+      if (notePendingRewithdraw(step, needed, have, inBank)) continue;
 
       if (step.resource.level > ctx.skillLevel(step.resource.skill)) {
         if (claimMode) {
@@ -270,7 +334,12 @@ export async function executeCrafting(ctx, routine) {
     if (step.type === 'fight') {
       // Check if we already have enough from bank withdrawal or prior fights
       const needed = step.quantity * routine._currentBatch;
-      if (ctx.itemCount(step.itemCode) >= needed) continue;
+      const have = ctx.itemCount(step.itemCode);
+      if (have >= needed) continue;
+
+      const bank = await getBankItems();
+      const inBank = bank.get(step.itemCode) || 0;
+      if (notePendingRewithdraw(step, needed, have, inBank)) continue;
 
       // Find monster location
       const monsterCode = step.monster.code;
@@ -443,9 +512,14 @@ export async function executeCrafting(ctx, routine) {
     if (step.type === 'npc_trade') {
       // Buy item from NPC using currency materials already in inventory
       const needed = step.quantity * routine._currentBatch;
-      if (ctx.itemCount(step.itemCode) >= needed) continue;
+      const have = ctx.itemCount(step.itemCode);
+      if (have >= needed) continue;
 
-      const buyQty = needed - ctx.itemCount(step.itemCode);
+      const bank = await getBankItems();
+      const inBank = bank.get(step.itemCode) || 0;
+      if (notePendingRewithdraw(step, needed, have, inBank)) continue;
+
+      const buyQty = needed - have;
       const currencyNeeded = buyQty * step.buyPrice;
       const currencyTopUp = await topUpNpcCurrency(ctx, step.currency, currencyNeeded, {
         reason: `craft npc_trade ${step.itemCode}`,
@@ -655,6 +729,7 @@ export async function executeCrafting(ctx, routine) {
         routine._currentBatch = 1;
 
       }
+      queueRewithdrawIfNeeded();
       return true;
     }
   }
@@ -678,6 +753,7 @@ export async function executeCrafting(ctx, routine) {
           },
         },
       );
+      queueRewithdrawIfNeeded();
       return true;
     }
 
@@ -690,11 +766,13 @@ export async function executeCrafting(ctx, routine) {
         recipeCode: recipe.code,
       },
     });
+    queueRewithdrawIfNeeded();
     return false;
   }
 
   // If we get here, couldn't make progress — try next iteration
   // (bank deposit may have freed inventory, or we already have materials)
+  queueRewithdrawIfNeeded();
   return !ctx.inventoryFull();
 }
 

@@ -122,6 +122,60 @@ function makeCombatCtx({
   };
 }
 
+function makeCraftingInventoryCtx({
+  capacity = 20,
+  itemCounts = {},
+  skillLevels = {},
+} = {}) {
+  const inventory = new Map(
+    Object.entries(itemCounts)
+      .map(([code, quantity]) => [code, Math.max(0, Number(quantity) || 0)])
+      .filter(([, quantity]) => quantity > 0),
+  );
+
+  return {
+    name: 'Tester',
+    addInventory(code, quantity) {
+      const qty = Math.max(0, Number(quantity) || 0);
+      if (!code || qty <= 0) return;
+      inventory.set(code, (inventory.get(code) || 0) + qty);
+    },
+    removeInventory(code, quantity) {
+      const qty = Math.max(0, Number(quantity) || 0);
+      if (!code || qty <= 0) return;
+      const next = (inventory.get(code) || 0) - qty;
+      if (next > 0) inventory.set(code, next);
+      else inventory.delete(code);
+    },
+    get() {
+      return {
+        hp: 100,
+        max_hp: 100,
+        inventory: [...inventory.entries()].map(([code, quantity]) => ({ code, quantity })),
+      };
+    },
+    itemCount(code) {
+      return inventory.get(code) || 0;
+    },
+    inventoryCount() {
+      let total = 0;
+      for (const quantity of inventory.values()) total += quantity;
+      return total;
+    },
+    inventoryCapacity() {
+      return capacity;
+    },
+    inventoryFull() {
+      return this.inventoryCount() >= capacity;
+    },
+    skillLevel(skill) {
+      return Object.hasOwn(skillLevels, skill) ? skillLevels[skill] : 10;
+    },
+    async refresh() {},
+    applyActionResult() {},
+  };
+}
+
 async function withMonsterCache(monsters, testFn) {
   resetGameDataForTests();
   setGameDataCachesForTests({
@@ -1140,6 +1194,7 @@ async function testAcquireCraftClaimPrioritizesToolOrders() {
 async function testCraftFightStepSkipsCombatWhenSimUnwinnable() {
   const routine = new SkillRotationRoutine();
   routine._ensureOrderClaim = async () => null;
+  routine._getBankItems = async () => new Map();
   routine.rotation = {
     currentSkill: 'alchemy',
     goalTarget: 10,
@@ -1188,6 +1243,7 @@ async function testCraftFightStepTreatsReadinessUnwinnableAsNonViable() {
   ], async () => {
     const routine = new SkillRotationRoutine();
     routine._ensureOrderClaim = async () => null;
+    routine._getBankItems = async () => new Map();
     routine.rotation = {
       currentSkill: 'alchemy',
       goalTarget: 10,
@@ -1228,6 +1284,7 @@ async function testCraftFightStepTreatsReadinessUnwinnableAsNonViable() {
 async function testCraftGatherStepInsufficientSkillRotatesBeforeGathering() {
   const routine = new SkillRotationRoutine();
   routine._ensureOrderClaim = async () => null;
+  routine._getBankItems = async () => new Map();
 
   let rotateCalls = 0;
   let blockCalls = 0;
@@ -1283,6 +1340,7 @@ async function testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering() 
       fulfillOrders: true,
     },
   });
+  routine._getBankItems = async () => new Map();
   routine._ensureOrderClaim = async () => ({
     orderId: 'craft-order-1',
     charName: 'Tester',
@@ -1349,6 +1407,201 @@ async function testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering() 
   assert.equal(blockReason, 'insufficient_skill', 'claim mode should block and release the claim');
   assert.equal(rotateCalls, 0, 'claim mode should not rotate');
   assert.equal(fetchCalls, 0, 'claim mode should not hit the API before blocking');
+}
+
+async function testCraftClaimDefersWhenMaterialsRemainInBankAfterPartialWithdraw() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: true,
+      createOrders: true,
+    },
+  });
+
+  const claim = {
+    orderId: 'craft-order-bank-covered',
+    charName: 'Tester',
+    itemCode: 'forest_whip',
+    sourceType: 'craft',
+    sourceCode: 'forest_whip',
+    craftSkill: 'weaponcrafting',
+    remainingQty: 1,
+    claim: {},
+  };
+  const plan = [
+    { type: 'bank', itemCode: 'hardwood_plank', quantity: 2 },
+    {
+      type: 'gather',
+      itemCode: 'birch_wood',
+      quantity: 20,
+      resource: { code: 'birch_tree', skill: 'woodcutting', level: 1 },
+    },
+    {
+      type: 'fight',
+      itemCode: 'king_slimeball',
+      quantity: 2,
+      monster: { code: 'king_slime', level: 30 },
+    },
+  ];
+  const bankItems = new Map([
+    ['hardwood_plank', 2],
+    ['birch_wood', 20],
+    ['king_slimeball', 2],
+  ]);
+  const ctx = makeCraftingInventoryCtx({
+    capacity: 2,
+    skillLevels: {
+      weaponcrafting: 10,
+      woodcutting: 10,
+    },
+  });
+
+  routine._ensureOrderClaim = async () => claim;
+  routine._getCraftClaimItem = () => ({
+    code: 'forest_whip',
+    craft: { skill: 'weaponcrafting', level: 1, items: [] },
+  });
+  routine._resolveRecipeChain = () => plan;
+  routine._getBankItems = async () => bankItems;
+  routine._withdrawFromBank = async () => {
+    ctx.addInventory('hardwood_plank', 2);
+    bankItems.delete('hardwood_plank');
+  };
+  routine._enqueueGatherOrderForDeficit = () => {
+    throw new Error('unexpected gather deficit enqueue for bank-covered material');
+  };
+  routine._enqueueFightOrderForDeficit = () => {
+    throw new Error('unexpected fight deficit enqueue for bank-covered material');
+  };
+
+  let fightEquipCalls = 0;
+  routine._equipForCraftFight = async () => {
+    fightEquipCalls += 1;
+    return { simResult: { win: true, hpLostPercent: 0 }, ready: true };
+  };
+  routine.rotation = {
+    currentSkill: 'weaponcrafting',
+    goalTarget: 1,
+    goalProgress: 0,
+    recipe: { code: 'forest_whip', craft: { skill: 'weaponcrafting', level: 1, items: [] } },
+    productionPlan: plan,
+    bankChecked: false,
+    forceRotate: async () => null,
+    blockCurrentRecipe: () => true,
+  };
+
+  const result = await withMockFetch(async () => {
+    throw new Error('unexpected fetch during bank-covered craft claim test');
+  }, async () => routine._executeCrafting(ctx));
+
+  assert.equal(result, false, 'full inventory should yield after queuing a re-withdraw');
+  assert.equal(fightEquipCalls, 0, 'fight step should not run when the bank already covers the need');
+  assert.equal(routine.rotation.bankChecked, false, 'bank-covered shortages should force a fresh withdraw next tick');
+}
+
+async function testCraftClaimQueuesOnlyTrueDeficitsAfterPartialWithdraw() {
+  const routine = new SkillRotationRoutine({
+    orderBoard: {
+      enabled: true,
+      fulfillOrders: true,
+      createOrders: true,
+    },
+  });
+
+  const claim = {
+    orderId: 'craft-order-true-deficits',
+    charName: 'Tester',
+    itemCode: 'forest_whip',
+    sourceType: 'craft',
+    sourceCode: 'forest_whip',
+    craftSkill: 'weaponcrafting',
+    remainingQty: 1,
+    claim: {},
+  };
+  const plan = [
+    { type: 'bank', itemCode: 'hardwood_plank', quantity: 2 },
+    {
+      type: 'gather',
+      itemCode: 'birch_wood',
+      quantity: 20,
+      resource: { code: 'birch_tree', skill: 'woodcutting', level: 10 },
+    },
+    {
+      type: 'fight',
+      itemCode: 'king_slimeball',
+      quantity: 2,
+      monster: { code: 'king_slime', level: 30 },
+    },
+  ];
+  const bankItems = new Map([
+    ['hardwood_plank', 2],
+    ['birch_wood', 18],
+    ['king_slimeball', 1],
+  ]);
+  const ctx = makeCraftingInventoryCtx({
+    skillLevels: {
+      weaponcrafting: 10,
+      woodcutting: 1,
+    },
+  });
+
+  routine._ensureOrderClaim = async () => claim;
+  routine._getCraftClaimItem = () => ({
+    code: 'forest_whip',
+    craft: { skill: 'weaponcrafting', level: 1, items: [] },
+  });
+  routine._resolveRecipeChain = () => plan;
+  routine._getBankItems = async () => bankItems;
+  routine._withdrawFromBank = async () => {
+    ctx.addInventory('hardwood_plank', 2);
+    bankItems.delete('hardwood_plank');
+  };
+
+  const enqueued = [];
+  routine._enqueueGatherOrderForDeficit = (step, order, localCtx, deficit) => {
+    enqueued.push({ type: 'gather', itemCode: step.itemCode, orderId: order.orderId, charName: localCtx.name, deficit });
+  };
+  routine._enqueueFightOrderForDeficit = (step, order, localCtx, deficit) => {
+    enqueued.push({ type: 'fight', itemCode: step.itemCode, orderId: order.orderId, charName: localCtx.name, deficit });
+  };
+
+  let blockReason = null;
+  routine._blockAndReleaseClaim = async (_ctx, reason) => {
+    blockReason = reason;
+  };
+  routine.rotation = {
+    currentSkill: 'weaponcrafting',
+    goalTarget: 1,
+    goalProgress: 0,
+    recipe: { code: 'forest_whip', craft: { skill: 'weaponcrafting', level: 1, items: [] } },
+    productionPlan: plan,
+    bankChecked: false,
+    forceRotate: async () => null,
+    blockCurrentRecipe: () => true,
+  };
+
+  const result = await withMockFetch(async () => {
+    throw new Error('unexpected fetch during true-deficit craft claim test');
+  }, async () => routine._executeCrafting(ctx));
+
+  assert.equal(result, true, 'insufficient-skill claim path should return after blocking the claim');
+  assert.equal(blockReason, 'insufficient_skill', 'claim should still block when the remaining gather work is truly missing');
+  assert.deepEqual(enqueued, [
+    {
+      type: 'gather',
+      itemCode: 'birch_wood',
+      orderId: 'craft-order-true-deficits',
+      charName: 'Tester',
+      deficit: 2,
+    },
+    {
+      type: 'fight',
+      itemCode: 'king_slimeball',
+      orderId: 'craft-order-true-deficits',
+      charName: 'Tester',
+      deficit: 1,
+    },
+  ], 'only the uncovered quantities should be enqueued as deficits');
 }
 
 async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
@@ -1674,6 +1927,7 @@ async function testHandleUnwinnableCraftFightBlocksAndReleasesClaim() {
 
 async function testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim() {
   const routine = new SkillRotationRoutine();
+  routine._getBankItems = async () => new Map();
   routine._ensureOrderClaim = async () => ({
     orderId: 'order-99',
     charName: 'Tester',
@@ -1735,6 +1989,7 @@ async function testCraftFightReadyFalseWithClaimBlocksAndReleasesClaim() {
 async function testCraftFightReadyFalseWithoutClaimBlocksRecipeAndRotates() {
   const routine = new SkillRotationRoutine();
   routine._ensureOrderClaim = async () => null;
+  routine._getBankItems = async () => new Map();
   let blockCalls = 0;
   let rotateCalls = 0;
   let blockArgs = null;
@@ -3302,6 +3557,8 @@ async function run() {
   await testCraftFightStepTreatsReadinessUnwinnableAsNonViable();
   await testCraftGatherStepInsufficientSkillRotatesBeforeGathering();
   await testCraftGatherStepInsufficientSkillClaimBlocksBeforeGathering();
+  await testCraftClaimDefersWhenMaterialsRemainInBankAfterPartialWithdraw();
+  await testCraftClaimQueuesOnlyTrueDeficitsAfterPartialWithdraw();
   await testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable();
   await testNpcBuyGoldClaimBuysAffordableQuantityAndBlocksWhenBudgetExhausted();
   await testHandleUnwinnableCraftFightBlocksRecipeAndRotates();
