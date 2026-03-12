@@ -889,6 +889,10 @@ export async function withdrawFromBank(ctx, routine, plan, finalRecipeCode, batc
         inventoryCapacity: ctx.inventoryCapacity(),
       },
     });
+    // Mark bank as checked to prevent tight retry loop when inventory is full.
+    // The deposit routine (higher priority) will free space, then bankChecked
+    // resets naturally on the next rotation or deposit cycle.
+    routine.rotation.bankChecked = true;
     return;
   }
 
