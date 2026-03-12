@@ -142,6 +142,8 @@ const CONFIG_EDITOR_DESCRIPTION_POINTERS = Object.freeze({
   'characters[].settings.potions.bankTravel.includeReturnToOrigin': '#/$defs/bankTravelPotionSettings/properties/includeReturnToOrigin',
   'characters[].settings.potions.bankTravel.moveSecondsPerTile': '#/$defs/bankTravelPotionSettings/properties/moveSecondsPerTile',
   'characters[].settings.potions.bankTravel.itemUseSeconds': '#/$defs/bankTravelPotionSettings/properties/itemUseSeconds',
+  'characters[].settings.foodRefill.enabled': '#/$defs/foodRefillSettings/properties/enabled',
+  'characters[].settings.foodRefill.minFightsBeforeRefill': '#/$defs/foodRefillSettings/properties/minFightsBeforeRefill',
   'characters[].routines.rest.priority': '#/$defs/restRoutine/properties/priority',
   'characters[].routines.rest.triggerPct': '#/$defs/restRoutine/properties/triggerPct',
   'characters[].routines.rest.targetPct': '#/$defs/restRoutine/properties/targetPct',

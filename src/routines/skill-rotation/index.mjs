@@ -261,8 +261,15 @@ export class SkillRotationRoutine extends BaseRoutine {
       this._foodWithdrawn = true;
       this._foodResupplyAttempted = false;
     } else if (!this._hasHealingFood(ctx) && !this._foodResupplyAttempted) {
-      this._foodResupplyAttempted = true;
-      await this._withdrawFoodForFights(ctx, monsterCode, numFights);
+      const minFights = ctx.settings?.().foodRefill?.minFightsBeforeRefill ?? 3;
+      const fightsDone = this.rotation.goalProgress || 0;
+      if (fightsDone >= minFights) {
+        this._foodResupplyAttempted = true;
+        await this._withdrawFoodForFights(ctx, monsterCode, numFights);
+      } else {
+        // Not enough fights yet — mark attempted so restUntil Phase 1.5 handles it
+        this._foodResupplyAttempted = true;
+      }
     }
   }
   async _executeCombat(ctx) { return executeCombat(ctx, this); }

@@ -124,7 +124,8 @@ export async function applyGearLoadout(ctx, loadout, { reason = 'gear swap', abo
   const hpPct = c.max_hp > 0 ? (c.hp / c.max_hp * 100) : 100;
   if (hpPct < 100) {
     log.info(`[${ctx.name}] Resting to full HP before gear swap (${Math.round(hpPct)}%)`);
-    await restUntil(ctx, 100);
+    const foodRefillEnabled = typeof ctx.settings === 'function' && ctx.settings().foodRefill?.enabled !== false;
+    await restUntil(ctx, 100, { bankRefill: foodRefillEnabled });
   }
 
   // Perform equipment swaps

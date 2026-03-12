@@ -592,7 +592,8 @@ export class BossFightRoutine extends BaseRoutine {
     await this._withdrawFood(ctx, rally.bossCode);
 
     // Rest to full HP
-    await restUntil(ctx, 100);
+    const foodRefillEnabled = typeof ctx.settings === 'function' && ctx.settings().foodRefill?.enabled !== false;
+    await restUntil(ctx, 100, { bankRefill: foodRefillEnabled });
 
     // Move to boss location
     if (api.isShuttingDown()) return false;
@@ -775,7 +776,8 @@ export class BossFightRoutine extends BaseRoutine {
     await this._tradeFoodIfNeeded(ctx, rally);
 
     // Eat food first, then fall back to rest API
-    await restUntil(ctx, 100);
+    const foodRefillEnabled = typeof ctx.settings === 'function' && ctx.settings().foodRefill?.enabled !== false;
+    await restUntil(ctx, 100, { bankRefill: foodRefillEnabled });
 
     if (api.isShuttingDown()) return false;
 

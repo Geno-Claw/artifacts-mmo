@@ -2109,6 +2109,7 @@ async function testCombatReadyFalseWithoutClaimStillDefers() {
 async function testEnsureFightFoodRewithdrawsWhenHealingFoodMissing() {
   const routine = new SkillRotationRoutine();
   routine._foodWithdrawn = true;
+  routine.rotation.goalProgress = 5; // past minFightsBeforeRefill default of 3
 
   let withdrawArgs = null;
   routine._hasHealingFood = () => false;
@@ -2121,10 +2122,27 @@ async function testEnsureFightFoodRewithdrawsWhenHealingFoodMissing() {
   assert.deepEqual(
     withdrawArgs,
     { monsterCode: 'cow', numFights: 12 },
-    'missing healing food should trigger a same-call re-withdraw',
+    'missing healing food should trigger a same-call re-withdraw when enough fights done',
   );
   assert.equal(routine._foodWithdrawn, true, 'helper should leave food-withdrawn state armed after re-withdraw');
   assert.equal(routine._foodResupplyAttempted, true, 'same-goal resupply should be marked attempted after re-withdraw');
+}
+
+async function testEnsureFightFoodSkipsWithdrawWhenTooFewFights() {
+  const routine = new SkillRotationRoutine();
+  routine._foodWithdrawn = true;
+  routine.rotation.goalProgress = 1; // below minFightsBeforeRefill default of 3
+
+  let withdrawCalls = 0;
+  routine._hasHealingFood = () => false;
+  routine._withdrawFoodForFights = async () => {
+    withdrawCalls += 1;
+  };
+
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 12);
+
+  assert.equal(withdrawCalls, 0, 'should skip bank withdraw when too few fights completed');
+  assert.equal(routine._foodResupplyAttempted, true, 'should mark attempted so restUntil Phase 1.5 handles it');
 }
 
 async function testEnsureFightFoodSkipsWithdrawWhenHealingFoodPresent() {
@@ -2167,6 +2185,7 @@ async function testEnsureFightFoodWithdrawsWhenFlagIsFalse() {
 async function testEnsureFightFoodDoesNotRetryResupplyAfterFailure() {
   const routine = new SkillRotationRoutine();
   routine._foodWithdrawn = true;
+  routine.rotation.goalProgress = 5; // past minFightsBeforeRefill default of 3
 
   let withdrawCalls = 0;
   routine._hasHealingFood = () => false;
@@ -3568,6 +3587,7 @@ async function run() {
   await testCombatReadyFalseWithClaimBlocksAndReleasesClaim();
   await testCombatReadyFalseWithoutClaimStillDefers();
   await testEnsureFightFoodRewithdrawsWhenHealingFoodMissing();
+  await testEnsureFightFoodSkipsWithdrawWhenTooFewFights();
   await testEnsureFightFoodSkipsWithdrawWhenHealingFoodPresent();
   await testEnsureFightFoodWithdrawsWhenFlagIsFalse();
   await testEnsureFightFoodDoesNotRetryResupplyAfterFailure();

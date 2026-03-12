@@ -79,8 +79,79 @@ export function canUseRestAction() {
   return true;
 }
 
-/** Rest until HP reaches the given percentage. Eats food first for faster recovery. Returns true when target HP is reached. */
-export async function restUntil(ctx, hpPct = 80) {
+/**
+ * Withdraw food from bank to cover the current HP deficit.
+ * Greedy pick of most potent bank food, then eat it immediately.
+ * @returns {Promise<boolean>} true if any food was withdrawn and eaten
+ */
+async function withdrawFoodForHpDeficit(ctx, hpPct) {
+  const c = ctx.get();
+  const hpNeeded = Math.ceil(c.max_hp * hpPct / 100) - c.hp;
+  if (hpNeeded <= 0) return false;
+
+  // Subtract healing from food already in inventory
+  const invFoods = findHealingFood(ctx);
+  let invHealing = 0;
+  for (const food of invFoods) invHealing += food.hpRestore * food.quantity;
+  const deficit = hpNeeded - invHealing;
+  if (deficit <= 0) return false;
+
+  const bank = await gameData.getBankItems(true);
+  const bankFoods = findBankFood(bank, ctx.get());
+  if (bankFoods.length === 0) return false;
+
+  const toWithdraw = [];
+  let remaining = deficit;
+  for (const food of bankFoods) {
+    if (remaining <= 0) break;
+    const count = Math.min(Math.ceil(remaining / food.hpRestore), food.quantity);
+    if (count <= 0) continue;
+    toWithdraw.push({ code: food.code, quantity: count });
+    remaining -= count * food.hpRestore;
+  }
+  if (toWithdraw.length === 0) return false;
+
+  // Cap by available inventory space
+  let totalCount = toWithdraw.reduce((sum, w) => sum + w.quantity, 0);
+  const space = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
+  if (space <= 0) return false;
+  if (totalCount > space) {
+    const scale = space / totalCount;
+    for (const w of toWithdraw) w.quantity = Math.max(1, Math.floor(w.quantity * scale));
+  }
+
+  foodLog.info(`[${ctx.name}] Mid-rest bank food refill: withdrawing ${toWithdraw.map(w => `${w.code} x${w.quantity}`).join(', ')}`, {
+    event: 'food.midrest_refill.start',
+    context: { character: ctx.name },
+    data: { items: toWithdraw, hpDeficit: hpNeeded },
+  });
+
+  const withdrawalResult = await withdrawBankItems(ctx, toWithdraw, {
+    reason: 'mid-rest food refill',
+    mode: 'partial',
+    retryStaleOnce: true,
+  });
+  logWithdrawalWarnings(ctx, withdrawalResult, 'FoodRefill');
+
+  // Merge into keep-codes so deposit routine doesn't bank them
+  if (typeof ctx.setRoutineKeepCodes === 'function') {
+    const keepCodes = { ...(ctx.getRoutineKeepCodes() || {}) };
+    for (const w of withdrawalResult.withdrawn) {
+      if (w.quantity > 0) keepCodes[w.code] = (keepCodes[w.code] || 0) + w.quantity;
+    }
+    ctx.setRoutineKeepCodes(keepCodes);
+  }
+
+  return withdrawalResult.withdrawn.length > 0;
+}
+
+/**
+ * Rest until HP reaches the given percentage. Eats food first for faster recovery.
+ * @param {object} [opts]
+ * @param {boolean} [opts.bankRefill=false] — if true, withdraw food from bank when inventory food is exhausted
+ * @returns {Promise<boolean>} true when target HP is reached
+ */
+export async function restUntil(ctx, hpPct = 80, opts = {}) {
   // Phase 1: Eat food from inventory
   const foods = findHealingFood(ctx);
   for (const food of foods) {
@@ -141,6 +212,40 @@ export async function restUntil(ctx, hpPct = 80) {
   }
 
   if (ctx.hpPercent() >= hpPct) return true;
+
+  // Phase 1.5: Bank food refill — withdraw and eat before falling back to rest API
+  if (opts.bankRefill && !api.isShuttingDown()) {
+    const refilled = await withdrawFoodForHpDeficit(ctx, hpPct);
+    if (refilled) {
+      // Eat the freshly withdrawn food
+      const freshFoods = findHealingFood(ctx);
+      for (const food of freshFoods) {
+        if (api.isShuttingDown()) return false;
+        if (ctx.hpPercent() >= hpPct) return true;
+
+        const c = ctx.get();
+        const hpNeeded = Math.ceil(c.max_hp * hpPct / 100) - c.hp;
+        const countNeeded = Math.ceil(hpNeeded / food.hpRestore);
+        const countToEat = Math.min(countNeeded, food.quantity);
+        if (countToEat <= 0) continue;
+
+        foodLog.info(`[${ctx.name}] Eating refilled ${food.code} x${countToEat} (+${food.hpRestore}hp each)`, {
+          event: 'food.consume.start',
+          context: { character: ctx.name },
+          data: { code: food.code, quantity: countToEat, hpRestore: food.hpRestore },
+        });
+        try {
+          const result = await api.useItem(food.code, countToEat, ctx.name);
+          ctx.applyActionResult(result);
+          await api.waitForCooldown(result);
+        } catch (err) {
+          if (err.code === 476 || isConditionNotMet(err)) continue;
+          throw err;
+        }
+      }
+      if (ctx.hpPercent() >= hpPct) return true;
+    }
+  }
 
   // Phase 2: Fall back to rest API for remaining HP deficit
   let restRetries = 0;
@@ -296,7 +401,8 @@ export async function getFightReadiness(ctx, monsterCode) {
       targetPct,
     },
   });
-  const recovered = await restUntil(ctx, targetPct);
+  const foodRefillEnabled = typeof ctx.settings === 'function' && ctx.settings().foodRefill?.enabled !== false;
+  const recovered = await restUntil(ctx, targetPct, { bankRefill: foodRefillEnabled });
   if (!recovered) {
     const fresh = ctx.get();
     if (fresh.hp < minHp) {

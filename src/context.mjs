@@ -29,12 +29,17 @@ const DEFAULT_SETTINGS = Object.freeze({
       itemUseSeconds: 3,
     },
   },
+  foodRefill: {
+    enabled: true,
+    minFightsBeforeRefill: 3,
+  },
 });
 
 function mergeSettings(settings = {}) {
   const potions = settings?.potions || {};
   const combat = potions?.combat || {};
   const bankTravel = potions?.bankTravel || {};
+  const foodRefill = settings?.foodRefill || {};
 
   return {
     ...DEFAULT_SETTINGS,
@@ -50,6 +55,10 @@ function mergeSettings(settings = {}) {
         ...DEFAULT_SETTINGS.potions.bankTravel,
         ...bankTravel,
       },
+    },
+    foodRefill: {
+      ...DEFAULT_SETTINGS.foodRefill,
+      ...foodRefill,
     },
   };
 }

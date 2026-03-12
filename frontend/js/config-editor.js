@@ -907,6 +907,7 @@ function renderConfigSettingsView(character) {
   const potions = isConfigEditorObject(settings.potions) ? settings.potions : {};
   const combat = isConfigEditorObject(potions.combat) ? potions.combat : {};
   const bankTravel = isConfigEditorObject(potions.bankTravel) ? potions.bankTravel : {};
+  const foodRefill = isConfigEditorObject(settings.foodRefill) ? settings.foodRefill : {};
   const settingDesc = (path) => getConfigEditorDescription(`characters[].settings.${path}`);
 
   return `
@@ -1034,6 +1035,27 @@ function renderConfigSettingsView(character) {
         )}
       </div>
       <div class="config-editor-help">Travel mode stays fixed to <code>smart</code> in the structured editor. ${escapeHtml(getConfigEditorDescription('characters[].settings.potions.bankTravel.mode'))}</div>
+    </section>
+    <section class="modal-section">
+      ${renderConfigSectionTitle('Food Refill')}
+      <div class="config-field-grid">
+        ${renderConfigSettingField(
+          'Enabled',
+          `data-config-scope="setting-field" data-config-character="${escapeHtml(name)}" data-config-field="foodRefill.enabled"`,
+          foodRefill.enabled !== false,
+          'checkbox',
+          '',
+          settingDesc('foodRefill.enabled'),
+        )}
+        ${renderConfigSettingField(
+          'Min Fights Before Refill',
+          `data-config-scope="setting-field" data-config-character="${escapeHtml(name)}" data-config-field="foodRefill.minFightsBeforeRefill"`,
+          getConfigEditorPathValue(settings, 'foodRefill.minFightsBeforeRefill', 3),
+          'number',
+          'min="1" step="1"',
+          settingDesc('foodRefill.minFightsBeforeRefill'),
+        )}
+      </div>
     </section>
   `;
 }

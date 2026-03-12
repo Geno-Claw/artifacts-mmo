@@ -179,6 +179,26 @@
       "properties": {
         "potions": {
           "$ref": "#/$defs/potionSettings"
+        },
+        "foodRefill": {
+          "$ref": "#/$defs/foodRefillSettings"
+        }
+      }
+    },
+    "foodRefillSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable mid-combat food refill from bank when inventory food runs out"
+        },
+        "minFightsBeforeRefill": {
+          "type": "number",
+          "minimum": 1,
+          "default": 3,
+          "description": "Minimum fights completed in current rotation before triggering a bank food refill"
         }
       }
     },
