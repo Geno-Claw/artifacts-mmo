@@ -1642,6 +1642,7 @@ async function testNpcBuyFightStepTreatsReadinessUnwinnableAsNonViable() {
       async _equipForCraftFight() {
         return { simResult: { win: true, hpLostPercent: 10 }, ready: true };
       },
+      async _ensureFightFood() {},
       async _blockAndReleaseClaim(_ctx, reason) {
         blockedReason = reason;
       },
@@ -2198,6 +2199,30 @@ async function testEnsureFightFoodDoesNotRetryResupplyAfterFailure() {
 
   assert.equal(withdrawCalls, 1, 'missing food should trigger at most one mid-goal resupply attempt');
   assert.equal(routine._foodResupplyAttempted, true, 'failed resupply path should remain guarded for the rest of the goal');
+}
+
+async function testEnsureFightFoodResetsOnMonsterChange() {
+  const routine = new SkillRotationRoutine();
+  routine._foodWithdrawn = true;
+  routine._foodResupplyAttempted = true;
+  routine._foodWithdrawnForMonster = 'cow';
+
+  const withdrawArgs = [];
+  routine._hasHealingFood = () => true;
+  routine._withdrawFoodForFights = async (_ctx, monsterCode, numFights) => {
+    withdrawArgs.push({ monsterCode, numFights });
+  };
+
+  // Same monster — should skip (already withdrawn, has food)
+  await routine._ensureFightFood({ name: 'Tester' }, 'cow', 5);
+  assert.equal(withdrawArgs.length, 0, 'same monster should not re-withdraw');
+
+  // Different monster — should reset and withdraw fresh
+  await routine._ensureFightFood({ name: 'Tester' }, 'wolf', 8);
+  assert.equal(withdrawArgs.length, 1, 'different monster should trigger fresh withdrawal');
+  assert.deepEqual(withdrawArgs[0], { monsterCode: 'wolf', numFights: 8 });
+  assert.equal(routine._foodWithdrawnForMonster, 'wolf', 'should track new monster');
+  assert.equal(routine._foodResupplyAttempted, false, 'resupply flag should be reset for new monster');
 }
 
 async function testRoutineCanDisableOrderFulfillment() {
@@ -3591,6 +3616,7 @@ async function run() {
   await testEnsureFightFoodSkipsWithdrawWhenHealingFoodPresent();
   await testEnsureFightFoodWithdrawsWhenFlagIsFalse();
   await testEnsureFightFoodDoesNotRetryResupplyAfterFailure();
+  await testEnsureFightFoodResetsOnMonsterChange();
   await testRoutineCanDisableOrderFulfillment();
   await testRoutineRoutesCraftClaimsBySkill();
   await testRoutineCraftingFallsBackWhenNoCraftClaim();
