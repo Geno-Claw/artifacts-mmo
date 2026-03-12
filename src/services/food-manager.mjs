@@ -463,42 +463,32 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
   if (!result.canWin || result.avgHpLostOnWin == null) return false;
 
   const damageTaken = Math.round(result.avgHpLostOnWin);
-  const totalHealingNeeded = Math.max(0, damageTaken * numFights - (charStats.max_hp - 1));
 
-  if (totalHealingNeeded <= 0) {
-    foodLog.debug(`[${ctx.name}] Food: no healing needed for ${numFights} fights vs ${monsterCode}`, {
+  // If this monster deals negligible damage, skip food withdrawal entirely
+  if (damageTaken <= 0) {
+    foodLog.debug(`[${ctx.name}] Food: no damage expected for ${numFights} fights vs ${monsterCode}`, {
       event: 'food.withdraw.skipped',
       reasonCode: 'yield_for_backoff',
-      context: {
-        character: ctx.name,
-      },
-      data: {
-        monsterCode,
-        numFights,
-      },
+      context: { character: ctx.name },
+      data: { monsterCode, numFights },
     });
     return true;
   }
 
-  // Subtract healing from food already in inventory
+  // Check if inventory food already covers the estimated fights
   const inventoryFoods = findHealingFood(ctx);
   let inventoryHealing = 0;
   for (const food of inventoryFoods) {
     inventoryHealing += food.hpRestore * food.quantity;
   }
-
+  const totalHealingNeeded = Math.max(0, damageTaken * numFights - (charStats.max_hp - 1));
   const healingDeficit = totalHealingNeeded - inventoryHealing;
-  if (healingDeficit <= 0) {
+  if (healingDeficit <= 0 && inventoryHealing > 0) {
     foodLog.debug(`[${ctx.name}] Food: inventory already covers ${numFights} fights vs ${monsterCode}`, {
       event: 'food.withdraw.skipped',
       reasonCode: 'yield_for_backoff',
-      context: {
-        character: ctx.name,
-      },
-      data: {
-        monsterCode,
-        numFights,
-      },
+      context: { character: ctx.name },
+      data: { monsterCode, numFights },
     });
     return true;
   }
@@ -520,32 +510,13 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
     return true;
   }
 
-  // Greedily pick most potent food first (minimizes item count)
-  const toWithdraw = [];
-  let remainingHealing = healingDeficit;
-
-  for (const food of bankFoods) {
-    if (remainingHealing <= 0) break;
-    const countNeeded = Math.ceil(remainingHealing / food.hpRestore);
-    const count = Math.min(countNeeded, food.quantity);
-    if (count <= 0) continue;
-    toWithdraw.push({ code: food.code, quantity: count });
-    remainingHealing -= count * food.hpRestore;
-  }
-
-  if (toWithdraw.length === 0) return true;
-
-  // Cap by available inventory space, reserving slots for fight drops
+  // Fill available inventory space with food (most potent first).
+  // Don't try to be precise about exact fight count — drop rate estimates
+  // can be wildly wrong, and having extra food is never a problem.
   const DROP_RESERVE = 8;
-  let totalCount = toWithdraw.reduce((sum, w) => sum + w.quantity, 0);
   const rawSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
   const space = Math.max(0, rawSpace - DROP_RESERVE);
-  if (totalCount > space && space > 0) {
-    const scale = space / totalCount;
-    for (const w of toWithdraw) {
-      w.quantity = Math.max(1, Math.floor(w.quantity * scale));
-    }
-  } else if (space <= 0) {
+  if (space <= 0) {
     foodLog.info(`[${ctx.name}] Food: no inventory space for food`, {
       event: 'food.withdraw.skipped',
       reasonCode: 'inventory_full',
@@ -558,6 +529,19 @@ export async function withdrawFoodForFights(ctx, monsterCode, numFights) {
     });
     return true;
   }
+
+  // Greedily fill available space with most potent food first
+  const toWithdraw = [];
+  let remainingSpace = space;
+  for (const food of bankFoods) {
+    if (remainingSpace <= 0) break;
+    const count = Math.min(remainingSpace, food.quantity);
+    if (count <= 0) continue;
+    toWithdraw.push({ code: food.code, quantity: count });
+    remainingSpace -= count;
+  }
+
+  if (toWithdraw.length === 0) return true;
 
   // Withdraw from bank (bank-ops handles travel to the nearest accessible bank)
   for (const w of toWithdraw) {
