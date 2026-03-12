@@ -70,6 +70,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._currentBatch = 1;
     this._foodWithdrawn = false;
     this._foodResupplyAttempted = false;
+    this._fightsSinceFood = 0;
     this._activeOrderClaim = null;
     this._nextProactiveExchangeAt = 0;
     this._nextExchangeClaimAttemptAt = 0;
@@ -106,6 +107,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       }
       this._foodWithdrawn = false;
       this._foodResupplyAttempted = false;
+      this._fightsSinceFood = 0;
       if (typeof ctx.clearRoutineKeepCodes === 'function') ctx.clearRoutineKeepCodes();
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
     }
@@ -260,9 +262,11 @@ export class SkillRotationRoutine extends BaseRoutine {
       await this._withdrawFoodForFights(ctx, monsterCode, numFights);
       this._foodWithdrawn = true;
       this._foodResupplyAttempted = false;
+      this._fightsSinceFood = 0;
     } else if (!this._hasHealingFood(ctx) && !this._foodResupplyAttempted) {
       const minFights = ctx.settings?.().foodRefill?.minFightsBeforeRefill ?? 3;
-      const fightsDone = this.rotation.goalProgress || 0;
+      // Track actual fights — goalProgress only counts rotation goals, not order drops
+      const fightsDone = Math.max(this.rotation.goalProgress || 0, this._fightsSinceFood || 0);
       if (fightsDone >= minFights) {
         this._foodResupplyAttempted = true;
         await this._withdrawFoodForFights(ctx, monsterCode, numFights);
@@ -271,6 +275,7 @@ export class SkillRotationRoutine extends BaseRoutine {
         this._foodResupplyAttempted = true;
       }
     }
+    this._fightsSinceFood = (this._fightsSinceFood || 0) + 1;
   }
   async _executeCombat(ctx) { return executeCombat(ctx, this); }
 

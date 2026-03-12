@@ -190,8 +190,9 @@ export function estimatedFightsForDrops(monsterCode, itemCode, quantity) {
   const avgPerKill = (drop.rate / 100) * avgQtyPerDrop;
   if (avgPerKill <= 0) return quantity;
 
-  const safetyMargin = 1 + 0.2 * (1 - drop.rate / 100);
-  return Math.ceil((quantity / avgPerKill) * safetyMargin);
+  const safetyMargin = Math.max(1, 1 + 0.2 * (1 - drop.rate / 100));
+  // Always estimate at least 5 fights — even guaranteed drops take inventory/deposit cycles
+  return Math.max(5, Math.ceil((quantity / avgPerKill) * safetyMargin));
 }
 
 /** Returns true if the item code is obtainable from task coin exchange. */

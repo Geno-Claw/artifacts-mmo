@@ -126,6 +126,7 @@ export class OrderFulfillmentRoutine extends SkillRotationRoutine {
       this.rotation.bankChecked = false;
       this._foodWithdrawn = false;
       this._foodResupplyAttempted = false;
+      this._fightsSinceFood = 0;
       if (typeof ctx.clearRoutineKeepCodes === 'function') ctx.clearRoutineKeepCodes();
     }
 

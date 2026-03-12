@@ -1,0 +1,949 @@
+{
+  "$schema": "./characters.schema.json",
+  "characters": [
+    {
+      "name": "GenoClaw",
+      "routines": [
+        {
+          "priority": 100,
+          "targetPct": 95,
+          "triggerPct": 40,
+          "type": "rest"
+        },
+        {
+          "depositGold": true,
+          "priority": 50,
+          "recycleEquipment": true,
+          "sellOnGE": true,
+          "sellToVendor": true,
+          "threshold": 0,
+          "type": "depositBank"
+        },
+        {
+          "checkIntervalMs": 300000,
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.6,
+          "priority": 45,
+          "type": "bankExpansion"
+        },
+        {
+          "cooldownMs": 60000,
+          "enabled": true,
+          "maxMonsterType": "elite",
+          "minTimeRemainingMs": 120000,
+          "monsterEvents": true,
+          "npcEvents": true,
+          "priority": 90,
+          "resourceEvents": true,
+          "type": "event"
+        },
+        {
+          "bosses": [
+            {
+              "code": "king_slime",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "lich",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "goblin_priestess",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "cultist_emperor",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "rosenblood",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "duskworm",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "sandwhisper_empress",
+              "enabled": false,
+              "minWinrate": 80
+            }
+          ],
+          "maxFights": 0,
+          "minTeamSize": 3,
+          "orderDriven": false,
+          "priority": 15,
+          "repeat": true,
+          "teamSize": 3,
+          "teamStrategy": "fast",
+          "type": "bossFight"
+        },
+        {
+          "priority": 45,
+          "type": "completeTask"
+        },
+        {
+          "craftScanLimit": 1,
+          "enabled": true,
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": true,
+            "enabled": true,
+            "fulfillOrders": true,
+            "leaseMs": 120000
+          },
+          "priority": 8,
+          "type": "orderFulfillment"
+        },
+        {
+          "achievementBlacklist": [],
+          "achievementTypes": [
+            "combat_kill",
+            "gathering",
+            "combat_drop",
+            "crafting",
+            "task"
+          ],
+          "craftBlacklist": {},
+          "enabled": true,
+          "goals": {
+            "achievement": 30,
+            "alchemy": 20,
+            "combat": 50,
+            "cooking": 100,
+            "fishing": 100,
+            "gearcrafting": 5,
+            "item_task": 50,
+            "jewelrycrafting": 5,
+            "mining": 100,
+            "npc_task": 50,
+            "weaponcrafting": 5,
+            "woodcutting": 100
+          },
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": false,
+            "enabled": true,
+            "fulfillOrders": false,
+            "leaseMs": 120000
+          },
+          "priority": 5,
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "achievement": 2,
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 0,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 1,
+            "weaponcrafting": 0,
+            "woodcutting": 0
+          }
+        }
+      ],
+      "settings": {
+        "potions": {
+          "bankTravel": {
+            "allowForestBank": true,
+            "allowRecall": true,
+            "enabled": true,
+            "includeReturnToOrigin": true,
+            "itemUseSeconds": 3,
+            "minSavingsSeconds": 60,
+            "mode": "smart",
+            "moveSecondsPerTile": 5
+          },
+          "combat": {
+            "enabled": true,
+            "monsterTypes": [
+              "elite",
+              "boss"
+            ],
+            "poisonBias": true,
+            "refillBelow": 1,
+            "respectNonPotionUtility": true,
+            "targetQuantity": 20
+          },
+          "enabled": true
+        }
+      },
+      "skin": "men1"
+    },
+    {
+      "name": "GenoClaw2",
+      "routines": [
+        {
+          "priority": 100,
+          "targetPct": 95,
+          "triggerPct": 40,
+          "type": "rest"
+        },
+        {
+          "depositGold": true,
+          "priority": 50,
+          "recycleEquipment": true,
+          "sellOnGE": true,
+          "sellToVendor": true,
+          "threshold": 0,
+          "type": "depositBank"
+        },
+        {
+          "checkIntervalMs": 300000,
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.6,
+          "priority": 45,
+          "type": "bankExpansion"
+        },
+        {
+          "cooldownMs": 60000,
+          "enabled": true,
+          "maxMonsterType": "elite",
+          "minTimeRemainingMs": 120000,
+          "monsterEvents": true,
+          "npcEvents": true,
+          "priority": 90,
+          "resourceEvents": true,
+          "type": "event"
+        },
+        {
+          "bosses": [
+            {
+              "code": "king_slime",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "lich",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "goblin_priestess",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "cultist_emperor",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "rosenblood",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "duskworm",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "sandwhisper_empress",
+              "enabled": false,
+              "minWinrate": 80
+            }
+          ],
+          "maxFights": 0,
+          "minTeamSize": 3,
+          "orderDriven": false,
+          "priority": 15,
+          "repeat": true,
+          "teamSize": 3,
+          "teamStrategy": "fast",
+          "type": "bossFight"
+        },
+        {
+          "priority": 45,
+          "type": "completeTask"
+        },
+        {
+          "craftScanLimit": 1,
+          "enabled": true,
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": true,
+            "enabled": true,
+            "fulfillOrders": true,
+            "leaseMs": 120000
+          },
+          "priority": 8,
+          "type": "orderFulfillment"
+        },
+        {
+          "achievementBlacklist": [],
+          "achievementTypes": [
+            "combat_kill",
+            "gathering",
+            "combat_drop",
+            "crafting",
+            "task"
+          ],
+          "craftBlacklist": {},
+          "enabled": true,
+          "goals": {
+            "achievement": 30,
+            "alchemy": 50,
+            "combat": 25,
+            "cooking": 50,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "item_task": 50,
+            "jewelrycrafting": 5,
+            "mining": 50,
+            "npc_task": 50,
+            "weaponcrafting": 5,
+            "woodcutting": 50
+          },
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": false,
+            "enabled": true,
+            "fulfillOrders": false,
+            "leaseMs": 120000
+          },
+          "priority": 5,
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "achievement": 1,
+            "alchemy": 2,
+            "combat": 0,
+            "cooking": 1,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 0,
+            "woodcutting": 0
+          }
+        }
+      ],
+      "settings": {
+        "potions": {
+          "bankTravel": {
+            "allowForestBank": true,
+            "allowRecall": true,
+            "enabled": false,
+            "includeReturnToOrigin": true,
+            "itemUseSeconds": 3,
+            "minSavingsSeconds": 60,
+            "mode": "smart",
+            "moveSecondsPerTile": 5
+          },
+          "combat": {
+            "enabled": true,
+            "monsterTypes": [
+              "elite",
+              "boss"
+            ],
+            "poisonBias": true,
+            "refillBelow": 2,
+            "respectNonPotionUtility": true,
+            "targetQuantity": 5
+          },
+          "enabled": true
+        }
+      },
+      "skin": "men1"
+    },
+    {
+      "name": "GenoClaw3",
+      "routines": [
+        {
+          "priority": 100,
+          "targetPct": 95,
+          "triggerPct": 40,
+          "type": "rest"
+        },
+        {
+          "depositGold": true,
+          "priority": 50,
+          "recycleEquipment": true,
+          "sellOnGE": true,
+          "sellToVendor": true,
+          "threshold": 0,
+          "type": "depositBank"
+        },
+        {
+          "checkIntervalMs": 300000,
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.6,
+          "priority": 45,
+          "type": "bankExpansion"
+        },
+        {
+          "cooldownMs": 60000,
+          "enabled": true,
+          "maxMonsterType": "elite",
+          "minTimeRemainingMs": 120000,
+          "monsterEvents": true,
+          "npcEvents": true,
+          "priority": 90,
+          "resourceEvents": true,
+          "type": "event"
+        },
+        {
+          "bosses": [
+            {
+              "code": "king_slime",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "lich",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "goblin_priestess",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "cultist_emperor",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "rosenblood",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "duskworm",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "sandwhisper_empress",
+              "enabled": false,
+              "minWinrate": 80
+            }
+          ],
+          "maxFights": 0,
+          "minTeamSize": 3,
+          "orderDriven": false,
+          "priority": 15,
+          "repeat": true,
+          "teamSize": 3,
+          "teamStrategy": "fast",
+          "type": "bossFight"
+        },
+        {
+          "priority": 45,
+          "type": "completeTask"
+        },
+        {
+          "craftScanLimit": 1,
+          "enabled": true,
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": true,
+            "enabled": true,
+            "fulfillOrders": true,
+            "leaseMs": 120000
+          },
+          "priority": 8,
+          "type": "orderFulfillment"
+        },
+        {
+          "achievementBlacklist": [],
+          "achievementTypes": [
+            "combat_kill",
+            "gathering",
+            "combat_drop",
+            "crafting",
+            "task"
+          ],
+          "craftBlacklist": {},
+          "enabled": true,
+          "goals": {
+            "achievement": 30,
+            "alchemy": 10,
+            "combat": 25,
+            "cooking": 50,
+            "fishing": 50,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "mining": 20,
+            "npc_task": 1,
+            "weaponcrafting": 5,
+            "woodcutting": 20
+          },
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": false,
+            "enabled": true,
+            "fulfillOrders": false,
+            "leaseMs": 120000
+          },
+          "priority": 5,
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "achievement": 1,
+            "alchemy": 0,
+            "combat": 1,
+            "cooking": 0,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 5,
+            "woodcutting": 0
+          }
+        }
+      ],
+      "settings": {
+        "potions": {
+          "bankTravel": {
+            "allowForestBank": true,
+            "allowRecall": true,
+            "enabled": false,
+            "includeReturnToOrigin": true,
+            "itemUseSeconds": 3,
+            "minSavingsSeconds": 60,
+            "mode": "smart",
+            "moveSecondsPerTile": 5
+          },
+          "combat": {
+            "enabled": false,
+            "monsterTypes": [
+              "elite",
+              "boss"
+            ],
+            "poisonBias": true,
+            "refillBelow": 2,
+            "respectNonPotionUtility": true,
+            "targetQuantity": 5
+          },
+          "enabled": false
+        }
+      },
+      "skin": "men1"
+    },
+    {
+      "name": "GenoClaw4",
+      "routines": [
+        {
+          "priority": 100,
+          "targetPct": 95,
+          "triggerPct": 40,
+          "type": "rest"
+        },
+        {
+          "depositGold": true,
+          "priority": 50,
+          "recycleEquipment": true,
+          "sellOnGE": true,
+          "sellToVendor": true,
+          "threshold": 0,
+          "type": "depositBank"
+        },
+        {
+          "checkIntervalMs": 300000,
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.6,
+          "priority": 45,
+          "type": "bankExpansion"
+        },
+        {
+          "cooldownMs": 60000,
+          "enabled": true,
+          "maxMonsterType": "elite",
+          "minTimeRemainingMs": 120000,
+          "monsterEvents": true,
+          "npcEvents": true,
+          "priority": 90,
+          "resourceEvents": true,
+          "type": "event"
+        },
+        {
+          "bosses": [
+            {
+              "code": "king_slime",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "lich",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "goblin_priestess",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "cultist_emperor",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "rosenblood",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "duskworm",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "sandwhisper_empress",
+              "enabled": false,
+              "minWinrate": 80
+            }
+          ],
+          "maxFights": 0,
+          "minTeamSize": 3,
+          "orderDriven": false,
+          "priority": 15,
+          "repeat": true,
+          "teamSize": 3,
+          "teamStrategy": "fast",
+          "type": "bossFight"
+        },
+        {
+          "priority": 45,
+          "type": "completeTask"
+        },
+        {
+          "craftScanLimit": 1,
+          "enabled": true,
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": true,
+            "enabled": true,
+            "fulfillOrders": true,
+            "leaseMs": 120000
+          },
+          "priority": 8,
+          "type": "orderFulfillment"
+        },
+        {
+          "achievementBlacklist": [],
+          "achievementTypes": [
+            "combat_kill",
+            "gathering",
+            "combat_drop",
+            "crafting",
+            "task"
+          ],
+          "craftBlacklist": {},
+          "enabled": true,
+          "goals": {
+            "achievement": 30,
+            "alchemy": 10,
+            "combat": 25,
+            "cooking": 10,
+            "fishing": 20,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "mining": 20,
+            "npc_task": 1,
+            "weaponcrafting": 5,
+            "woodcutting": 20
+          },
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": false,
+            "enabled": true,
+            "fulfillOrders": false,
+            "leaseMs": 120000
+          },
+          "priority": 5,
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "achievement": 0,
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 0,
+            "fishing": 0,
+            "gearcrafting": 0,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 5,
+            "woodcutting": 0
+          }
+        }
+      ],
+      "settings": {
+        "potions": {
+          "bankTravel": {
+            "allowForestBank": true,
+            "allowRecall": true,
+            "enabled": false,
+            "includeReturnToOrigin": true,
+            "itemUseSeconds": 3,
+            "minSavingsSeconds": 60,
+            "mode": "smart",
+            "moveSecondsPerTile": 5
+          },
+          "combat": {
+            "enabled": false,
+            "monsterTypes": [
+              "elite",
+              "boss"
+            ],
+            "poisonBias": true,
+            "refillBelow": 2,
+            "respectNonPotionUtility": true,
+            "targetQuantity": 5
+          },
+          "enabled": false
+        }
+      },
+      "skin": "men1"
+    },
+    {
+      "name": "GenoClaw5",
+      "routines": [
+        {
+          "priority": 100,
+          "targetPct": 95,
+          "triggerPct": 40,
+          "type": "rest"
+        },
+        {
+          "depositGold": true,
+          "priority": 50,
+          "recycleEquipment": true,
+          "sellOnGE": true,
+          "sellToVendor": true,
+          "threshold": 0,
+          "type": "depositBank"
+        },
+        {
+          "checkIntervalMs": 300000,
+          "goldBuffer": 1000,
+          "maxGoldPct": 0.6,
+          "priority": 45,
+          "type": "bankExpansion"
+        },
+        {
+          "cooldownMs": 60000,
+          "enabled": true,
+          "maxMonsterType": "elite",
+          "minTimeRemainingMs": 120000,
+          "monsterEvents": true,
+          "npcEvents": true,
+          "priority": 90,
+          "resourceEvents": true,
+          "type": "event"
+        },
+        {
+          "bosses": [
+            {
+              "code": "king_slime",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "lich",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "goblin_priestess",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "cultist_emperor",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "rosenblood",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "duskworm",
+              "enabled": false,
+              "minWinrate": 80
+            },
+            {
+              "code": "sandwhisper_empress",
+              "enabled": false,
+              "minWinrate": 80
+            }
+          ],
+          "maxFights": 0,
+          "minTeamSize": 3,
+          "orderDriven": false,
+          "priority": 15,
+          "repeat": true,
+          "teamSize": 3,
+          "teamStrategy": "fast",
+          "type": "bossFight"
+        },
+        {
+          "priority": 45,
+          "type": "completeTask"
+        },
+        {
+          "craftScanLimit": 1,
+          "enabled": true,
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": true,
+            "enabled": true,
+            "fulfillOrders": true,
+            "leaseMs": 120000
+          },
+          "priority": 8,
+          "type": "orderFulfillment"
+        },
+        {
+          "achievementBlacklist": [],
+          "achievementTypes": [
+            "combat_kill",
+            "gathering",
+            "combat_drop",
+            "crafting",
+            "task"
+          ],
+          "craftBlacklist": {},
+          "enabled": true,
+          "goals": {
+            "achievement": 30,
+            "alchemy": 10,
+            "combat": 25,
+            "cooking": 10,
+            "fishing": 20,
+            "gearcrafting": 5,
+            "jewelrycrafting": 5,
+            "mining": 50,
+            "npc_task": 25,
+            "weaponcrafting": 5,
+            "woodcutting": 20
+          },
+          "maxLosses": 2,
+          "orderBoard": {
+            "blockedRetryMs": 600000,
+            "createOrders": false,
+            "enabled": true,
+            "fulfillOrders": false,
+            "leaseMs": 120000
+          },
+          "priority": 5,
+          "taskCollection": {},
+          "type": "skillRotation",
+          "weights": {
+            "achievement": 0,
+            "alchemy": 0,
+            "combat": 0,
+            "cooking": 0,
+            "fishing": 0,
+            "gearcrafting": 1,
+            "item_task": 0,
+            "jewelrycrafting": 0,
+            "mining": 0,
+            "npc_task": 0,
+            "weaponcrafting": 1,
+            "woodcutting": 0
+          }
+        }
+      ],
+      "settings": {
+        "potions": {
+          "bankTravel": {
+            "allowForestBank": true,
+            "allowRecall": true,
+            "enabled": false,
+            "includeReturnToOrigin": true,
+            "itemUseSeconds": 3,
+            "minSavingsSeconds": 60,
+            "mode": "smart",
+            "moveSecondsPerTile": 5
+          },
+          "combat": {
+            "enabled": false,
+            "monsterTypes": [
+              "elite",
+              "boss"
+            ],
+            "poisonBias": true,
+            "refillBelow": 2,
+            "respectNonPotionUtility": true,
+            "targetQuantity": 5
+          },
+          "enabled": false
+        }
+      },
+      "skin": "men1"
+    }
+  ],
+  "combat": {
+    "winRateThreshold": 90
+  },
+  "events": {
+    "gatherResources": []
+  },
+  "npcBuyList": {
+    "_any": [
+      {
+        "code": "recall_potion",
+        "maxTotal": 5
+      },
+      {
+        "code": "forest_bank_potion",
+        "maxTotal": 5
+      }
+    ],
+    "fish_merchant": [],
+    "gemstone_merchant": [
+      {
+        "code": "coal",
+        "maxTotal": 10
+      }
+    ],
+    "herbal_merchant": [
+      {
+        "code": "glowstem_leaf",
+        "maxTotal": 10
+      }
+    ],
+    "nomadic_merchant": [
+      {
+        "code": "minor_health_potion",
+        "maxTotal": 1
+      },
+      {
+        "code": "small_antidote",
+        "maxTotal": 1
+      }
+    ],
+    "timber_merchant": []
+  }
+}
