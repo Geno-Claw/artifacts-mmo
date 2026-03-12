@@ -186,12 +186,14 @@ export function estimatedFightsForDrops(monsterCode, itemCode, quantity) {
   const drop = monster?.drops?.find(d => d.code === itemCode);
   if (!drop || !drop.rate || drop.rate <= 0) return quantity;
 
+  // API rate is "1/rate" chance per kill (e.g. rate=600 → 1/600 ≈ 0.17%)
+  const dropChance = 1 / drop.rate;
   const avgQtyPerDrop = (drop.min_quantity + drop.max_quantity) / 2;
-  const avgPerKill = (drop.rate / 100) * avgQtyPerDrop;
+  const avgPerKill = dropChance * avgQtyPerDrop;
   if (avgPerKill <= 0) return quantity;
 
-  const safetyMargin = Math.max(1, 1 + 0.2 * (1 - drop.rate / 100));
-  // Always estimate at least 5 fights — even guaranteed drops take inventory/deposit cycles
+  // Add 20% safety margin for RNG variance
+  const safetyMargin = 1.2;
   return Math.max(5, Math.ceil((quantity / avgPerKill) * safetyMargin));
 }
 
