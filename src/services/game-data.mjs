@@ -236,6 +236,15 @@ export function isLocationUnreachable(contentType, code) {
 }
 
 /**
+ * Clear a cached monster location (e.g. when an event despawns).
+ * Also removes any unreachable mark so a re-spawned event can be found again.
+ */
+export function clearMonsterLocationCache(monsterCode) {
+  delete monsterLocationCache[monsterCode];
+  unreachableLocations.delete(`monster:${monsterCode}`);
+}
+
+/**
  * Get the map location for a resource. Fetched on first call and cached.
  * Filters to accessible tiles only (no access conditions).
  */

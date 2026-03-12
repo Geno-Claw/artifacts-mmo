@@ -513,6 +513,11 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
       return { ok: false, reason: `combat_not_viable:${monsterCode}`, plan, budget };
     }
 
+    const monsterLoc = await gameData.getMonsterLocation(monsterCode);
+    if (!monsterLoc) {
+      return { ok: false, reason: `missing_fight_location:${monsterCode}`, plan, budget };
+    }
+
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
     if (have >= step.quantity) continue;
 
@@ -1300,6 +1305,11 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
           await routine._blockAndReleaseClaim(ctx, `combat_not_viable:${monsterCode}`);
           return { attempted: false, fulfilled: false, reason: `combat_not_viable:${monsterCode}` };
         }
+        ctx.recordRestFailure(monsterCode);
+        if (ctx.consecutiveRestFailures(monsterCode) >= 3) {
+          await routine._blockAndReleaseClaim(ctx, `rest_threshold_unreachable:${monsterCode}`);
+          return { attempted: false, fulfilled: false, reason: `rest_threshold_unreachable:${monsterCode}` };
+        }
         return { attempted: false, fulfilled: false, reason: 'waiting_for_rest' };
       }
 
@@ -1318,6 +1328,7 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
       const fight = parseFightResult(result, ctx);
       if (fight.win) {
         ctx.clearLosses(monsterCode);
+        ctx.clearRestFailures(monsterCode);
         claimLog.debug(`[${ctx.name}] NPC-buy order fight ${monsterCode}: WIN ${fight.turns}t${fight.drops ? ' | ' + fight.drops : ''}`, {
           event: 'order_claim.npc_buy.fight.won',
           context: { character: ctx.name },

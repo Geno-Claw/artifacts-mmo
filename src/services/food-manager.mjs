@@ -80,54 +80,41 @@ export function canUseRestAction() {
 }
 
 /**
- * Withdraw food from bank to cover the current HP deficit.
- * Greedy pick of most potent bank food, then eat it immediately.
- * @returns {Promise<boolean>} true if any food was withdrawn and eaten
+ * Withdraw food from bank to fill available inventory space (bulk refill).
+ * Uses most-potent-first greedy selection, reserving slots for fight drops.
+ * One bank trip covers many fights — avoids repeated per-rest bank trips.
+ * @returns {Promise<boolean>} true if any food was withdrawn
  */
-async function withdrawFoodForHpDeficit(ctx, hpPct) {
-  const c = ctx.get();
-  const hpNeeded = Math.ceil(c.max_hp * hpPct / 100) - c.hp;
-  if (hpNeeded <= 0) return false;
-
-  // Subtract healing from food already in inventory
-  const invFoods = findHealingFood(ctx);
-  let invHealing = 0;
-  for (const food of invFoods) invHealing += food.hpRestore * food.quantity;
-  const deficit = hpNeeded - invHealing;
-  if (deficit <= 0) return false;
+async function withdrawBulkFood(ctx) {
+  const DROP_RESERVE = 8;
+  const rawSpace = ctx.inventoryCapacity() - ctx.inventoryCount();
+  const space = Math.max(0, rawSpace - DROP_RESERVE);
+  if (space <= 0) return false;
 
   const bank = await gameData.getBankItems(true);
   const bankFoods = findBankFood(bank, ctx.get());
   if (bankFoods.length === 0) return false;
 
+  // Greedily fill available space with most potent food first
   const toWithdraw = [];
-  let remaining = deficit;
+  let remaining = space;
   for (const food of bankFoods) {
     if (remaining <= 0) break;
-    const count = Math.min(Math.ceil(remaining / food.hpRestore), food.quantity);
+    const count = Math.min(remaining, food.quantity);
     if (count <= 0) continue;
     toWithdraw.push({ code: food.code, quantity: count });
-    remaining -= count * food.hpRestore;
+    remaining -= count;
   }
   if (toWithdraw.length === 0) return false;
 
-  // Cap by available inventory space
-  let totalCount = toWithdraw.reduce((sum, w) => sum + w.quantity, 0);
-  const space = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
-  if (space <= 0) return false;
-  if (totalCount > space) {
-    const scale = space / totalCount;
-    for (const w of toWithdraw) w.quantity = Math.max(1, Math.floor(w.quantity * scale));
-  }
-
-  foodLog.info(`[${ctx.name}] Mid-rest bank food refill: withdrawing ${toWithdraw.map(w => `${w.code} x${w.quantity}`).join(', ')}`, {
+  foodLog.info(`[${ctx.name}] Mid-fight bank food refill: withdrawing ${toWithdraw.map(w => `${w.code} x${w.quantity}`).join(', ')}`, {
     event: 'food.midrest_refill.start',
     context: { character: ctx.name },
-    data: { items: toWithdraw, hpDeficit: hpNeeded },
+    data: { items: toWithdraw },
   });
 
   const withdrawalResult = await withdrawBankItems(ctx, toWithdraw, {
-    reason: 'mid-rest food refill',
+    reason: 'mid-fight food refill',
     mode: 'partial',
     retryStaleOnce: true,
   });
@@ -215,7 +202,7 @@ export async function restUntil(ctx, hpPct = 80, opts = {}) {
 
   // Phase 1.5: Bank food refill — withdraw and eat before falling back to rest API
   if (opts.bankRefill && !api.isShuttingDown()) {
-    const refilled = await withdrawFoodForHpDeficit(ctx, hpPct);
+    const refilled = await withdrawBulkFood(ctx);
     if (refilled) {
       // Eat the freshly withdrawn food
       const freshFoods = findHealingFood(ctx);

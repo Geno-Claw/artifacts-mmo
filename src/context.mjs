@@ -68,6 +68,7 @@ export class CharacterContext {
     this.name = name;
     this._char = null;
     this._losses = {};       // { monsterCode: count }
+    this._restFailures = {}; // { monsterCode: count }
     this._lastLevel = null;  // for detecting level-ups
     this.craftTarget = null;  // shared craft target for gather/craft routines
     this._settings = mergeSettings(settings);
@@ -106,6 +107,7 @@ export class CharacterContext {
     const level = charData.level;
     if (this._lastLevel !== null && level > this._lastLevel) {
       this._losses = {};
+      this._restFailures = {};
       clearGearCache(this.name);
     }
     this._lastLevel = level;
@@ -210,6 +212,20 @@ export class CharacterContext {
 
   clearLosses(monsterCode) {
     delete this._losses[monsterCode];
+  }
+
+  // --- Rest failure tracking ---
+
+  recordRestFailure(monsterCode) {
+    this._restFailures[monsterCode] = (this._restFailures[monsterCode] || 0) + 1;
+  }
+
+  consecutiveRestFailures(monsterCode) {
+    return this._restFailures[monsterCode] || 0;
+  }
+
+  clearRestFailures(monsterCode) {
+    delete this._restFailures[monsterCode];
   }
 
   /** Register items that should be kept in inventory (not deposited). */

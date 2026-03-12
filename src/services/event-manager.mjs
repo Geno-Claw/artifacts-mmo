@@ -7,6 +7,7 @@
  */
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
+import { clearMonsterLocationCache } from './game-data.mjs';
 import { subscribe as wsSubscribe } from './websocket-client.mjs';
 
 const TAG = '[EventManager]';
@@ -78,6 +79,7 @@ function handleEventRemoved(data) {
 
   const existed = activeEvents.delete(contentCode);
   if (existed) {
+    clearMonsterLocationCache(contentCode);
     log.info(`${TAG} Event removed: ${contentCode}`);
   }
 }
