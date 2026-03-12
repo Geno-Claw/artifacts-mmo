@@ -70,6 +70,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._currentBatch = 1;
     this._foodWithdrawn = false;
     this._foodResupplyAttempted = false;
+    this._foodWithdrawnForMonster = null;
     this._activeOrderClaim = null;
     this._nextProactiveExchangeAt = 0;
     this._nextExchangeClaimAttemptAt = 0;
@@ -106,6 +107,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       }
       this._foodWithdrawn = false;
       this._foodResupplyAttempted = false;
+      this._foodWithdrawnForMonster = null;
       if (typeof ctx.clearRoutineKeepCodes === 'function') ctx.clearRoutineKeepCodes();
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
     }
@@ -256,10 +258,16 @@ export class SkillRotationRoutine extends BaseRoutine {
   _hasHealingFood(ctx) { return hasHealingFood(ctx); }
   async _withdrawFoodForFights(ctx, monsterCode, numFights) { return withdrawFoodForFights(ctx, monsterCode, numFights); }
   async _ensureFightFood(ctx, monsterCode, numFights) {
+    // Reset food state when monster changes (e.g. order claim for a different monster)
+    if (this._foodWithdrawnForMonster && this._foodWithdrawnForMonster !== monsterCode) {
+      this._foodWithdrawn = false;
+      this._foodResupplyAttempted = false;
+    }
     if (!this._foodWithdrawn) {
       await this._withdrawFoodForFights(ctx, monsterCode, numFights);
       this._foodWithdrawn = true;
       this._foodResupplyAttempted = false;
+      this._foodWithdrawnForMonster = monsterCode;
     } else if (!this._hasHealingFood(ctx) && !this._foodResupplyAttempted) {
       const minFights = ctx.settings?.().foodRefill?.minFightsBeforeRefill ?? 3;
       const fightsDone = this.rotation.goalProgress || 0;

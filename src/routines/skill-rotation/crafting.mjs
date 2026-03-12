@@ -414,6 +414,7 @@ export async function executeCrafting(ctx, routine) {
       }
 
       await prepareCombatPotions(ctx, monsterCode);
+      await routine._ensureFightFood(ctx, monsterCode, needed - have);
 
       const readiness = await getFightReadiness(ctx, monsterCode);
       if (readiness.status !== 'ready') {

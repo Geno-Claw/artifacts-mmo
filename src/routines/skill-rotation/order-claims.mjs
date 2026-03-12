@@ -1298,6 +1298,7 @@ export async function fulfillNpcBuyOrderClaim(ctx, routine) {
       }
 
       await prepareCombatPotions(ctx, monsterCode);
+      await routine._ensureFightFood(ctx, monsterCode, step.quantity);
       const readiness = await getFightReadiness(ctx, monsterCode);
       if (readiness.status !== 'ready') {
         if (readiness.status === 'unwinnable') {
