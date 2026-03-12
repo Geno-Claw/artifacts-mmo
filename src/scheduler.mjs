@@ -5,6 +5,9 @@
 import * as log from './log.mjs';
 import { recordRoutineState } from './services/ui-state.mjs';
 import { runWithLogContext } from './log-context.mjs';
+import { pushCharState, pushBankState } from './services/gear-optimizer-proxy.mjs';
+import { findMonstersByLevel, isLocationUnreachable } from './services/game-data.mjs';
+import { getBankRevision, getBankItems } from './services/inventory-manager.mjs';
 
 const schedulerLog = log.createLogger({ scope: 'scheduler' });
 
@@ -23,6 +26,7 @@ export class Scheduler {
     this._pendingConfig = null;
     this.runId = null;
     this.tickSeq = 0;
+    this._lastBankRevision = -1;
   }
 
   setRunContext({ runId = null } = {}) {
@@ -165,6 +169,31 @@ export class Scheduler {
     }
   }
 
+  _pushCharStateToWorker() {
+    try {
+      const level = this.ctx.get().level || 0;
+      const monsters = findMonstersByLevel(level);
+      const candidates = [];
+      for (const m of monsters) {
+        if (m?.type === 'boss') continue;
+        if (isLocationUnreachable('monster', m.code)) continue;
+        candidates.push(m);
+      }
+      pushCharState(this.ctx, candidates);
+
+      // Push bank state when revision changes
+      const rev = getBankRevision();
+      if (rev !== this._lastBankRevision) {
+        this._lastBankRevision = rev;
+        getBankItems().then(bankMap => {
+          pushBankState([...bankMap.entries()], rev);
+        }).catch(() => {});
+      }
+    } catch {
+      // Non-critical — worker will operate on stale data
+    }
+  }
+
   async _runLoop() {
     this.stopRequested = false;
     schedulerLog.info(`[${this.ctx.name}] Bot loop started`, {
@@ -182,6 +211,7 @@ export class Scheduler {
         runId: this.runId,
         tickId: this.tickSeq,
       }, async () => this.ctx.refresh());
+      this._pushCharStateToWorker();
       if (this.stopRequested) return;
       const remainingMs = this.ctx.cooldownRemainingMs();
       if (remainingMs > 500) {
@@ -219,6 +249,7 @@ export class Scheduler {
         runId: this.runId,
         tickId,
       }, async () => this.ctx.refresh());
+      this._pushCharStateToWorker();
       if (this.stopRequested) break;
 
       const { routine, candidates, priority: selectedPriority, urgent: selectedUrgent } = this.pickRoutineWithDetails();
@@ -285,6 +316,7 @@ export class Scheduler {
               tickId,
               routine: routine.name,
             }, async () => this.ctx.refresh());
+            this._pushCharStateToWorker();
             if (this.stopRequested) break;
 
             if (!routine.canRun(this.ctx)) {

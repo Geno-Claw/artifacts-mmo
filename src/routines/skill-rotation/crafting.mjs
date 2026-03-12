@@ -673,6 +673,7 @@ export async function executeCrafting(ctx, routine) {
       const result = await api.craft(step.itemCode, craftQty, ctx.name);
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
+      routine._craftRewithdrawRetries = 0;
 
       craftingLog.debug(`[${ctx.name}] ${routine.rotation.currentSkill}: crafted ${step.itemCode} x${craftQty}`, {
         event: 'craft.step.completed',
@@ -771,8 +772,47 @@ export async function executeCrafting(ctx, routine) {
     return false;
   }
 
-  // If we get here, couldn't make progress — try next iteration
-  // (bank deposit may have freed inventory, or we already have materials)
+  // If we get here, couldn't make progress — try next iteration.
+  // Circuit breaker: if materials don't fit even after a retry, bail out
+  // instead of looping (deposit → withdraw → deposit → withdraw).
+  if (pendingRewithdraw && ctx.inventoryFull()) {
+    routine._craftRewithdrawRetries = (routine._craftRewithdrawRetries || 0) + 1;
+    if (routine._craftRewithdrawRetries > 1) {
+      craftingLog.warn(
+        `[${ctx.name}] ${routine.rotation.currentSkill}: materials for ${recipe.code} exceed inventory capacity, bailing out`,
+        {
+          event: 'craft.materials_exceed_inventory',
+          reasonCode: 'inventory_full',
+          context: { character: ctx.name },
+          data: {
+            skill: routine.rotation.currentSkill,
+            recipeCode: recipe.code,
+            retries: routine._craftRewithdrawRetries,
+            pendingItem: pendingRewithdraw.itemCode,
+            inventoryCount: ctx.inventoryCount(),
+            inventoryCapacity: ctx.inventoryCapacity(),
+          },
+        },
+      );
+      routine._craftRewithdrawRetries = 0;
+      if (claimMode) {
+        await routine._blockAndReleaseClaim(ctx, 'materials_exceed_inventory');
+      } else {
+        routine.rotation.blockCurrentRecipe({
+          reason: `materials exceed inventory for ${recipe.code}`,
+          ctx,
+        });
+        await routine.rotation.forceRotate(ctx);
+      }
+      return true;
+    }
+    // First retry — allow one more attempt in case bank state changed.
+    queueRewithdrawIfNeeded();
+    return false;
+  }
+
+  // No stuck condition — reset counter.
+  routine._craftRewithdrawRetries = 0;
   queueRewithdrawIfNeeded();
   return !ctx.inventoryFull();
 }
@@ -876,24 +916,28 @@ export function batchSize(ctx, routine) {
 export async function withdrawFromBank(ctx, routine, plan, finalRecipeCode, batchSizeVal = 1) {
   if (!plan) return;
 
-  const maxUnits = usableInventorySpace(ctx);
+  let maxUnits = usableInventorySpace(ctx);
   if (maxUnits <= 0) {
-    craftingLog.info(`[${ctx.name}] Rotation crafting: skipping bank withdrawal (inventory reserve reached)`, {
-      event: 'craft.bank_withdraw.skipped',
-      reasonCode: 'inventory_full',
-      context: { character: ctx.name },
-      data: {
-        finalRecipeCode: finalRecipeCode || null,
-        batchSize: batchSizeVal,
-        inventoryCount: ctx.inventoryCount(),
-        inventoryCapacity: ctx.inventoryCapacity(),
-      },
-    });
-    // Mark bank as checked to prevent tight retry loop when inventory is full.
-    // The deposit routine (higher priority) will free space, then bankChecked
-    // resets naturally on the next rotation or deposit cycle.
-    routine.rotation.bankChecked = true;
-    return;
+    // Reserve blocks all withdrawal — fall back to raw capacity so crafting
+    // isn't completely prevented when food/keep-coded items fill the reserve.
+    const rawSpace = Math.max(0, ctx.inventoryCapacity() - ctx.inventoryCount());
+    if (rawSpace <= 0) {
+      craftingLog.info(`[${ctx.name}] Rotation crafting: skipping bank withdrawal (inventory full)`, {
+        event: 'craft.bank_withdraw.skipped',
+        reasonCode: 'inventory_full',
+        context: { character: ctx.name },
+        data: {
+          finalRecipeCode: finalRecipeCode || null,
+          batchSize: batchSizeVal,
+          inventoryCount: ctx.inventoryCount(),
+          inventoryCapacity: ctx.inventoryCapacity(),
+        },
+      });
+      routine.rotation.bankChecked = true;
+      return;
+    }
+    maxUnits = rawSpace;
+    batchSizeVal = 1;
   }
 
   const excludeCodes = finalRecipeCode ? [finalRecipeCode] : [];

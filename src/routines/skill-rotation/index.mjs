@@ -19,7 +19,7 @@ import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { SkillRotation } from '../../services/skill-rotation.mjs';
 import { MAX_LOSSES_DEFAULT } from '../../data/locations.mjs';
-import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
+import { optimizeForMonster } from '../../services/gear-optimizer-proxy.mjs';
 import { hasHealingFood, withdrawFoodForFights } from '../../services/food-manager.mjs';
 import { GATHERING_SKILLS, CRAFTING_SKILLS, PROACTIVE_EXCHANGE_BACKOFF_MS } from './constants.mjs';
 
@@ -75,6 +75,7 @@ export class SkillRotationRoutine extends BaseRoutine {
     this._activeOrderClaim = null;
     this._nextProactiveExchangeAt = 0;
     this._nextExchangeClaimAttemptAt = 0;
+    this._craftRewithdrawRetries = 0;
   }
 
   updateConfig({ enabled, maxLosses, orderBoard, ...rotationCfg } = {}) {
@@ -110,6 +111,7 @@ export class SkillRotationRoutine extends BaseRoutine {
       this._foodResupplyAttempted = false;
       this._fightsSinceFood = 0;
       this._foodWithdrawnForMonster = null;
+      this._craftRewithdrawRetries = 0;
       if (typeof ctx.clearRoutineKeepCodes === 'function') ctx.clearRoutineKeepCodes();
       log.info(`[${ctx.name}] Rotation: switched to ${skill} (goal: 0/${this.rotation.goalTarget})`);
     }

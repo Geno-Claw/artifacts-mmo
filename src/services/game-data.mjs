@@ -817,6 +817,26 @@ export async function getWorkshops() {
   return workshopCache;
 }
 
+/**
+ * Serialize static caches for transfer to a worker thread via postMessage.
+ * Returns plain objects/arrays (no Map instances) for structured-clone compat.
+ */
+export function serializeForTransfer() {
+  return {
+    items: itemsCache ? [...itemsCache.entries()] : [],
+    monsters: monstersCache ? [...monstersCache.entries()] : [],
+    resources: resourcesCache ? [...resourcesCache.entries()] : [],
+    npcBuyOffers: npcBuyOfferLookup
+      ? [...npcBuyOfferLookup.entries()].map(([npc, m]) => [npc, [...m.entries()]])
+      : [],
+    npcSellOffers: npcSellOfferLookup
+      ? [...npcSellOfferLookup.entries()].map(([npc, m]) => [npc, [...m.entries()]])
+      : [],
+    workshops: workshopCache ? { ...workshopCache } : {},
+    monsterLocations: { ...monsterLocationCache },
+  };
+}
+
 // Test helpers.
 export function _setCachesForTests({
   items = null,

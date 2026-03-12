@@ -7,7 +7,8 @@
 import * as api from '../api.mjs';
 import * as log from '../log.mjs';
 import { EQUIPMENT_SLOTS } from './game-data.mjs';
-import { optimizeForMonster, optimizeForGathering } from './gear-optimizer.mjs';
+import { optimizeForMonster } from './gear-optimizer.mjs';
+import { optimizeForGathering } from './gear-optimizer.mjs';
 import { ensureMissingGatherToolOrder } from './tool-policy.mjs';
 import {
   depositBankItems,

@@ -1176,6 +1176,14 @@ export function _chooseBestBagCandidateForTests(candidates = []) {
   return best ? { ...best } : null;
 }
 
+export function _setDeps(overrides = {}) {
+  const input = overrides && typeof overrides === 'object' ? overrides : {};
+  _deps = {
+    ..._deps,
+    ...input,
+  };
+}
+
 export function _setDepsForTests(overrides = {}) {
   const input = overrides && typeof overrides === 'object' ? overrides : {};
   _deps = {

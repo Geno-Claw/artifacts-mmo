@@ -55,6 +55,7 @@ console.log('Test: BossFight canRun skips order-driven routine when no enabled b
     const routine = new BossFightRoutine({
       type: 'bossFight',
       orderDriven: true,
+      minTeamSize: 2,
       bosses: [{ code: 'king_slime', enabled: true, minWinrate: 80 }],
     });
 
@@ -95,6 +96,7 @@ console.log('Test: BossFight canRun stays runnable when order-driven boss has a 
     const routine = new BossFightRoutine({
       type: 'bossFight',
       orderDriven: true,
+      minTeamSize: 2,
       bosses: [{ code: 'king_slime', enabled: true, minWinrate: 80 }],
     });
 

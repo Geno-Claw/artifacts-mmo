@@ -8,7 +8,7 @@ import * as log from './log.mjs';
 import { toPositiveInt } from './utils.mjs';
 import { abortAllCooldowns, resetCooldownAbort } from './api.mjs';
 import { initialize as initGameData } from './services/game-data.mjs';
-import { initialize as initInventoryManager } from './services/inventory-manager.mjs';
+import { initialize as initInventoryManager, getBankItems, getBankRevision } from './services/inventory-manager.mjs';
 import { loadSellRules } from './services/ge-seller.mjs';
 import {
   clearOrderBoard,
@@ -49,6 +49,11 @@ import { loadCombatConfig } from './services/combat-config.mjs';
 import { normalizeConfig, hashCanonicalJson, saveConfigAtomically } from './services/config-store.mjs';
 import { runWithLogContext } from './log-context.mjs';
 import { extractAccountLogDetail } from './action-log.mjs';
+import {
+  initialize as initGearProxy,
+  pushBankState,
+  shutdown as shutdownGearProxy,
+} from './services/gear-optimizer-proxy.mjs';
 
 const runtimeLog = log.createLogger({ scope: 'runtime' });
 
@@ -441,6 +446,15 @@ export class RuntimeManager {
     }
 
     try {
+      await shutdownGearProxy();
+    } catch (err) {
+      runtimeLog.warn(`[Runtime] Gear optimizer proxy shutdown failed: ${err?.message || String(err)}`, {
+        event: 'runtime.cleanup.gear_proxy_shutdown_failed',
+        error: err,
+      });
+    }
+
+    try {
       await flushGearState();
     } catch (err) {
       runtimeLog.warn(`[Runtime] Could not flush gear-state during cleanup: ${err?.message || String(err)}`, {
@@ -574,6 +588,13 @@ export class RuntimeManager {
         ...getNpcEventCodes(),
       ];
       await loadNpcCatalogs(npcCodes);
+
+      // Initialize gear optimizer worker with all static game data
+      await initGearProxy();
+
+      // Push initial bank state so the worker has accurate data from the start
+      const bankItems = await getBankItems();
+      pushBankState([...bankItems.entries()], getBankRevision());
 
       loadNpcBuyList(config);
       loadNpcSellList(config);

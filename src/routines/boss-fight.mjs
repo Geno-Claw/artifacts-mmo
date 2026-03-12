@@ -16,7 +16,7 @@ import * as log from '../log.mjs';
 import * as gameData from '../services/game-data.mjs';
 import * as bossRally from '../services/boss-rally.mjs';
 import { getOrderBoardSnapshot } from '../services/order-board.mjs';
-import { optimizeForMonster, optimizeForRole } from '../services/gear-optimizer.mjs';
+import { optimizeForMonster, optimizeForRole } from '../services/gear-optimizer-proxy.mjs';
 import { applyGearLoadout } from '../services/gear-loadout.mjs';
 import { findBestTeam, buildFakeCharacterWithLoadout, combinations } from '../services/event-simulation.mjs';
 import { scoreHealingItems, restUntil } from '../services/food-manager.mjs';

@@ -6,7 +6,7 @@
 import * as log from '../log.mjs';
 import * as gameData from './game-data.mjs';
 import { isCombatResultViable } from './combat-simulator.mjs';
-import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer.mjs';
+import { findBestCombatTarget, optimizeForMonster } from './gear-optimizer-proxy.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
 import { selectBestAchievement } from '../routines/skill-rotation/achievements.mjs';
 

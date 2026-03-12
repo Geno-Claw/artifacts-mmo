@@ -11,7 +11,7 @@ import * as log from '../../log.mjs';
 import * as gameData from '../../services/game-data.mjs';
 import { getCachedAccountDetails, getCachedAccountAchievements } from '../../services/account-cache.mjs';
 import { isCombatResultViable } from '../../services/combat-simulator.mjs';
-import { optimizeForMonster } from '../../services/gear-optimizer.mjs';
+import { optimizeForMonster } from '../../services/gear-optimizer-proxy.mjs';
 import { equipForCombat, equipForGathering } from '../../services/gear-loadout.mjs';
 import { getFightReadiness } from '../../services/food-manager.mjs';
 import { prepareCombatPotions } from '../../services/potion-manager.mjs';
