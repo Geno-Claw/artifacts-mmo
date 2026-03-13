@@ -450,6 +450,10 @@ export class Scheduler {
         if (!slept) break;
       }
 
+      // Clear routine keep-codes between routines to prevent deadlocks
+      // where keep-coded items fill inventory and block all routines.
+      this.ctx.clearRoutineKeepCodes();
+
       const slept = await this._sleep(1_000);
       if (!slept) break;
 
