@@ -75,8 +75,9 @@ export class DepositBankRoutine extends BaseRoutine {
     const cap = ctx.inventoryCapacity();
     if (cap <= 0) return false;
 
-    // Always deposit if unique slots are full (no room for new item types)
+    // Always deposit if inventory is full by any metric (unique slots OR total qty cap)
     if (ctx.inventoryEmptySlots() <= 0) return true;
+    if (ctx.inventoryFull()) return true;
 
     if (this.threshold <= 0) return depositableCount > 0;
     return (depositableCount / cap) >= this.threshold;
