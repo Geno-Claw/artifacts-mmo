@@ -363,10 +363,6 @@ export function globalCount(code) {
   return bankCount(code) + inventoryCount(code) + equippedCount(code);
 }
 
-export function nonEquippedCount(code) {
-  return bankCount(code) + inventoryCount(code);
-}
-
 export function getCharacterLevelsSnapshot() {
   const out = {};
   for (const [name, level] of charLevels.entries()) {

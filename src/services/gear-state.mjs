@@ -7,7 +7,7 @@ import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { optimizeForMonster } from './gear-optimizer.mjs';
 import { createOrMergeOrder } from './order-board.mjs';
-import { getBankRevision, globalCount, nonEquippedCount } from './inventory-manager.mjs';
+import { getBankRevision, globalCount } from './inventory-manager.mjs';
 import { getBestToolForSkillAtLevel, resolveItemOrderSource } from './tool-policy.mjs';
 import { computeDesiredPotionsForMonsters } from './potion-manager.mjs';
 import {
@@ -55,7 +55,6 @@ let _deps = {
   createOrMergeOrderFn: createOrMergeOrder,
   getBankRevisionFn: getBankRevision,
   globalCountFn: globalCount,
-  nonEquippedCountFn: nonEquippedCount,
   resolveItemOrderSourceFn: resolveItemOrderSource,
   computeDesiredPotionsFn: computeDesiredPotionsForMonsters,
 };
@@ -431,35 +430,9 @@ export async function refreshGearState(opts = {}) {
     for (const code of req.keys()) allCodes.add(code);
   }
 
-  // Shared pool = bank + inventory only — equipped items are pre-assigned to their owner
   const availability = new Map();
   for (const code of allCodes) {
-    availability.set(code, Math.max(0, toPositiveInt(_deps.nonEquippedCountFn(code))));
-  }
-
-  // Pre-assign each character's own equipped items that match their selected needs.
-  // This prevents character A from phantom-claiming items equipped on character B.
-  const preAssigned = new Map();
-  for (const name of characterOrder) {
-    const selected = selectedByChar.get(name) || new Map();
-    const ctx = contexts.get(name) || null;
-    const pa = new Map();
-    if (ctx) {
-      const eqCounts = _equipmentCountsOnCharacter(ctx);
-      for (const [code, qty] of selected.entries()) {
-        const eq = eqCounts.get(code) || 0;
-        if (eq > 0) pa.set(code, Math.min(toPositiveInt(qty), eq));
-      }
-    }
-    preAssigned.set(name, pa);
-  }
-
-  // Reduce pool by pre-assigned amounts so equipped items aren't double-counted
-  for (const pa of preAssigned.values()) {
-    for (const [code, qty] of pa.entries()) {
-      const cur = availability.get(code) || 0;
-      availability.set(code, Math.max(0, cur - qty));
-    }
+    availability.set(code, Math.max(0, toPositiveInt(_deps.globalCountFn(code))));
   }
 
   const atMs = nowMs();
@@ -470,23 +443,39 @@ export async function refreshGearState(opts = {}) {
     const required = requiredByChar.get(name) || new Map();
     const ctx = contexts.get(name) || null;
     const previousAvailable = previousAvailableByChar.get(name) || new Map();
-    const pa = preAssigned.get(name) || new Map();
 
-    const assigned = new Map(pa);
+    const assigned = new Map();
     const desired = new Map();
 
     for (const [code, qty] of selected.entries()) {
-      const need = toPositiveInt(qty) - (pa.get(code) || 0);
+      const need = toPositiveInt(qty);
       if (need <= 0) continue;
 
       const available = availability.get(code) || 0;
       const assignQty = Math.min(need, available);
-      if (assignQty > 0) assigned.set(code, (assigned.get(code) || 0) + assignQty);
+      if (assignQty > 0) assigned.set(code, assignQty);
 
       const missing = need - assignQty;
       if (missing > 0) desired.set(code, missing);
 
       availability.set(code, Math.max(0, available - assignQty));
+    }
+
+    // Filter out desired items the character already has equipped —
+    // no point ordering duplicates of what you're already wearing.
+    // But only when the optimizer's total selected qty <= equipped qty,
+    // meaning the character doesn't genuinely need extras (e.g. 2 ring slots).
+    if (ctx) {
+      const eqCounts = _equipmentCountsOnCharacter(ctx);
+      for (const [code, desiredQty] of [...desired.entries()]) {
+        const equippedQty = eqCounts.get(code) || 0;
+        if (equippedQty <= 0) continue;
+        const selectedQty = selected.get(code) || 0;
+        if (selectedQty > equippedQty) continue; // genuinely needs more than equipped
+        const reducedQty = desiredQty - equippedQty;
+        if (reducedQty <= 0) desired.delete(code);
+        else desired.set(code, reducedQty);
+      }
     }
 
     const {
@@ -770,7 +759,6 @@ export function _resetGearStateForTests() {
     createOrMergeOrderFn: createOrMergeOrder,
     getBankRevisionFn: getBankRevision,
     globalCountFn: globalCount,
-    nonEquippedCountFn: nonEquippedCount,
     resolveItemOrderSourceFn: resolveItemOrderSource,
     computeDesiredPotionsFn: computeDesiredPotionsForMonsters,
   };
@@ -782,9 +770,4 @@ export function _setDepsForTests(overrides = {}) {
     ..._deps,
     ...input,
   };
-  // Default nonEquippedCountFn to globalCountFn when not explicitly provided —
-  // correct for single-character tests since pre-assignment handles the deduction.
-  if (input.globalCountFn && !input.nonEquippedCountFn) {
-    _deps.nonEquippedCountFn = _deps.globalCountFn;
-  }
 }
