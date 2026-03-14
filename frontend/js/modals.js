@@ -530,6 +530,9 @@ function renderGearStateModal(detail) {
   }
 
   const blacklist = Array.isArray(detail.blacklist) ? detail.blacklist : [];
+  const pendingCode = safeText(modalState.gearBlacklistPendingCode, '');
+  const pendingAction = safeText(modalState.gearBlacklistPendingAction, '');
+  const busy = !!modalState.gearBlacklistBusy;
   const desired = detail.desired && typeof detail.desired === 'object' ? Object.entries(detail.desired) : [];
   const assigned = detail.assigned && typeof detail.assigned === 'object' ? Object.entries(detail.assigned) : [];
   const bestTarget = safeText(detail.bestTarget, 'none');
@@ -557,7 +560,12 @@ function renderGearStateModal(detail) {
     const rows = blacklist.sort().map((code) => `
       <div class="modal-list-item modal-list-item--two">
         <span class="modal-list-main">${escapeHtml(code)}</span>
-        <button class="action-btn action-btn--sm action-btn--danger" type="button" data-gear-blacklist-remove="${escapeHtml(code)}">REMOVE</button>
+        <button
+          class="action-btn action-btn--sm action-btn--danger"
+          type="button"
+          data-gear-blacklist-remove="${escapeHtml(code)}"
+          ${busy ? 'disabled' : ''}
+        >${pendingCode === code && pendingAction === 'remove' ? 'REMOVING...' : 'REMOVE'}</button>
       </div>
     `).join('');
     blacklistHtml = `
@@ -581,13 +589,14 @@ function renderGearStateModal(detail) {
   if (desiredFiltered.length > 0) {
     const rows = desiredFiltered.map(([code, qty]) => {
       const isBlacklisted = blacklist.includes(code);
+      const addPending = pendingCode === code && pendingAction === 'add';
       return `
         <div class="modal-list-item modal-list-item--two">
           <span class="modal-list-main">${escapeHtml(code)}</span>
           <span class="modal-list-tag">x${formatNumberish(qty, '0')}</span>
           ${isBlacklisted
             ? '<span class="modal-list-tag modal-list-tag--muted">BLOCKED</span>'
-            : `<button class="action-btn action-btn--sm" type="button" data-gear-blacklist-add="${escapeHtml(code)}">BLACKLIST</button>`
+            : `<button class="action-btn action-btn--sm" type="button" data-gear-blacklist-add="${escapeHtml(code)}" ${busy ? 'disabled' : ''}>${addPending ? 'BLACKLISTING...' : 'BLACKLIST'}</button>`
           }
         </div>
       `;

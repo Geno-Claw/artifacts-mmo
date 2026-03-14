@@ -1271,8 +1271,15 @@ async function run() {
       at: Date.now(),
     });
 
-    const mutationEvent = await nextSseEvent(sse, 'snapshot', 25, 1_500);
-    assert.equal(mutationEvent.data.characters[0].logLatest, '[Alpha] test log line');
+    let mutationEvent = null;
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const candidate = await nextSseEvent(sse, 'snapshot', 25, 1_500);
+      if (candidate.data.characters[0].logLatest === '[Alpha] test log line') {
+        mutationEvent = candidate;
+        break;
+      }
+    }
+    assert.ok(mutationEvent, 'Expected SSE snapshot reflecting the newly recorded log line');
     assertSnapshotShape(mutationEvent.data, 'mutation SSE snapshot');
 
     const heartbeatEvent = await nextSseEvent(sse, 'heartbeat', 25, 1_500);

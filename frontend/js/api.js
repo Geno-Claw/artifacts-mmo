@@ -11,6 +11,10 @@ function abortModalFetch() {
 }
 
 async function fetchCharacterDetail(name) {
+  return fetchCharacterDetailWithOptions(name, {});
+}
+
+async function fetchCharacterDetailWithOptions(name, { preserveContent = false } = {}) {
   if (!isModalOpen() || modalState.activeCharacterName !== name) return;
 
   abortModalFetch();
@@ -18,9 +22,11 @@ async function fetchCharacterDetail(name) {
   const seq = modalState.fetchSeq + 1;
   modalState.fetchSeq = seq;
   modalState.fetchController = controller;
-  modalState.status = 'loading';
-  modalState.errorText = '';
-  renderModal();
+  if (!preserveContent) {
+    modalState.status = 'loading';
+    modalState.errorText = '';
+    renderModal();
+  }
 
   try {
     const urlSuffix = modalState.activeKind === 'gear' ? '/gear-state' : '';
@@ -52,8 +58,10 @@ async function fetchCharacterDetail(name) {
     if (!isModalOpen() || modalState.fetchSeq !== seq || modalState.activeCharacterName !== name) {
       return;
     }
-    modalState.status = 'error';
-    modalState.errorText = safeText(err?.message, 'Failed to fetch character detail');
+    if (!preserveContent) {
+      modalState.status = 'error';
+      modalState.errorText = safeText(err?.message, 'Failed to fetch character detail');
+    }
   } finally {
     if (modalState.fetchController === controller) {
       modalState.fetchController = null;
@@ -62,25 +70,80 @@ async function fetchCharacterDetail(name) {
   }
 }
 
+function getGearBlacklistSnapshot(detail = modalState.detail) {
+  const blacklist = Array.isArray(detail?.blacklist) ? detail.blacklist : [];
+  return [...blacklist];
+}
+
+function buildNextGearBlacklist(blacklist, action, itemCode) {
+  const current = Array.isArray(blacklist) ? blacklist : [];
+  if (action === 'add') {
+    return current.includes(itemCode) ? [...current] : [...current, itemCode];
+  }
+  if (action === 'remove') {
+    return current.filter((code) => code !== itemCode);
+  }
+  return [...current];
+}
+
+function applyGearBlacklistToModal(name, blacklist) {
+  if (
+    !isModalOpen()
+    || modalState.activeKind !== 'gear'
+    || modalState.activeCharacterName !== name
+    || modalState.status !== 'ready'
+    || !modalState.detail
+  ) {
+    return;
+  }
+  modalState.detail = {
+    ...modalState.detail,
+    blacklist: [...blacklist].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
 async function postGearBlacklist(name, action, itemCode) {
+  if (!name || !itemCode || modalState.gearBlacklistBusy) return;
+
+  const previousBlacklist = getGearBlacklistSnapshot();
+  const optimisticBlacklist = buildNextGearBlacklist(previousBlacklist, action, itemCode);
+  modalState.gearBlacklistBusy = true;
+  modalState.gearBlacklistPendingCode = itemCode;
+  modalState.gearBlacklistPendingAction = action;
+  modalState.errorText = '';
+  applyGearBlacklistToModal(name, optimisticBlacklist);
+  renderModal();
+
   try {
     const res = await fetch(`${window.__BASE_PATH__||''}/api/ui/character/${encodeURIComponent(name)}/gear-blacklist`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, itemCode }),
     });
+    const payload = await res.json().catch(() => null);
     if (!res.ok) {
-      const payload = await res.json().catch(() => null);
       const detail = safeText(payload?.detail, `HTTP ${res.status}`);
       throw new Error(detail);
     }
-    // Re-fetch gear state to update the modal
-    fetchCharacterDetail(name);
+
+    applyGearBlacklistToModal(name, Array.isArray(payload?.blacklist) ? payload.blacklist : optimisticBlacklist);
+    modalState.errorText = '';
   } catch (err) {
     if (err?.name === 'AbortError') return;
+    applyGearBlacklistToModal(name, previousBlacklist);
     modalState.errorText = safeText(err?.message, 'Failed to update blacklist');
+  } finally {
+    modalState.gearBlacklistBusy = false;
+    modalState.gearBlacklistPendingCode = '';
+    modalState.gearBlacklistPendingAction = '';
     renderModal();
   }
+
+  if (!isModalOpen() || modalState.activeKind !== 'gear' || modalState.activeCharacterName !== name) {
+    return;
+  }
+
+  fetchCharacterDetailWithOptions(name, { preserveContent: true });
 }
 
 function buildApiErrorMessage(response, payload, prefix) {
@@ -647,6 +710,9 @@ function openCharacterModal(name, kind) {
   modalState.configRestartReasons = [];
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
+  modalState.gearBlacklistBusy = false;
+  modalState.gearBlacklistPendingCode = '';
+  modalState.gearBlacklistPendingAction = '';
   modalState.configBusy = false;
   setConfigResultBanner('', '');
 
@@ -692,6 +758,9 @@ function openConfigModal({ focusCharacterName = '' } = {}) {
   modalState.configRestartReasons = [];
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
+  modalState.gearBlacklistBusy = false;
+  modalState.gearBlacklistPendingCode = '';
+  modalState.gearBlacklistPendingAction = '';
   modalState.configBusy = false;
   setConfigResultBanner('', '');
 
@@ -836,6 +905,9 @@ function closeCharacterModal({ restoreFocus = true } = {}) {
   modalState.configRestartReasons = [];
   modalState.configIfMatchHash = '';
   modalState.configValidationErrors = [];
+  modalState.gearBlacklistBusy = false;
+  modalState.gearBlacklistPendingCode = '';
+  modalState.gearBlacklistPendingAction = '';
   modalState.configBusy = false;
   setConfigResultBanner('', '');
 
