@@ -382,9 +382,28 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
     return { ok: false, reason: 'insufficient_gather_skill', deficits: planCheck.deficits };
   }
 
+  // Prune plan steps that are unnecessary because bank+inventory already
+  // has enough of the target item. This avoids false negatives where e.g.
+  // we have magical_cure in bank but the plan tries to buy it via NPC
+  // using tasks_coin (which we don't have). Also prune currency dependencies
+  // of pruned npc_trade steps.
+  const prunedItems = new Set();
+  for (const step of plan) {
+    if (step.type !== 'npc_trade' && step.type !== 'fight') continue;
+    const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+    if (have >= step.quantity) {
+      prunedItems.add(step.itemCode);
+      // If this is an npc_trade, also prune its currency dependency
+      if (step.type === 'npc_trade' && step.currency && step.currency !== 'gold') {
+        prunedItems.add(step.currency);
+      }
+    }
+  }
+
   // Check npc_trade steps — ensure currency is obtainable
   for (const step of plan) {
     if (step.type !== 'npc_trade') continue;
+    if (prunedItems.has(step.itemCode)) continue;
     const currencyNeeded = step.quantity * step.buyPrice;
     const currencyHave = currencyCountWithBank(ctx, bankItems, step.currency);
     // If we don't have enough currency, check if the plan includes a gather/fight step for it
@@ -403,6 +422,7 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
   for (const step of plan) {
     if (step.type !== 'bank') continue;
     if (step.itemCode === 'gold') continue;
+    if (prunedItems.has(step.itemCode)) continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
     if (have < step.quantity) {
       return { ok: false, reason: `missing_bank_dependency:${step.itemCode}` };
@@ -477,9 +497,23 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
     };
   }
 
+  // Prune steps for items already in bank (same logic as craft orders)
+  const prunedItems = new Set();
+  for (const step of plan) {
+    if (step.type !== 'npc_trade' && step.type !== 'fight') continue;
+    const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
+    if (have >= step.quantity) {
+      prunedItems.add(step.itemCode);
+      if (step.type === 'npc_trade' && step.currency && step.currency !== 'gold') {
+        prunedItems.add(step.currency);
+      }
+    }
+  }
+
   for (const step of plan) {
     if (step.type !== 'bank') continue;
     if (step.itemCode === 'gold') continue;
+    if (prunedItems.has(step.itemCode)) continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
     if (have < step.quantity) {
       return { ok: false, reason: `missing_bank_dependency:${step.itemCode}`, plan, budget };
@@ -488,6 +522,7 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
 
   for (const step of plan) {
     if (step.type !== 'npc_trade') continue;
+    if (prunedItems.has(step.itemCode)) continue;
     const currencyNeeded = step.quantity * step.buyPrice;
     const currencyHave = currencyCountWithBank(ctx, bankItems, step.currency);
     if (currencyHave >= currencyNeeded) continue;
