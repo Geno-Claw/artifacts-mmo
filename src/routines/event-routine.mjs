@@ -16,7 +16,7 @@ import * as eventManager from '../services/event-manager.mjs';
 import { canCharacterBeatEvent } from '../services/event-simulation.mjs';
 import { equipForCombat, equipForGathering } from '../services/gear-loadout.mjs';
 import { moveTo, fightOnce, gatherOnce, parseFightResult, NoPathError } from '../helpers.mjs';
-import { getFightReadiness } from '../services/food-manager.mjs';
+import { getFightReadiness, withdrawFoodForFights } from '../services/food-manager.mjs';
 import { prepareCombatPotions } from '../services/potion-manager.mjs';
 import { getItemsForNpc } from '../services/npc-buy-config.mjs';
 import { hasNpcSellItem } from '../services/npc-sell-config.mjs';
@@ -184,6 +184,11 @@ export class EventRoutine extends BaseRoutine {
       }
 
       await prepareCombatPotions(ctx, monsterCode);
+
+      // Withdraw food for event fights (gear swap may have deposited all food)
+      const eventTimeRemaining = eventManager.getTimeRemaining(target.code);
+      const estimatedFights = Math.max(10, Math.min(100, Math.ceil((eventTimeRemaining || 600_000) / 60_000)));
+      await withdrawFoodForFights(ctx, monsterCode, estimatedFights);
 
       // Check again before travel
       if (!eventManager.isEventActive(target.code)) {
