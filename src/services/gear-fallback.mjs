@@ -105,6 +105,7 @@ function computeMissingByCategory(ctx, desired, deps) {
  * @param {object} deps — injectable service functions
  * @param {Function} deps.getItemFn — item lookup
  * @param {Function} deps.globalCountFn — global item count
+ * @param {Set<string>} [deps.blacklistSet] — item codes to exclude as candidates
  * @returns {{ fallbackClaims: Map, missingByCategory: Map, addedByCategory: Map }}
  */
 export function computeFallbackClaims(ctx, desired, assigned, previousAvailable = new Map(), sharedAvailability = null, deps) {
@@ -128,11 +129,13 @@ export function computeFallbackClaims(ctx, desired, assigned, previousAvailable 
   const char = ctx.get();
   const eqCounts = equipmentCountsOnCharacter(ctx);
   const candidatesByCategory = new Map();
+  const blacklist = deps?.blacklistSet instanceof Set ? deps.blacklistSet : new Set();
 
   // Keep currently-equipped items first so we never discard what the character can wear now.
   for (const slot of FALLBACK_EQUIPPED_SLOTS) {
     const code = `${char[slot.key] || ''}`.trim();
     if (!code || code === 'none') continue;
+    if (blacklist.has(code)) continue;
 
     const qty = slot.quantityKey
       ? Math.max(1, toPositiveInt(char[slot.quantityKey], 1))
@@ -159,6 +162,7 @@ export function computeFallbackClaims(ctx, desired, assigned, previousAvailable 
     const code = `${slot?.code || ''}`.trim();
     const qty = toPositiveInt(slot?.quantity);
     if (!code || qty <= 0) continue;
+    if (blacklist.has(code)) continue;
 
     const item = deps.getItemFn(code);
     const category = categoryFromItem(item);
@@ -179,6 +183,7 @@ export function computeFallbackClaims(ctx, desired, assigned, previousAvailable 
   for (const [code, rawQty] of previousAvailable.entries()) {
     const prevQty = toPositiveInt(rawQty);
     if (!code || prevQty <= 0) continue;
+    if (blacklist.has(code)) continue;
 
     const item = deps.getItemFn(code);
     const category = categoryFromItem(item);

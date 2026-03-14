@@ -549,6 +549,50 @@ export function recordDeposits({ charName, items } = {}) {
   return changed;
 }
 
+export function retractContribution(requesterName, recipeCode) {
+  if (!initialized) return [];
+
+  const name = `${requesterName || ''}`.trim();
+  const recipe = `${recipeCode || ''}`.trim();
+  if (!name || !recipe) return [];
+
+  const contributionKey = normalizeContributionKey(name, recipe);
+  const atMs = nowMs();
+  const affected = [];
+
+  for (const order of orders.values()) {
+    if (order.status === 'fulfilled') continue;
+
+    const existing = Number(order.contributions[contributionKey]) || 0;
+    if (existing <= 0) continue;
+
+    delete order.contributions[contributionKey];
+    order.requestedQty = Math.max(0, order.requestedQty - existing);
+    order.remainingQty = Math.max(0, order.remainingQty - existing);
+    order.updatedAtMs = atMs;
+
+    // Remove requester if no other contributions from them remain
+    const hasOtherContrib = Object.keys(order.contributions).some(
+      key => key.startsWith(`${name}::`) && (Number(order.contributions[key]) || 0) > 0,
+    );
+    if (!hasOtherContrib) {
+      order.requesters = order.requesters.filter(r => r !== name);
+    }
+
+    order.recipes = order.recipes.filter(r => r !== recipe);
+    ensureStatus(order, atMs);
+    affected.push(order.id);
+  }
+
+  if (affected.length > 0) {
+    markUpdated(atMs);
+    schedulePersist();
+    emitChange();
+  }
+
+  return affected;
+}
+
 export function getOrderBoardSnapshot() {
   const atMs = nowMs();
   const list = getSortedOrders(atMs).map(cloneOrder);

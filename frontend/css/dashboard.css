@@ -867,6 +867,20 @@ body::before {
   cursor: not-allowed;
 }
 
+.action-btn--sm {
+  font-size: 5px;
+  padding: 3px 6px;
+  margin: 0;
+  transform: none;
+}
+
+.action-btn--danger {
+  background: var(--sumi-dark);
+}
+.action-btn--danger:hover {
+  background: var(--vermillion-dark);
+}
+
 /* ============================================================
    MODAL FRAMEWORK — character details
    ============================================================ */
@@ -1076,6 +1090,10 @@ body::before {
 .modal-list-slot {
   color: var(--ink-faint);
   font-size: 6px;
+}
+
+.modal-list-tag--muted {
+  opacity: 0.5;
 }
 
 .modal-log-line {

@@ -6,7 +6,7 @@ import * as log from '../log.mjs';
 import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
 import { optimizeForMonster } from './gear-optimizer.mjs';
-import { createOrMergeOrder } from './order-board.mjs';
+import { createOrMergeOrder, retractContribution } from './order-board.mjs';
 import { getBankRevision, globalCount, nonEquippedCount } from './inventory-manager.mjs';
 import { getBestToolForSkillAtLevel, resolveItemOrderSource } from './tool-policy.mjs';
 import { computeDesiredPotionsForMonsters } from './potion-manager.mjs';
@@ -31,6 +31,7 @@ let characterOrder = [];
 let characterConfig = new Map(); // name -> { createOrders, potionEnabled, potionTargetQty }
 let contexts = new Map(); // name -> CharacterContext
 let stateByChar = new Map(); // name -> state row
+let blacklistByChar = new Map(); // name -> Set<string> of blacklisted item codes
 
 let lastBankRevision = -1;
 let lastLevelSnapshot = new Map();
@@ -53,6 +54,7 @@ let _deps = {
   optimizeForMonsterFn: optimizeForMonster,
   getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
   createOrMergeOrderFn: createOrMergeOrder,
+  retractContributionFn: retractContribution,
   getBankRevisionFn: getBankRevision,
   globalCountFn: globalCount,
   nonEquippedCountFn: nonEquippedCount,
@@ -80,7 +82,7 @@ function objectToMap(value) {
   return map;
 }
 
-function cloneStateRow(row) {
+function cloneStateRow(row, name) {
   const available = row.available || row.owned || new Map();
   const assigned = row.assigned || new Map();
   return {
@@ -94,6 +96,7 @@ function cloneStateRow(row) {
     levelSnapshot: toPositiveInt(row.levelSnapshot),
     bankRevisionSnapshot: toPositiveInt(row.bankRevisionSnapshot),
     updatedAtMs: toPositiveInt(row.updatedAtMs),
+    blacklist: [...(name ? (blacklistByChar.get(name) || []) : [])],
   };
 }
 
@@ -172,7 +175,7 @@ function queuePersistWrite() {
       for (const name of characterOrder) {
         const row = stateByChar.get(name);
         if (!row) continue;
-        payload.characters[name] = cloneStateRow(row);
+        payload.characters[name] = cloneStateRow(row, name);
       }
 
       const target = gearStatePath || DEFAULT_GEAR_STATE_PATH;
@@ -210,6 +213,11 @@ function normalizeLoadedCharacterState(name, raw = {}) {
   };
 
   stateByChar.set(name, row);
+
+  const bl = Array.isArray(raw.blacklist)
+    ? new Set(raw.blacklist.map(v => `${v}`.trim()).filter(Boolean))
+    : (blacklistByChar.get(name) || new Set());
+  blacklistByChar.set(name, bl);
 }
 
 async function loadPersistedState(targetPath, atMs) {
@@ -253,6 +261,7 @@ async function loadPersistedState(targetPath, atMs) {
         bankRevisionSnapshot: 0,
         updatedAtMs: atMs,
       });
+      if (!blacklistByChar.has(name)) blacklistByChar.set(name, new Set());
     }
 
     lastBankRevision = -1;
@@ -365,6 +374,7 @@ export async function initializeGearState(opts = {}) {
         updatedAtMs: atMs,
       });
     }
+    if (!blacklistByChar.has(name)) blacklistByChar.set(name, new Set());
   }
 
   markUpdated(atMs);
@@ -424,6 +434,15 @@ export async function refreshGearState(opts = {}) {
     selectedMonstersByChar.set(name, result.selectedMonsters);
     bestTargetByChar.set(name, result.bestTarget);
     levelByChar.set(name, result.level);
+
+    // Filter out blacklisted items before allocation
+    const blacklist = blacklistByChar.get(name);
+    if (blacklist?.size > 0) {
+      for (const code of blacklist) {
+        result.selected.delete(code);
+        result.required.delete(code);
+      }
+    }
   }
 
   const allCodes = new Set();
@@ -496,6 +515,7 @@ export async function refreshGearState(opts = {}) {
     } = _computeFallbackClaims(ctx, desired, assigned, previousAvailable, availability, {
       getItemFn: (code) => _deps.gameDataSvc.getItem(code),
       globalCountFn: _deps.globalCountFn,
+      blacklistSet: blacklistByChar.get(name) || new Set(),
     });
 
     const available = new Map(assigned);
@@ -538,7 +558,7 @@ export function getGearStateSnapshot() {
   for (const name of characterOrder) {
     const row = stateByChar.get(name);
     if (!row) continue;
-    characters[name] = cloneStateRow(row);
+    characters[name] = cloneStateRow(row, name);
   }
 
   return {
@@ -556,7 +576,61 @@ export function getCharacterGearState(name) {
   if (!name) return null;
   const row = stateByChar.get(name);
   if (!row) return null;
-  return cloneStateRow(row);
+  return cloneStateRow(row, name);
+}
+
+export function getBlacklist(name) {
+  if (!name) return [];
+  return [...(blacklistByChar.get(name) || [])];
+}
+
+export function addToBlacklist(name, itemCode) {
+  const charName = `${name || ''}`.trim();
+  const code = `${itemCode || ''}`.trim();
+  if (!charName || !code) return { added: false };
+
+  let set = blacklistByChar.get(charName);
+  if (!set) {
+    set = new Set();
+    blacklistByChar.set(charName, set);
+  }
+  set.add(code);
+
+  // Remove from current gear-state maps
+  const row = stateByChar.get(charName);
+  if (row) {
+    row.desired.delete(code);
+    row.assigned.delete(code);
+    row.available.delete(code);
+    row.required.delete(code);
+  }
+
+  // Retract any order-board contributions for this item
+  try {
+    _deps.retractContributionFn(charName, `gear_state:${charName}:${code}`);
+  } catch (err) {
+    log.warn(`[GearState] retractContribution failed for ${charName}/${code}: ${err?.message || String(err)}`);
+  }
+
+  markUpdated();
+  schedulePersist();
+  log.info(`[GearState] Blacklisted ${code} for ${charName}`);
+  return { added: true, itemCode: code };
+}
+
+export function removeFromBlacklist(name, itemCode) {
+  const charName = `${name || ''}`.trim();
+  const code = `${itemCode || ''}`.trim();
+  if (!charName || !code) return { removed: false };
+
+  const set = blacklistByChar.get(charName);
+  if (!set || !set.has(code)) return { removed: false };
+
+  set.delete(code);
+  markUpdated();
+  schedulePersist();
+  log.info(`[GearState] Un-blacklisted ${code} for ${charName}`);
+  return { removed: true, itemCode: code };
 }
 
 export function getOwnedMap(name) {
@@ -655,11 +729,13 @@ export function publishDesiredOrdersForCharacter(name) {
   const row = stateByChar.get(name);
   if (!row || row.desired.size === 0) return 0;
 
+  const blacklist = blacklistByChar.get(name) || new Set();
   let created = 0;
 
   for (const [itemCode, qty] of row.desired.entries()) {
     const missingQty = toPositiveInt(qty);
     if (missingQty <= 0) continue;
+    if (blacklist.has(itemCode)) continue;
     const item = _deps.gameDataSvc.getItem(itemCode);
     if (_isToolItem(item)) continue;
 
@@ -751,6 +827,7 @@ export function _resetGearStateForTests() {
   characterConfig = new Map();
   contexts = new Map();
   stateByChar = new Map();
+  blacklistByChar = new Map();
 
   lastBankRevision = -1;
   lastLevelSnapshot = new Map();
@@ -768,6 +845,7 @@ export function _resetGearStateForTests() {
     optimizeForMonsterFn: optimizeForMonster,
     getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
     createOrMergeOrderFn: createOrMergeOrder,
+    retractContributionFn: retractContribution,
     getBankRevisionFn: getBankRevision,
     globalCountFn: globalCount,
     nonEquippedCountFn: nonEquippedCount,

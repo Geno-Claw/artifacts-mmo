@@ -28,9 +28,14 @@ import {
 } from './services/ui-state.mjs';
 import { clearOrderBoard, getOrderBoardSnapshot, subscribeOrderBoardEvents } from './services/order-board.mjs';
 import {
+  addToBlacklist,
   clearGearState,
+  getBlacklist,
+  getCharacterGearState,
+  publishDesiredOrdersForCharacter,
   publishDesiredOrdersForTrackedCharacters,
   refreshGearState,
+  removeFromBlacklist,
 } from './services/gear-state.mjs';
 import { getBankSummary } from './services/inventory-manager.mjs';
 import { getNpcEventCodes } from './services/event-manager.mjs';
@@ -1344,6 +1349,98 @@ export async function startDashboardServer({
           return;
         }
         sendJson(res, 200, payload);
+        return;
+      }
+
+      const gearStateMatch = pathname.match(/^\/api\/ui\/character\/([^/]+)\/gear-state$/);
+      if (gearStateMatch) {
+        if (method !== 'GET') {
+          sendError(res, 405, 'method_not_allowed', 'Only GET is allowed', 'method_not_allowed');
+          return;
+        }
+        let decodedName = '';
+        try {
+          decodedName = decodeURIComponent(gearStateMatch[1]).trim();
+        } catch {
+          sendError(res, 400, 'bad_request', 'Invalid character name encoding', 'bad_character_name');
+          return;
+        }
+        if (!decodedName) {
+          sendError(res, 400, 'bad_request', 'Character name is required', 'character_name_required');
+          return;
+        }
+
+        const gearState = getCharacterGearState(decodedName);
+        if (!gearState) {
+          sendError(res, 404, 'character_not_found', `Unknown character "${decodedName}"`);
+          return;
+        }
+
+        sendJson(res, 200, {
+          name: decodedName,
+          ...gearState,
+          blacklist: getBlacklist(decodedName),
+        });
+        return;
+      }
+
+      const gearBlacklistMatch = pathname.match(/^\/api\/ui\/character\/([^/]+)\/gear-blacklist$/);
+      if (gearBlacklistMatch) {
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+        let decodedName = '';
+        try {
+          decodedName = decodeURIComponent(gearBlacklistMatch[1]).trim();
+        } catch {
+          sendError(res, 400, 'bad_request', 'Invalid character name encoding', 'bad_character_name');
+          return;
+        }
+        if (!decodedName) {
+          sendError(res, 400, 'bad_request', 'Character name is required', 'character_name_required');
+          return;
+        }
+
+        try {
+          const body = await readJsonBody(req);
+          const action = `${body?.action || ''}`.trim();
+          const itemCode = `${body?.itemCode || ''}`.trim();
+
+          if (!action || !itemCode) {
+            sendError(res, 400, 'bad_request', 'action and itemCode are required', 'missing_fields');
+            return;
+          }
+
+          let result;
+          if (action === 'add') {
+            result = addToBlacklist(decodedName, itemCode);
+            if (isRuntimeActive(runtimeManager)) {
+              await refreshGearState({ force: true });
+            }
+            publishDesiredOrdersForCharacter(decodedName);
+          } else if (action === 'remove') {
+            result = removeFromBlacklist(decodedName, itemCode);
+            if (isRuntimeActive(runtimeManager)) {
+              await refreshGearState({ force: true });
+            }
+            publishDesiredOrdersForCharacter(decodedName);
+          } else {
+            sendError(res, 400, 'bad_request', 'action must be "add" or "remove"', 'invalid_action');
+            return;
+          }
+
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            itemCode,
+            blacklist: getBlacklist(decodedName),
+            ...result,
+          });
+        } catch (err) {
+          const status = err?.status || 500;
+          sendError(res, status, 'service_error', err?.message || 'Failed to update gear blacklist', 'gear_blacklist_failed');
+        }
         return;
       }
 

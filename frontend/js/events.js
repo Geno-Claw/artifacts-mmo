@@ -136,6 +136,22 @@ function onModalContentClick(event) {
     return;
   }
 
+  if (modalState.activeKind === 'gear') {
+    const addBtn = closestFromEventTarget(event, 'button[data-gear-blacklist-add]');
+    if (addBtn && modalRefs.content.contains(addBtn)) {
+      const itemCode = addBtn.dataset.gearBlacklistAdd;
+      if (itemCode) postGearBlacklist(modalState.activeCharacterName, 'add', itemCode);
+      return;
+    }
+    const removeBtn = closestFromEventTarget(event, 'button[data-gear-blacklist-remove]');
+    if (removeBtn && modalRefs.content.contains(removeBtn)) {
+      const itemCode = removeBtn.dataset.gearBlacklistRemove;
+      if (itemCode) postGearBlacklist(modalState.activeCharacterName, 'remove', itemCode);
+      return;
+    }
+    return;
+  }
+
   if (modalState.activeKind !== 'config') return;
   if (typeof handleConfigModalClick === 'function' && handleConfigModalClick(event)) {
     return;
@@ -194,7 +210,7 @@ function onModalContentInput(event) {
 
 function maybeRefreshActiveModalFromSnapshot() {
   if (!isModalOpen()) return;
-  if (modalState.activeKind === 'achiev' || modalState.activeKind === 'config' || modalState.activeKind === 'bank') return;
+  if (modalState.activeKind === 'achiev' || modalState.activeKind === 'config' || modalState.activeKind === 'bank' || modalState.activeKind === 'gear') return;
 
   const activeChar = appState.characters.get(modalState.activeCharacterName);
   if (!activeChar) {

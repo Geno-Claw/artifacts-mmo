@@ -37,6 +37,7 @@ const MODAL_KIND_LABELS = {
   achiev: 'Achievements',
   config: 'Config',
   bank: 'Bank',
+  gear: 'Gear State',
 };
 const ACHIEVEMENT_FILTER_LABELS = {
   all: 'All',

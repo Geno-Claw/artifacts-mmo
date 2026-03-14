@@ -524,6 +524,110 @@ function renderAchievementsListInPlace() {
   }).join('');
 }
 
+function renderGearStateModal(detail) {
+  if (!detail || typeof detail !== 'object') {
+    return '<div class="modal-empty">No gear state data available.</div>';
+  }
+
+  const blacklist = Array.isArray(detail.blacklist) ? detail.blacklist : [];
+  const desired = detail.desired && typeof detail.desired === 'object' ? Object.entries(detail.desired) : [];
+  const assigned = detail.assigned && typeof detail.assigned === 'object' ? Object.entries(detail.assigned) : [];
+  const bestTarget = safeText(detail.bestTarget, 'none');
+  const selectedMonsters = Array.isArray(detail.selectedMonsters) ? detail.selectedMonsters : [];
+
+  const summaryHtml = `
+    <section class="modal-section">
+      <h3 class="modal-section-title">Summary</h3>
+      <div class="modal-grid">
+        <article class="modal-stat">
+          <div class="modal-stat-label">Best Target</div>
+          <div class="modal-stat-value">${escapeHtml(bestTarget)}</div>
+        </article>
+        <article class="modal-stat">
+          <div class="modal-stat-label">Monsters Covered</div>
+          <div class="modal-stat-value">${selectedMonsters.length}</div>
+        </article>
+      </div>
+    </section>
+  `;
+
+  // Blacklisted items section
+  let blacklistHtml = '';
+  if (blacklist.length > 0) {
+    const rows = blacklist.sort().map((code) => `
+      <div class="modal-list-item modal-list-item--two">
+        <span class="modal-list-main">${escapeHtml(code)}</span>
+        <button class="action-btn action-btn--sm action-btn--danger" type="button" data-gear-blacklist-remove="${escapeHtml(code)}">REMOVE</button>
+      </div>
+    `).join('');
+    blacklistHtml = `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Blacklisted Items (${blacklist.length})</h3>
+        <div class="modal-list">${rows}</div>
+      </section>
+    `;
+  } else {
+    blacklistHtml = `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Blacklisted Items</h3>
+        <div class="modal-empty">No items blacklisted.</div>
+      </section>
+    `;
+  }
+
+  // Desired items section (items the character still needs)
+  let desiredHtml = '';
+  const desiredFiltered = desired.filter(([, qty]) => (Number(qty) || 0) > 0).sort(([a], [b]) => a.localeCompare(b));
+  if (desiredFiltered.length > 0) {
+    const rows = desiredFiltered.map(([code, qty]) => {
+      const isBlacklisted = blacklist.includes(code);
+      return `
+        <div class="modal-list-item modal-list-item--two">
+          <span class="modal-list-main">${escapeHtml(code)}</span>
+          <span class="modal-list-tag">x${formatNumberish(qty, '0')}</span>
+          ${isBlacklisted
+            ? '<span class="modal-list-tag modal-list-tag--muted">BLOCKED</span>'
+            : `<button class="action-btn action-btn--sm" type="button" data-gear-blacklist-add="${escapeHtml(code)}">BLACKLIST</button>`
+          }
+        </div>
+      `;
+    }).join('');
+    desiredHtml = `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Desired Items (${desiredFiltered.length})</h3>
+        <div class="modal-list">${rows}</div>
+      </section>
+    `;
+  } else {
+    desiredHtml = `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Desired Items</h3>
+        <div class="modal-empty">All gear requirements met.</div>
+      </section>
+    `;
+  }
+
+  // Assigned items section (read-only)
+  let assignedHtml = '';
+  const assignedFiltered = assigned.filter(([, qty]) => (Number(qty) || 0) > 0).sort(([a], [b]) => a.localeCompare(b));
+  if (assignedFiltered.length > 0) {
+    const rows = assignedFiltered.map(([code, qty]) => `
+      <div class="modal-list-item modal-list-item--two">
+        <span class="modal-list-main">${escapeHtml(code)}</span>
+        <span class="modal-list-tag">x${formatNumberish(qty, '0')}</span>
+      </div>
+    `).join('');
+    assignedHtml = `
+      <section class="modal-section">
+        <h3 class="modal-section-title">Assigned Items (${assignedFiltered.length})</h3>
+        <div class="modal-list">${rows}</div>
+      </section>
+    `;
+  }
+
+  return summaryHtml + blacklistHtml + desiredHtml + assignedHtml;
+}
+
 function renderModalContent() {
   if (!modalRefs.content) return;
 
@@ -572,6 +676,10 @@ function renderModalContent() {
   }
   if (modalState.activeKind === 'bank') {
     modalRefs.content.innerHTML = renderBankModal(modalState.detail);
+    return;
+  }
+  if (modalState.activeKind === 'gear') {
+    modalRefs.content.innerHTML = renderGearStateModal(modalState.detail);
     return;
   }
   modalRefs.content.innerHTML = renderStatsModal(modalState.detail);

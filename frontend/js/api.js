@@ -23,7 +23,8 @@ async function fetchCharacterDetail(name) {
   renderModal();
 
   try {
-    const res = await fetch(`${window.__BASE_PATH__||''}/api/ui/character/${encodeURIComponent(name)}`, {
+    const urlSuffix = modalState.activeKind === 'gear' ? '/gear-state' : '';
+    const res = await fetch(`${window.__BASE_PATH__||''}/api/ui/character/${encodeURIComponent(name)}${urlSuffix}`, {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -57,6 +58,27 @@ async function fetchCharacterDetail(name) {
     if (modalState.fetchController === controller) {
       modalState.fetchController = null;
     }
+    renderModal();
+  }
+}
+
+async function postGearBlacklist(name, action, itemCode) {
+  try {
+    const res = await fetch(`${window.__BASE_PATH__||''}/api/ui/character/${encodeURIComponent(name)}/gear-blacklist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, itemCode }),
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      const detail = safeText(payload?.detail, `HTTP ${res.status}`);
+      throw new Error(detail);
+    }
+    // Re-fetch gear state to update the modal
+    fetchCharacterDetail(name);
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    modalState.errorText = safeText(err?.message, 'Failed to update blacklist');
     renderModal();
   }
 }
