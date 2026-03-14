@@ -5,7 +5,8 @@ import { dirname } from 'node:path';
 import * as log from '../log.mjs';
 import { toPositiveInt } from '../utils.mjs';
 import * as gameData from './game-data.mjs';
-import { optimizeForMonster } from './gear-optimizer.mjs';
+import { optimizeForMonster as optimizeForMonsterMainThread } from './gear-optimizer.mjs';
+import { optimizeForMonster as optimizeForMonsterProxy } from './gear-optimizer-proxy.mjs';
 import { createOrMergeOrder, retractContribution } from './order-board.mjs';
 import { getBankRevision, globalCount, nonEquippedCount } from './inventory-manager.mjs';
 import { getBestToolForSkillAtLevel, resolveItemOrderSource } from './tool-policy.mjs';
@@ -51,7 +52,7 @@ function getBestToolForSkillAtLevelSafe(skill, level) {
 
 let _deps = {
   gameDataSvc: gameData,
-  optimizeForMonsterFn: optimizeForMonster,
+  optimizeForMonsterFn: optimizeForMonsterProxy,
   getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
   createOrMergeOrderFn: createOrMergeOrder,
   retractContributionFn: retractContribution,
@@ -411,6 +412,8 @@ export async function refreshGearState(opts = {}) {
   if (!initialized) return getGearStateSnapshot();
   if (!opts.force && !shouldRecompute()) return getGearStateSnapshot();
 
+  const refreshStartMs = Date.now();
+
   const previousAvailableByChar = new Map();
   for (const name of characterOrder) {
     const row = stateByChar.get(name);
@@ -550,6 +553,16 @@ export async function refreshGearState(opts = {}) {
 
   markUpdated(atMs);
   schedulePersist();
+
+  const refreshDurationMs = Date.now() - refreshStartMs;
+  log.info(`[GearState] refreshGearState completed in ${(refreshDurationMs / 1000).toFixed(1)}s for ${characterOrder.length} character(s)`, {
+    event: 'gear_state.refresh.complete',
+    data: {
+      durationMs: refreshDurationMs,
+      characterCount: characterOrder.length,
+    },
+  });
+
   return getGearStateSnapshot();
 }
 
@@ -842,7 +855,7 @@ export function _resetGearStateForTests() {
 
   _deps = {
     gameDataSvc: gameData,
-    optimizeForMonsterFn: optimizeForMonster,
+    optimizeForMonsterFn: optimizeForMonsterProxy,
     getBestToolForSkillAtLevelFn: getBestToolForSkillAtLevelSafe,
     createOrMergeOrderFn: createOrMergeOrder,
     retractContributionFn: retractContribution,
