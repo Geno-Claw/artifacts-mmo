@@ -37,6 +37,8 @@ let blacklistByChar = new Map(); // name -> Set<string> of blacklisted item code
 let lastBankRevision = -1;
 let lastLevelSnapshot = new Map();
 let updatedAtMs = 0;
+let hasEverComputed = false;
+let backgroundRefreshPromise = null;
 
 let persistTimer = null;
 let persistWritePromise = Promise.resolve();
@@ -412,6 +414,21 @@ export async function refreshGearState(opts = {}) {
   if (!initialized) return getGearStateSnapshot();
   if (!opts.force && !shouldRecompute()) return getGearStateSnapshot();
 
+  // After the first successful computation, run refreshes in the background
+  // so callers aren't blocked — they just get the cached snapshot immediately.
+  if (hasEverComputed && !opts.force) {
+    if (!backgroundRefreshPromise) {
+      backgroundRefreshPromise = _doRefreshGearState()
+        .catch(err => log.warn(`[GearState] Background refresh failed: ${err.message}`, { event: 'gear_state.bg_refresh_failed', error: err }))
+        .finally(() => { backgroundRefreshPromise = null; });
+    }
+    return getGearStateSnapshot();
+  }
+
+  return _doRefreshGearState();
+}
+
+async function _doRefreshGearState() {
   const refreshStartMs = Date.now();
 
   const previousAvailableByChar = new Map();
@@ -553,13 +570,16 @@ export async function refreshGearState(opts = {}) {
 
   markUpdated(atMs);
   schedulePersist();
+  hasEverComputed = true;
 
   const refreshDurationMs = Date.now() - refreshStartMs;
-  log.info(`[GearState] refreshGearState completed in ${(refreshDurationMs / 1000).toFixed(1)}s for ${characterOrder.length} character(s)`, {
+  const wasBackground = hasEverComputed && !backgroundRefreshPromise ? 'foreground-first' : 'background';
+  log.info(`[GearState] refreshGearState completed in ${(refreshDurationMs / 1000).toFixed(1)}s for ${characterOrder.length} character(s) [${wasBackground}]`, {
     event: 'gear_state.refresh.complete',
     data: {
       durationMs: refreshDurationMs,
       characterCount: characterOrder.length,
+      mode: wasBackground,
     },
   });
 
@@ -845,6 +865,8 @@ export function _resetGearStateForTests() {
   lastBankRevision = -1;
   lastLevelSnapshot = new Map();
   updatedAtMs = 0;
+  hasEverComputed = false;
+  backgroundRefreshPromise = null;
 
   if (persistTimer) {
     clearTimeout(persistTimer);
