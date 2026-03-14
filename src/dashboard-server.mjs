@@ -1126,6 +1126,66 @@ export async function startDashboardServer({
         return;
       }
 
+      const gearBlacklistMatch = pathname.match(/^\/api\/ui\/character\/([^/]+)\/gear-blacklist$/);
+      if (gearBlacklistMatch) {
+        if (method !== 'POST') {
+          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
+          return;
+        }
+        let decodedName = '';
+        try {
+          decodedName = decodeURIComponent(gearBlacklistMatch[1]).trim();
+        } catch {
+          sendError(res, 400, 'bad_request', 'Invalid character name encoding', 'bad_character_name');
+          return;
+        }
+        if (!decodedName) {
+          sendError(res, 400, 'bad_request', 'Character name is required', 'character_name_required');
+          return;
+        }
+
+        try {
+          const body = await readJsonBody(req);
+          const action = `${body?.action || ''}`.trim();
+          const itemCode = `${body?.itemCode || ''}`.trim();
+
+          if (!action || !itemCode) {
+            sendError(res, 400, 'bad_request', 'action and itemCode are required', 'missing_fields');
+            return;
+          }
+
+          let result;
+          if (action === 'add') {
+            result = addToBlacklist(decodedName, itemCode);
+            if (isRuntimeActive(runtimeManager)) {
+              await refreshGearState({ force: true });
+            }
+            publishDesiredOrdersForCharacter(decodedName);
+          } else if (action === 'remove') {
+            result = removeFromBlacklist(decodedName, itemCode);
+            if (isRuntimeActive(runtimeManager)) {
+              await refreshGearState({ force: true });
+            }
+            publishDesiredOrdersForCharacter(decodedName);
+          } else {
+            sendError(res, 400, 'bad_request', 'action must be "add" or "remove"', 'invalid_action');
+            return;
+          }
+
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            itemCode,
+            blacklist: getBlacklist(decodedName),
+            ...result,
+          });
+        } catch (err) {
+          const status = err?.status || 500;
+          sendError(res, status, 'service_error', err?.message || 'Failed to update gear blacklist', 'gear_blacklist_failed');
+        }
+        return;
+      }
+
       if (method !== 'GET') {
         sendJson(res, 405, { error: 'method_not_allowed' });
         return;
@@ -1381,66 +1441,6 @@ export async function startDashboardServer({
           ...gearState,
           blacklist: getBlacklist(decodedName),
         });
-        return;
-      }
-
-      const gearBlacklistMatch = pathname.match(/^\/api\/ui\/character\/([^/]+)\/gear-blacklist$/);
-      if (gearBlacklistMatch) {
-        if (method !== 'POST') {
-          sendError(res, 405, 'method_not_allowed', 'Only POST is allowed', 'method_not_allowed');
-          return;
-        }
-        let decodedName = '';
-        try {
-          decodedName = decodeURIComponent(gearBlacklistMatch[1]).trim();
-        } catch {
-          sendError(res, 400, 'bad_request', 'Invalid character name encoding', 'bad_character_name');
-          return;
-        }
-        if (!decodedName) {
-          sendError(res, 400, 'bad_request', 'Character name is required', 'character_name_required');
-          return;
-        }
-
-        try {
-          const body = await readJsonBody(req);
-          const action = `${body?.action || ''}`.trim();
-          const itemCode = `${body?.itemCode || ''}`.trim();
-
-          if (!action || !itemCode) {
-            sendError(res, 400, 'bad_request', 'action and itemCode are required', 'missing_fields');
-            return;
-          }
-
-          let result;
-          if (action === 'add') {
-            result = addToBlacklist(decodedName, itemCode);
-            if (isRuntimeActive(runtimeManager)) {
-              await refreshGearState({ force: true });
-            }
-            publishDesiredOrdersForCharacter(decodedName);
-          } else if (action === 'remove') {
-            result = removeFromBlacklist(decodedName, itemCode);
-            if (isRuntimeActive(runtimeManager)) {
-              await refreshGearState({ force: true });
-            }
-            publishDesiredOrdersForCharacter(decodedName);
-          } else {
-            sendError(res, 400, 'bad_request', 'action must be "add" or "remove"', 'invalid_action');
-            return;
-          }
-
-          sendJson(res, 200, {
-            ok: true,
-            action,
-            itemCode,
-            blacklist: getBlacklist(decodedName),
-            ...result,
-          });
-        } catch (err) {
-          const status = err?.status || 500;
-          sendError(res, status, 'service_error', err?.message || 'Failed to update gear blacklist', 'gear_blacklist_failed');
-        }
         return;
       }
 

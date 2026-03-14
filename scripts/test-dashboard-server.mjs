@@ -915,6 +915,7 @@ async function run() {
   const apiMock = createArtifactsApiMock(process.env.ARTIFACTS_API || 'https://artifacts-api.test');
   const runtimeControlMock = createRuntimeControlMock();
   let dashboard = null;
+  let prefixedDashboard = null;
   let sse = null;
   let closeRegressionDashboard = null;
   let closeRegressionSse = null;
@@ -1161,6 +1162,87 @@ async function run() {
     assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-64'), true);
     assert.equal(detail.logHistory.some(entry => entry.line === 'detail-log-0'), true);
     assert.equal(detail.interruptionHistory.some(entry => entry.line === 'detail-preempted'), true);
+
+    const gearStateRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/gear-state`);
+    assert.equal(gearStateRes.status, 200, 'gear state endpoint should return 200');
+    const gearStatePayload = await gearStateRes.json();
+    assert.deepEqual(gearStatePayload.blacklist, [], 'gear state should start with an empty blacklist');
+
+    const addBlacklistRes = await requestJson(
+      `${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/gear-blacklist`,
+      {
+        method: 'POST',
+        body: {
+          action: 'add',
+          itemCode: 'dashboard_staff',
+        },
+      },
+    );
+    assert.equal(
+      addBlacklistRes.res.status,
+      200,
+      `Expected /api/ui/character/:name/gear-blacklist POST 200, got ${addBlacklistRes.res.status}`,
+    );
+    assert.equal(addBlacklistRes.payload?.ok, true, 'gear blacklist add should return ok=true');
+    assert.deepEqual(
+      addBlacklistRes.payload?.blacklist,
+      ['dashboard_staff'],
+      'gear blacklist add should return the updated blacklist',
+    );
+
+    const gearStateAfterAddRes = await fetch(`${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/gear-state`);
+    assert.equal(gearStateAfterAddRes.status, 200, 'gear state endpoint should still return 200 after blacklist add');
+    const gearStateAfterAddPayload = await gearStateAfterAddRes.json();
+    assert.deepEqual(
+      gearStateAfterAddPayload.blacklist,
+      ['dashboard_staff'],
+      'gear state should expose the updated blacklist after a POST',
+    );
+
+    prefixedDashboard = await startDashboardServer({
+      host: '127.0.0.1',
+      port: 0,
+      basePath: '/artifacts',
+      rootDir,
+      heartbeatMs: 100,
+      broadcastDebounceMs: 20,
+      runtimeManager: runtimeControlMock,
+      runtime: runtimeControlMock,
+      controlRuntime: runtimeControlMock,
+    });
+    const prefixedBaseUrl = `http://127.0.0.1:${prefixedDashboard.port}/artifacts`;
+    const removeBlacklistRes = await requestJson(
+      `${prefixedBaseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/gear-blacklist`,
+      {
+        method: 'POST',
+        body: {
+          action: 'remove',
+          itemCode: 'dashboard_staff',
+        },
+      },
+    );
+    assert.equal(
+      removeBlacklistRes.res.status,
+      200,
+      `Expected prefixed /api/ui/character/:name/gear-blacklist POST 200, got ${removeBlacklistRes.res.status}`,
+    );
+    assert.equal(removeBlacklistRes.payload?.ok, true, 'prefixed gear blacklist remove should return ok=true');
+    assert.deepEqual(
+      removeBlacklistRes.payload?.blacklist,
+      [],
+      'prefixed gear blacklist remove should return the updated blacklist',
+    );
+
+    const prefixedGearStateRes = await fetch(`${prefixedBaseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/gear-state`);
+    assert.equal(prefixedGearStateRes.status, 200, 'prefixed gear state endpoint should return 200');
+    const prefixedGearStatePayload = await prefixedGearStateRes.json();
+    assert.deepEqual(
+      prefixedGearStatePayload.blacklist,
+      [],
+      'prefixed gear state should reflect blacklist changes',
+    );
+    await prefixedDashboard.close();
+    prefixedDashboard = null;
 
     const detailLogRes = await fetch(
       `${baseUrl}/api/ui/character/${encodeURIComponent('Alpha')}/logs?event=routine.preempted&scope=scheduler&reasonCode=preempted_by_higher_priority&limit=5`,
@@ -1474,6 +1556,7 @@ async function run() {
   } finally {
     if (sse) await sse.close();
     if (dashboard) await dashboard.close();
+    if (prefixedDashboard) await prefixedDashboard.close();
     if (closeRegressionSse) await closeRegressionSse.close();
     if (closeRegressionDashboard) await closeRegressionDashboard.close();
     _resetOrderBoardForTests();
