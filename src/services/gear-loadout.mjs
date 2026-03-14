@@ -278,7 +278,7 @@ function currentGatherLoadout(ctx) {
 
 /**
  * Equip optimal gear for gathering a specific skill.
- * Selects the correct tool (weapon) and maximizes prospecting on all other slots.
+ * Preserves the current loadout and swaps only the weapon to the best tool.
  * Caches results to avoid re-optimizing for the same skill at the same level.
  *
  * @param {import('../context.mjs').CharacterContext} ctx
@@ -326,7 +326,7 @@ export async function equipForGathering(ctx, skill) {
       missingToolCode: order?.toolCode || null,
       nextCheckAtMs: Date.now() + GATHER_NO_TOOL_RECHECK_MS,
     });
-    log.info(`[${ctx.name}] Gathering gear: proceeding without ${skill} tool (recheck in ${Math.round(GATHER_NO_TOOL_RECHECK_MS / 1000)}s)`);
+    log.info(`[${ctx.name}] Gathering tool: proceeding without ${skill} tool (recheck in ${Math.round(GATHER_NO_TOOL_RECHECK_MS / 1000)}s)`);
     return {
       changed: false,
       missingToolCode: order?.toolCode || null,
@@ -338,7 +338,7 @@ export async function equipForGathering(ctx, skill) {
   const { loadout } = result;
 
   const { changed, swapsFailed } = await applyGearLoadout(ctx, loadout, {
-    reason: `gathering gear for ${skill}`,
+    reason: `gathering tool for ${skill}`,
   });
 
   if (!changed) {

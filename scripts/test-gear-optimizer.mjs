@@ -162,7 +162,7 @@ async function testOptimizeForMonsterIncludesBestBag() {
   assert.equal(result.loadout.get('bag'), 'backpack', 'combat optimizer should select highest-capacity bag');
 }
 
-async function testOptimizeForGatheringIncludesBestBag() {
+async function testOptimizeForGatheringPreservesCurrentBag() {
   _resetDepsForTests();
 
   const satchel = makeItem('satchel', { level: 5, effects: invSpace(1) });
@@ -189,6 +189,9 @@ async function testOptimizeForGatheringIncludesBestBag() {
 
   const ctx = makeCtx({
     level: 10,
+    equipped: {
+      bag: 'satchel',
+    },
     inventory: {
       satchel: 1,
       backpack: 1,
@@ -199,7 +202,7 @@ async function testOptimizeForGatheringIncludesBestBag() {
   const result = await optimizeForGathering(ctx, 'mining');
   assert.ok(result, 'optimizeForGathering should return a result');
   assert.equal(result.loadout.get('weapon'), 'copper_pickaxe');
-  assert.equal(result.loadout.get('bag'), 'backpack', 'gathering optimizer should select highest-capacity bag');
+  assert.equal(result.loadout.get('bag'), 'satchel', 'gathering optimizer should preserve the current bag');
 }
 
 async function testOptimizeForMonsterUsesCandidateRuneEffects() {
@@ -421,22 +424,26 @@ async function testOptimizeForMonsterAllowsDuplicateRingsWhenEnoughCopiesExist()
   assert.equal(result.loadout.get('ring2'), 'scholar_ring', 'ring2 should still allow the same ring when enough copies exist');
 }
 
-async function testOptimizeForGatheringIncludesArtifactProspecting() {
+async function testOptimizeForGatheringPreservesNonWeaponSlots() {
   _resetDepsForTests();
 
   const noviceGuide = makeItem('novice_guide', { level: 10, effects: [{ code: 'prospecting', value: 25 }] });
+  const scholarRing = makeItem('scholar_ring', { level: 10, effects: [{ code: 'wisdom', value: 25 }] });
+  const auraRune = makeItem('aura_rune', { level: 10, effects: [{ code: 'healing_aura', value: 5 }] });
   const pickaxe = makeItem('copper_pickaxe', {
     level: 1,
     effects: [{ code: 'mining', value: 1 }],
   });
   const itemsByCode = new Map([
     [noviceGuide.code, noviceGuide],
+    [scholarRing.code, scholarRing],
+    [auraRune.code, auraRune],
     [pickaxe.code, pickaxe],
   ]);
   const equipmentBySlot = new Map([
     ['artifact1', [noviceGuide]],
-    ['artifact2', [noviceGuide]],
-    ['artifact3', [noviceGuide]],
+    ['ring1', [scholarRing]],
+    ['rune', [auraRune]],
   ]);
 
   installOptimizerDeps({
@@ -447,56 +454,41 @@ async function testOptimizeForGatheringIncludesArtifactProspecting() {
 
   const ctx = makeCtx({
     level: 20,
+    equipped: {
+      artifact1: 'novice_guide',
+      ring1: 'scholar_ring',
+      rune: 'aura_rune',
+      bag: 'field_pack',
+    },
     inventory: {
       novice_guide: 1,
+      scholar_ring: 1,
+      aura_rune: 1,
+      field_pack: 1,
       copper_pickaxe: 1,
     },
   });
 
   const result = await optimizeForGathering(ctx, 'mining');
   assert.ok(result, 'optimizeForGathering should return a result');
-  assert.equal(result.loadout.get('artifact1'), 'novice_guide', 'gathering optimizer should select an artifact with prospecting');
-  assert.equal(result.loadout.get('artifact2'), null, 'gathering optimizer should respect single-copy artifact limits');
-  assert.equal(result.loadout.get('artifact3'), null, 'gathering optimizer should leave extra artifact slots empty without copies');
+  assert.equal(result.loadout.get('weapon'), 'copper_pickaxe', 'gathering optimizer should still select the tool');
+  assert.equal(result.loadout.get('artifact1'), 'novice_guide', 'gathering optimizer should preserve equipped artifacts');
+  assert.equal(result.loadout.get('ring1'), 'scholar_ring', 'gathering optimizer should preserve equipped rings');
+  assert.equal(result.loadout.get('rune'), 'aura_rune', 'gathering optimizer should preserve equipped runes');
+  assert.equal(result.loadout.get('bag'), 'field_pack', 'gathering optimizer should preserve the equipped bag');
 }
 
-async function testOptimizeForGatheringDoesNotDuplicateArtifactCopies() {
+async function testOptimizeForGatheringReturnsNullWithoutTool() {
   _resetDepsForTests();
 
-  const noviceGuide = makeItem('novice_guide', { level: 10, effects: [{ code: 'prospecting', value: 25 }] });
-  const pickaxe = makeItem('copper_pickaxe', {
-    level: 1,
-    effects: [{ code: 'mining', value: 1 }],
-  });
-  const itemsByCode = new Map([
-    [noviceGuide.code, noviceGuide],
-    [pickaxe.code, pickaxe],
-  ]);
-  const equipmentBySlot = new Map([
-    ['artifact1', [noviceGuide]],
-    ['artifact2', [noviceGuide]],
-    ['artifact3', [noviceGuide]],
-  ]);
-
-  installOptimizerDeps({
-    itemsByCode,
-    equipmentBySlot,
-    gatherTools: [pickaxe],
-  });
+  installOptimizerDeps();
 
   const ctx = makeCtx({
     level: 20,
-    inventory: {
-      novice_guide: 3,
-      copper_pickaxe: 1,
-    },
   });
 
   const result = await optimizeForGathering(ctx, 'mining');
-  assert.ok(result, 'optimizeForGathering should return a result');
-  assert.equal(result.loadout.get('artifact1'), 'novice_guide', 'gathering optimizer should still select the artifact');
-  assert.equal(result.loadout.get('artifact2'), null, 'gathering optimizer should not duplicate the artifact into artifact2');
-  assert.equal(result.loadout.get('artifact3'), null, 'gathering optimizer should not duplicate the artifact into artifact3');
+  assert.equal(result, null, 'gathering optimizer should return null when no valid tool is available');
 }
 
 async function testOptimizeForMonsterPlanningIncludesVendorRune() {
@@ -713,14 +705,14 @@ async function run() {
     testBagRankingBreaksTieByLevel();
     testBagRankingBreaksFinalTieByCodeAsc();
     await testOptimizeForMonsterIncludesBestBag();
-    await testOptimizeForGatheringIncludesBestBag();
+    await testOptimizeForGatheringPreservesCurrentBag();
     await testOptimizeForMonsterUsesCandidateRuneEffects();
     await testOptimizeForMonsterUsesStableSeedPerSlotComparison();
     await testOptimizeForMonsterSupportsArtifactSlots();
     await testOptimizeForMonsterDoesNotDuplicateArtifactCopies();
     await testOptimizeForMonsterAllowsDuplicateRingsWhenEnoughCopiesExist();
-    await testOptimizeForGatheringIncludesArtifactProspecting();
-    await testOptimizeForGatheringDoesNotDuplicateArtifactCopies();
+    await testOptimizeForGatheringPreservesNonWeaponSlots();
+    await testOptimizeForGatheringReturnsNullWithoutTool();
     await testOptimizeForMonsterPlanningIncludesVendorRune();
     await testOptimizeForMonsterPlanningAllowsDuplicateDropRings();
     await testOptimizeForMonsterKeepsNeutralRune();

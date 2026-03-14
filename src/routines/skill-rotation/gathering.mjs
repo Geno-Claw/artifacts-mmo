@@ -66,7 +66,7 @@ export async function executeGathering(ctx, routine) {
     if (smelted) return !ctx.inventoryFull();
   }
 
-  // Equip optimal gathering gear (tool + prospecting)
+  // Equip the correct gathering tool without changing other slots
   await equipForGathering(ctx, resource?.skill || routine.rotation.currentSkill);
 
   try {

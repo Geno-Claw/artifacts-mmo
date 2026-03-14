@@ -1023,22 +1023,6 @@ export async function findBestCombatTarget(ctx) {
 }
 
 // --- Gathering gear optimizer ---
-const GATHERING_NON_WEAPON_SLOTS = [
-  'shield', 'helmet', 'body_armor', 'leg_armor', 'boots',
-  'ring1', 'ring2', 'amulet', ...ARTIFACT_SLOTS, 'rune',
-];
-
-/**
- * Get the prospecting effect value from an item.
- * @returns {number} prospecting value (0 if none)
- */
-function getProspecting(item) {
-  if (!item?.effects) return 0;
-  for (const e of item.effects) {
-    if ((e.name || e.code) === 'prospecting') return e.value || 0;
-  }
-  return 0;
-}
 
 /**
  * Find the best available tool for a gathering skill.
@@ -1084,9 +1068,8 @@ function findBestTool(ctx, skill, bankItems) {
 
 /**
  * Find the optimal gathering loadout for a skill.
- * Weapon: best available tool for the skill.
- * Non-bag slots: maximize total prospecting stat.
- * Bag: maximize inventory_space.
+ * Preserve the current loadout and only swap the weapon to the best available
+ * tool for the requested skill.
  *
  * @param {import('../context.mjs').CharacterContext} ctx
  * @param {string} skill — gathering skill (mining, woodcutting, fishing, alchemy)
@@ -1102,57 +1085,11 @@ export async function optimizeForGathering(ctx, skill) {
   }
 
   const loadout = new Map();
+  const char = ctx.get();
+  for (const slot of EQUIPMENT_SLOTS) {
+    loadout.set(slot, char[`${slot}_slot`] || null);
+  }
   loadout.set('weapon', toolResult.item.code);
-
-  // For each non-weapon slot, pick the item with highest prospecting
-  for (const slot of GATHERING_NON_WEAPON_SLOTS) {
-    const candidates = filterDuplicateFamilyCandidates(
-      getCandidatesForSlot(ctx, slot, bankItems),
-      slot,
-      loadout,
-      ctx,
-      bankItems,
-    );
-    const currentCode = ctx.get()[`${slot}_slot`] || null;
-
-    let bestProspecting = 0;
-    let bestCode = null;
-
-    // Check current item's prospecting first
-    if (currentCode) {
-      const currentItem = _deps.getItemFn(currentCode);
-      const currentAllowed = filterDuplicateFamilyCandidates(
-        currentItem ? [{ item: currentItem, source: 'equipped' }] : [],
-        slot,
-        loadout,
-        ctx,
-        bankItems,
-      ).length > 0;
-      if (currentAllowed) {
-        bestProspecting = getProspecting(currentItem);
-        bestCode = currentCode;
-      }
-    }
-
-    for (const { item } of candidates) {
-      const p = getProspecting(item);
-      if (p > bestProspecting) {
-        bestProspecting = p;
-        bestCode = item.code;
-      }
-    }
-
-    // If no prospecting improvement, keep current gear
-    loadout.set(slot, bestCode);
-  }
-
-  const bagCandidates = getCandidatesForSlot(ctx, 'bag', bankItems);
-  const bestBag = chooseBestBagCandidate(bagCandidates);
-  if (bestBag?.item?.code) {
-    loadout.set('bag', bestBag.item.code);
-  } else {
-    loadout.set('bag', ctx.get().bag_slot || null);
-  }
 
   // Log changes
   const changes = [];

@@ -239,7 +239,7 @@ async function executeGatherObjective(ctx, routine, action) {
     return true;
   }
 
-  // Equip gathering gear
+  // Equip the correct gathering tool without changing other slots
   await equipForGathering(ctx, resource.skill);
 
   // Navigate to resource

@@ -287,7 +287,7 @@ export async function executeCrafting(ctx, routine) {
         return true;
       }
 
-      // Equip gathering gear for this resource's skill (e.g. alchemy gloves)
+      // Equip the correct gathering tool for this resource's skill
       await equipForGathering(ctx, step.resource.skill);
 
       await moveTo(ctx, loc.x, loc.y);
