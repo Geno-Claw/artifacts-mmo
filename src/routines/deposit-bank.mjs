@@ -6,6 +6,7 @@ import * as geSeller from '../services/ge-seller.mjs';
 import * as npcSeller from '../services/npc-seller.mjs';
 import * as pendingItems from '../services/pending-items.mjs';
 import * as recycler from '../services/recycler.mjs';
+import { shouldPurge, executeBankPurge } from '../services/bank-purge.mjs';
 import {
   depositBankItems,
   depositGoldToBank,
@@ -100,6 +101,19 @@ export class DepositBankRoutine extends BaseRoutine {
     }
     // Always build keepByCode — uses last known gear state even if refresh failed
     const keepByCode = this._buildKeepByCode(ctx);
+
+    // Step 0: Bank slot pressure relief — free slots before depositing
+    if (shouldPurge()) {
+      try {
+        await executeBankPurge(ctx);
+      } catch (err) {
+        depositLog.warn(`[${ctx.name}] Bank purge failed: ${err.message}`, {
+          event: 'routine.deposit.bank_purge_failed',
+          context: { character: ctx.name, routine: this.name },
+          error: err,
+        });
+      }
+    }
 
     // Step 1: Deposit all non-owned inventory items to bank
     if (this._countDepositableInventory(ctx, keepByCode) > 0) {

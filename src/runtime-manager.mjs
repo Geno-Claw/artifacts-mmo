@@ -45,6 +45,7 @@ import {
 import { loadNpcCatalogs } from './services/game-data.mjs';
 import { loadNpcBuyList } from './services/npc-buy-config.mjs';
 import { loadNpcSellList } from './services/npc-sell-config.mjs';
+import { loadBankPurgeConfig } from './services/bank-purge.mjs';
 import { loadCombatConfig } from './services/combat-config.mjs';
 import { normalizeConfig, hashCanonicalJson, saveConfigAtomically } from './services/config-store.mjs';
 import { runWithLogContext } from './log-context.mjs';
@@ -598,6 +599,7 @@ export class RuntimeManager {
 
       loadNpcBuyList(config);
       loadNpcSellList(config);
+      loadBankPurgeConfig(config.bankPurge);
       loadCombatConfig(config);
 
       for (const charCfg of config.characters) {
@@ -822,6 +824,7 @@ export class RuntimeManager {
 
     loadNpcBuyList(config);
     loadNpcSellList(config);
+    loadBankPurgeConfig(config.bankPurge);
     loadCombatConfig(config);
     setGatherResources(config.events?.gatherResources || []);
     run.config = config;
