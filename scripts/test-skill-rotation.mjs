@@ -2624,14 +2624,21 @@ async function testItemTaskReserveOverflowUsesCraftTradeFallback() {
   assert.equal(fallbackCalls, 1, 'craft/trade fallback should be attempted before gathering');
 }
 
-async function testItemTaskReserveOverflowYieldsWhenNoFallbackProgress() {
+async function testItemTaskReserveOverflowRotatesWhenNoFallbackProgress() {
   const routine = new SkillRotationRoutine();
   let fallbackCalls = 0;
+  let rotateCalls = 0;
 
   routine._withdrawForItemTask = async () => 0;
   routine._craftAndTradeItemTaskFromInventory = async () => {
     fallbackCalls += 1;
     return { progressed: false, crafted: false, traded: false };
+  };
+  routine.rotation = {
+    forceRotate: async () => {
+      rotateCalls += 1;
+      return null;
+    },
   };
 
   const item = {
@@ -2657,8 +2664,96 @@ async function testItemTaskReserveOverflowYieldsWhenNoFallbackProgress() {
   };
 
   const result = await routine._craftForItemTask(ctx, 'ash_plank', item, plan, 24);
-  assert.equal(result, false, 'overflow with no craft/trade progress should yield');
+  assert.equal(result, true, 'overflow with no craft/trade progress should rotate away from item_task');
   assert.equal(fallbackCalls, 1, 'fallback should be attempted once before yielding');
+  assert.equal(rotateCalls, 1, 'reserve deadlock should force a rotation');
+}
+
+async function testCraftingBlocksAndRotatesWhenPartialWithdrawMasksMissingDependency() {
+  resetGameDataForTests();
+  setGameDataCachesForTests({
+    items: [[
+      'forest_whip',
+      {
+        code: 'forest_whip',
+        craft: {
+          skill: 'weaponcrafting',
+          level: 1,
+          items: [
+            { code: 'hardwood_plank', quantity: 2 },
+            { code: 'ash_wood', quantity: 1 },
+          ],
+        },
+      },
+    ]],
+  });
+
+  try {
+    const routine = new SkillRotationRoutine();
+    const bankItems = new Map([
+      ['hardwood_plank', 1],
+    ]);
+    const ctx = makeCraftingInventoryCtx({
+      capacity: 20,
+      skillLevels: {
+        weaponcrafting: 10,
+      },
+    });
+
+    let blockedReason = null;
+    let rotateCalls = 0;
+
+    routine._ensureOrderClaim = async () => null;
+    routine._getBankItems = async () => bankItems;
+    routine._withdrawFromBank = async () => {
+      ctx.addInventory('hardwood_plank', 1);
+    };
+    routine.rotation = {
+      currentSkill: 'weaponcrafting',
+      goalTarget: 1,
+      goalProgress: 0,
+      recipe: {
+        code: 'forest_whip',
+        craft: { skill: 'weaponcrafting', level: 1, items: [] },
+      },
+      productionPlan: [
+        { type: 'bank', itemCode: 'hardwood_plank', quantity: 2 },
+        {
+          type: 'craft',
+          itemCode: 'forest_whip',
+          quantity: 1,
+          recipe: {
+            skill: 'weaponcrafting',
+            level: 1,
+            items: [
+              { code: 'hardwood_plank', quantity: 2 },
+              { code: 'ash_wood', quantity: 1 },
+            ],
+          },
+        },
+      ],
+      bankChecked: false,
+      blockCurrentRecipe: ({ reason }) => {
+        blockedReason = reason;
+        return true;
+      },
+      forceRotate: async () => {
+        rotateCalls += 1;
+        return null;
+      },
+    };
+
+    const result = await withMockFetch(async () => {
+      throw new Error('unexpected fetch during mixed partial-withdraw blocker test');
+    }, async () => routine._executeCrafting(ctx));
+
+    assert.equal(result, true, 'mixed partial-withdraw blocker should terminate this pass');
+    assert.equal(rotateCalls, 1, 'mixed blocker should rotate instead of retrying bank withdrawal');
+    assert.match(blockedReason || '', /partial withdraw/i, 'recipe should be blocked with a root-cause reason');
+    assert.equal(routine.rotation.bankChecked, true, 'mixed blocker should not queue another bank re-check');
+  } finally {
+    resetGameDataForTests();
+  }
 }
 
 async function testCraftingWithdrawSkipsFinalRecipeOutput() {
@@ -3633,7 +3728,8 @@ async function run() {
   await testItemTaskFlowTradesImmediatelyAfterBankWithdraw();
   await testItemTaskWithdrawRespectsReserveCap();
   await testItemTaskReserveOverflowUsesCraftTradeFallback();
-  await testItemTaskReserveOverflowYieldsWhenNoFallbackProgress();
+  await testItemTaskReserveOverflowRotatesWhenNoFallbackProgress();
+  await testCraftingBlocksAndRotatesWhenPartialWithdrawMasksMissingDependency();
   await testRoutineTriggersProactiveExchangeBeforeSkillDispatch();
   await testTaskExchangeLockPreventsConcurrentRuns();
   await testTaskExchangeWithdrawsCoinsAndDepositsTargetRewards();

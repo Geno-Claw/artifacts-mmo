@@ -67,6 +67,9 @@ export async function executeCrafting(ctx, routine) {
 
   let bankItems = null;
   let pendingRewithdraw = null;
+  let retryableRewithdrawExists = false;
+  let madeProgress = false;
+  let harderBlocker = null;
 
   const getBankItems = async () => {
     if (bankItems instanceof Map) return bankItems;
@@ -91,11 +94,22 @@ export async function executeCrafting(ctx, routine) {
         bankQuantity,
       };
     }
+    retryableRewithdrawExists = true;
     return true;
   };
 
+  const noteHarderBlocker = (step, reasonCode, data = {}) => {
+    if (!pendingRewithdraw || harderBlocker) return;
+    harderBlocker = {
+      reasonCode,
+      stepType: step?.type || null,
+      itemCode: step?.itemCode || null,
+      ...data,
+    };
+  };
+
   const queueRewithdrawIfNeeded = () => {
-    if (!pendingRewithdraw) return;
+    if (!pendingRewithdraw || !retryableRewithdrawExists) return;
     routine.rotation.bankChecked = false;
     craftingLog.info(
       `[${ctx.name}] ${routine.rotation.currentSkill}: ${pendingRewithdraw.itemCode} still in bank after partial withdrawal, forcing re-withdraw next tick`,
@@ -113,6 +127,7 @@ export async function executeCrafting(ctx, routine) {
       },
     );
     pendingRewithdraw = null;
+    retryableRewithdrawExists = false;
   };
 
   // Re-withdraw if bank routine deposited our materials
@@ -308,6 +323,7 @@ export async function executeCrafting(ctx, routine) {
           return false;
         }
         const result = await gatherOnce(ctx);
+        madeProgress = true;
         const items = result.details?.items || [];
         craftingLog.debug(
           `[${ctx.name}] ${routine.rotation.currentSkill}: gathering ${step.itemCode} for ${recipe.code} — ` +
@@ -454,6 +470,7 @@ export async function executeCrafting(ctx, routine) {
       await moveTo(ctx, monsterLoc.x, monsterLoc.y);
       const result = await fightOnce(ctx);
       const r = parseFightResult(result, ctx);
+      madeProgress = true;
 
       if (r.win) {
         ctx.clearLosses(monsterCode);
@@ -543,6 +560,9 @@ export async function executeCrafting(ctx, routine) {
 
       if (carriedCurrencyCount(ctx, step.currency) < currencyNeeded) {
         // Not enough currency yet — gather steps should handle it on next pass
+        noteHarderBlocker(step, 'missing_npc_trade_currency', {
+          currency: step.currency,
+        });
         craftingLog.debug(`[${ctx.name}] ${routine.rotation.currentSkill}: need ${currencyNeeded}x ${step.currency} for NPC trade ${step.itemCode}, have ${ctx.itemCount(step.currency)}`, {
           event: 'craft.npc_trade.currency_needed',
           context: { character: ctx.name },
@@ -604,6 +624,7 @@ export async function executeCrafting(ctx, routine) {
       if (!purchase.ok) {
         return true;
       }
+      madeProgress = true;
       craftingLog.info(`[${ctx.name}] ${routine.rotation.currentSkill}: NPC trade — bought ${step.itemCode} x${buyQty} from ${step.npcCode}`, {
         event: 'craft.npc_trade.completed',
         context: { character: ctx.name },
@@ -648,7 +669,10 @@ export async function executeCrafting(ctx, routine) {
           )
         );
       }
-      if (craftQty <= 0) continue; // need to gather more, loop will handle it
+      if (craftQty <= 0) {
+        noteHarderBlocker(step, 'missing_craft_materials');
+        continue; // need to gather more, loop will handle it
+      }
 
       // Craft at the workshop
       const workshops = await gameData.getWorkshops();
@@ -674,6 +698,7 @@ export async function executeCrafting(ctx, routine) {
       ctx.applyActionResult(result);
       await api.waitForCooldown(result);
       routine._craftRewithdrawRetries = 0;
+      madeProgress = true;
 
       craftingLog.debug(`[${ctx.name}] ${routine.rotation.currentSkill}: crafted ${step.itemCode} x${craftQty}`, {
         event: 'craft.step.completed',
@@ -772,10 +797,41 @@ export async function executeCrafting(ctx, routine) {
     return false;
   }
 
+  if (!madeProgress && retryableRewithdrawExists && pendingRewithdraw && harderBlocker) {
+    craftingLog.warn(
+      `[${ctx.name}] ${routine.rotation.currentSkill}: partial withdraw for ${pendingRewithdraw.itemCode} ` +
+      `cannot unblock ${recipe.code}; ${harderBlocker.itemCode || 'another dependency'} is still missing`,
+      {
+        event: 'craft.bank_withdraw.root_cause_blocked',
+        reasonCode: harderBlocker.reasonCode || 'unmet_dependency',
+        context: { character: ctx.name },
+        data: {
+          skill: routine.rotation.currentSkill,
+          recipeCode: recipe.code,
+          pendingRewithdraw,
+          blocker: harderBlocker,
+          inventoryCount: ctx.inventoryCount(),
+          inventoryCapacity: ctx.inventoryCapacity(),
+        },
+      },
+    );
+    routine._craftRewithdrawRetries = 0;
+    if (claimMode) {
+      await routine._blockAndReleaseClaim(ctx, harderBlocker.reasonCode || 'missing_dependency');
+    } else {
+      routine.rotation.blockCurrentRecipe({
+        reason: `partial withdraw for ${pendingRewithdraw.itemCode} blocked by ${harderBlocker.itemCode || 'missing dependency'}`,
+        ctx,
+      });
+      await routine.rotation.forceRotate(ctx);
+    }
+    return true;
+  }
+
   // If we get here, couldn't make progress — try next iteration.
   // Circuit breaker: if materials don't fit even after a retry, bail out
   // instead of looping (deposit → withdraw → deposit → withdraw).
-  if (pendingRewithdraw && ctx.inventoryFull()) {
+  if (retryableRewithdrawExists && pendingRewithdraw && ctx.inventoryFull()) {
     routine._craftRewithdrawRetries = (routine._craftRewithdrawRetries || 0) + 1;
     if (routine._craftRewithdrawRetries > 1) {
       craftingLog.warn(

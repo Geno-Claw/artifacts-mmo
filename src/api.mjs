@@ -58,6 +58,20 @@ function isRetryableGatewayStatus(status) {
   return status === 502 || status === 503 || status === 504;
 }
 
+function parseRetryAfterMs(headerValue, now = Date.now()) {
+  const raw = `${headerValue || ''}`.trim();
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.max(0, Math.ceil(seconds * 1000));
+  }
+
+  const dateMs = Date.parse(raw);
+  if (!Number.isFinite(dateMs)) return null;
+  return Math.max(0, dateMs - now);
+}
+
 async function request(method, path, body = null) {
   const opts = {
     method,
@@ -161,6 +175,7 @@ async function request(method, path, body = null) {
     const raw = await res.text();
     const json = parseJsonSafely(raw);
     const durationMs = Date.now() - attemptStartedAt;
+    const retryAfterMs = parseRetryAfterMs(res.headers?.get?.('retry-after'), attemptStartedAt);
 
     if (res.ok) {
       if (!json || typeof json !== 'object' || !('data' in json)) {
@@ -367,6 +382,9 @@ async function request(method, path, body = null) {
     err.code = code;
     err.data = json?.error?.data;
     err.status = res.status;
+    if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+      err.retryAfterMs = retryAfterMs;
+    }
     actionEvent('failed', {
       attempt: attemptNo,
       durationMs,

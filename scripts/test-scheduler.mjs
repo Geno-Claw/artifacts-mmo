@@ -8,6 +8,7 @@ function makeCtx(name = 'Tester') {
   return {
     name,
     async refresh() {},
+    clearRoutineKeepCodes() {},
     cooldownRemainingMs() {
       return 0;
     },
@@ -137,6 +138,108 @@ console.log('Test: urgent higher effective priority routine preempts active loop
 
   assert.equal(normalRuns, 1);
   assert.equal(bossRuns, 1);
+}
+console.log('  PASS');
+
+console.log('Test: scheduler recovers from startup refresh 429 with retry-after backoff');
+{
+  let refreshCalls = 0;
+  let executeCalls = 0;
+  let resolveExecuted;
+  const executed = new Promise(resolve => {
+    resolveExecuted = resolve;
+  });
+  const slept = [];
+  const ctx = makeCtx();
+  ctx.refresh = async () => {
+    refreshCalls += 1;
+    if (refreshCalls === 1) {
+      const err = new Error('Too Many Requests');
+      err.status = 429;
+      err.retryAfterMs = 1234;
+      throw err;
+    }
+  };
+
+  class OneShotRoutine extends BaseRoutine {
+    constructor() {
+      super({ name: 'OneShot', priority: 5, loop: false });
+    }
+
+    canRun() {
+      return executeCalls === 0;
+    }
+
+    async execute() {
+      executeCalls += 1;
+      resolveExecuted();
+      return false;
+    }
+  }
+
+  const scheduler = new Scheduler(ctx, [new OneShotRoutine()]);
+  scheduler._sleep = async (ms) => {
+    slept.push(ms);
+    return true;
+  };
+
+  const runPromise = scheduler.run();
+  await executed;
+  await scheduler.stop();
+  await runPromise;
+
+  assert.equal(executeCalls, 1, 'scheduler should recover and run the routine after startup refresh rate limit');
+  assert.equal(refreshCalls >= 2, true, 'scheduler should retry refresh after the rate limit');
+  assert.deepEqual(slept.slice(0, 1), [1234], 'scheduler should honor retry-after backoff for startup refresh 429s');
+}
+console.log('  PASS');
+
+console.log('Test: scheduler backs off and continues after non-429 pre-routine failure');
+{
+  const ctx = makeCtx();
+  let executeCalls = 0;
+  let canRunCalls = 0;
+  let resolveExecuted;
+  const executed = new Promise(resolve => {
+    resolveExecuted = resolve;
+  });
+  const slept = [];
+
+  class FlakyCanRunRoutine extends BaseRoutine {
+    constructor() {
+      super({ name: 'Flaky', priority: 5, loop: false });
+    }
+
+    canRun() {
+      if (executeCalls > 0) return false;
+      canRunCalls += 1;
+      if (canRunCalls === 1) {
+        throw new Error('canRun exploded');
+      }
+      return true;
+    }
+
+    async execute() {
+      executeCalls += 1;
+      resolveExecuted();
+      return false;
+    }
+  }
+
+  const scheduler = new Scheduler(ctx, [new FlakyCanRunRoutine()]);
+  scheduler._sleep = async (ms) => {
+    slept.push(ms);
+    return true;
+  };
+
+  const runPromise = scheduler.run();
+  await executed;
+  await scheduler.stop();
+  await runPromise;
+
+  assert.equal(executeCalls, 1, 'scheduler should continue to routine execution after recovering from pre-routine failure');
+  assert.equal(canRunCalls >= 2, true, 'scheduler should retry routine selection after the recoverable failure');
+  assert.deepEqual(slept.slice(0, 1), [5000], 'first generic pre-routine failure should use the base backoff');
 }
 console.log('  PASS');
 

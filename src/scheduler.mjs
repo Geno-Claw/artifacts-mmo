@@ -10,6 +10,9 @@ import { findMonstersByLevel, isLocationUnreachable } from './services/game-data
 import { getBankRevision, getBankItems } from './services/inventory-manager.mjs';
 
 const schedulerLog = log.createLogger({ scope: 'scheduler' });
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 60_000;
+const PRE_ROUTINE_BACKOFF_BASE_MS = 5_000;
+const PRE_ROUTINE_BACKOFF_MAX_MS = 60_000;
 
 export class Scheduler {
   constructor(ctx, routines = []) {
@@ -27,6 +30,7 @@ export class Scheduler {
     this.runId = null;
     this.tickSeq = 0;
     this._lastBankRevision = -1;
+    this._preRoutineFailureCount = 0;
   }
 
   setRunContext({ runId = null } = {}) {
@@ -194,6 +198,102 @@ export class Scheduler {
     }
   }
 
+  _isRateLimitError(err) {
+    return Number(err?.status ?? err?.code) === 429;
+  }
+
+  _rateLimitBackoffMs(err) {
+    const retryAfterMs = Number(err?.retryAfterMs);
+    if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+      return Math.ceil(retryAfterMs);
+    }
+    return DEFAULT_RATE_LIMIT_BACKOFF_MS;
+  }
+
+  _nextPreRoutineBackoffMs() {
+    this._preRoutineFailureCount += 1;
+    return Math.min(
+      PRE_ROUTINE_BACKOFF_MAX_MS,
+      PRE_ROUTINE_BACKOFF_BASE_MS * (2 ** Math.max(0, this._preRoutineFailureCount - 1)),
+    );
+  }
+
+  async _preparePreRoutinePhase(tickId, { applyPendingConfig = false, scanRoutines = true } = {}) {
+    if (applyPendingConfig) {
+      this._applyPendingConfig();
+    }
+
+    await runWithLogContext({
+      character: this.ctx.name,
+      runId: this.runId,
+      tickId,
+    }, async () => this.ctx.refresh());
+    this._pushCharStateToWorker();
+    if (this.stopRequested) {
+      return {
+        stopped: true,
+        routine: null,
+        candidates: [],
+        priority: null,
+        urgent: null,
+      };
+    }
+
+    const selection = scanRoutines
+      ? this.pickRoutineWithDetails()
+      : {
+        routine: null,
+        candidates: [],
+        priority: null,
+        urgent: null,
+      };
+
+    this._preRoutineFailureCount = 0;
+    return {
+      stopped: false,
+      ...selection,
+    };
+  }
+
+  async _recoverPreRoutineFailure(err, tickId, phase) {
+    if (this.stopRequested) return false;
+
+    const rateLimited = this._isRateLimitError(err);
+    const backoffMs = rateLimited
+      ? this._rateLimitBackoffMs(err)
+      : this._nextPreRoutineBackoffMs();
+    const detail = err?.message || String(err);
+
+    recordRoutineState(this.ctx.name, {
+      routineName: null,
+      phase: 'error',
+      priority: null,
+      error: detail,
+    });
+
+    schedulerLog.warn(`[${this.ctx.name}] ${phase} failed — backing off ${(backoffMs / 1000).toFixed(1)}s`, {
+      event: 'scheduler.pre_routine.recovering',
+      reasonCode: rateLimited ? 'rate_limited' : 'pre_routine_failed',
+      context: {
+        character: this.ctx.name,
+        runId: this.runId,
+        tickId,
+      },
+      error: err,
+      detail,
+      data: {
+        phase,
+        backoffMs,
+        status: err?.status ?? null,
+        code: err?.code ?? null,
+        retryAfterMs: err?.retryAfterMs ?? null,
+        failureCount: rateLimited ? this._preRoutineFailureCount : this._preRoutineFailureCount,
+      },
+    });
+
+    return this._sleep(backoffMs);
+  }
+
   async _runLoop() {
     this.stopRequested = false;
     schedulerLog.info(`[${this.ctx.name}] Bot loop started`, {
@@ -205,14 +305,23 @@ export class Scheduler {
     });
 
     // Wait out any active cooldown from a previous session.
+    while (!this.stopRequested) {
+      try {
+        const startup = await this._preparePreRoutinePhase(this.tickSeq, {
+          applyPendingConfig: false,
+          scanRoutines: false,
+        });
+        if (startup.stopped) return;
+        break;
+      } catch (err) {
+        const slept = await this._recoverPreRoutineFailure(err, this.tickSeq, 'startup_refresh');
+        if (!slept) return;
+      }
+    }
+
+    if (this.stopRequested) return;
+
     {
-      await runWithLogContext({
-        character: this.ctx.name,
-        runId: this.runId,
-        tickId: this.tickSeq,
-      }, async () => this.ctx.refresh());
-      this._pushCharStateToWorker();
-      if (this.stopRequested) return;
       const remainingMs = this.ctx.cooldownRemainingMs();
       if (remainingMs > 500) {
         schedulerLog.info(`[${this.ctx.name}] On cooldown — waiting ${(remainingMs / 1000).toFixed(1)}s`, {
@@ -242,17 +351,20 @@ export class Scheduler {
         },
       });
 
-      this._applyPendingConfig();
+      let prepared;
+      try {
+        prepared = await this._preparePreRoutinePhase(tickId, {
+          applyPendingConfig: true,
+          scanRoutines: true,
+        });
+      } catch (err) {
+        const slept = await this._recoverPreRoutineFailure(err, tickId, 'tick_prepare');
+        if (!slept) break;
+        continue;
+      }
+      if (prepared.stopped) break;
 
-      await runWithLogContext({
-        character: this.ctx.name,
-        runId: this.runId,
-        tickId,
-      }, async () => this.ctx.refresh());
-      this._pushCharStateToWorker();
-      if (this.stopRequested) break;
-
-      const { routine, candidates, priority: selectedPriority, urgent: selectedUrgent } = this.pickRoutineWithDetails();
+      const { routine, candidates, priority: selectedPriority, urgent: selectedUrgent } = prepared;
       schedulerLog.debug(`[${this.ctx.name}] Tick ${tickId} routine scan`, {
         event: 'scheduler.routines.scanned',
         context: {

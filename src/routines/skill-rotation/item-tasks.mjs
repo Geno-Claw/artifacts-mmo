@@ -286,8 +286,12 @@ export async function craftForItemTask(ctx, routine, itemCode, item, plan, neede
           reason: `reserve pressure while gathering ${step.itemCode}`,
         });
         if (fallback.progressed) return true;
-        log.info(`[${ctx.name}] Item Task craft: reserve pressure and no craft/trade progress, yielding`);
-        return false;
+        log.info(
+          `[${ctx.name}] Item Task craft: reserve pressure and no craft/trade progress, ` +
+          `forcing rotation away from item_task`,
+        );
+        await routine.rotation.forceRotate(ctx);
+        return true;
       }
 
       // Gather the rest
