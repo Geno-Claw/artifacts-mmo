@@ -92,7 +92,9 @@ async function run() {
   const tempDir = mkdtempSync(join(tmpdir(), 'config-store-test-'));
   const configPath = join(tempDir, 'characters.json');
   const schemaPath = resolve(rootDir, 'config/characters.schema.json');
-  const sourceConfigPath = resolve(rootDir, 'config/characters-local.json');
+  const localConfigPath = resolve(rootDir, 'config/characters-local.json');
+  const exampleConfigPath = resolve(rootDir, 'config/characters.json.example');
+  const sourceConfigPath = fs.existsSync(localConfigPath) ? localConfigPath : exampleConfigPath;
   copyFileSync(sourceConfigPath, configPath);
 
   const snapshotOpts = {
