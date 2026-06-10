@@ -372,12 +372,18 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
 
   const bankItems = bank instanceof Map ? bank : new Map();
 
-  // Bank-aware plan check: skip gather/craft skill checks when bank+inventory covers the need
-  const planCheck = routine._canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems);
+  const craftYield = item.craft.quantity || 1;
+  const plannedRounds = Math.max(1, Math.ceil(Math.max(1, Number(order?.remainingQty) || 1) / craftYield));
+
+  // Bank-aware plan check: skip gather/craft skill checks when bank+inventory covers the planned need
+  const planCheck = routine._canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems, {
+    quantityMultiplier: plannedRounds,
+    checkBankDependencies: false,
+  });
   if (!planCheck.ok) {
     const firstDeficit = planCheck.deficits[0];
-    if (firstDeficit?.type === 'craft') {
-      return { ok: false, reason: `insufficient_craft_skill:${firstDeficit.itemCode}` };
+    if (firstDeficit?.stepType === 'craft' || firstDeficit?.type === 'craft' || firstDeficit?.type === 'craft_skill') {
+      return { ok: false, reason: `insufficient_craft_skill:${firstDeficit.itemCode}`, deficits: planCheck.deficits };
     }
     return { ok: false, reason: 'insufficient_gather_skill', deficits: planCheck.deficits };
   }
@@ -404,7 +410,7 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
     if (step.type !== 'bank') continue;
     if (step.itemCode === 'gold') continue;
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
-    if (have < step.quantity) {
+    if (have < step.quantity * plannedRounds) {
       return { ok: false, reason: `missing_bank_dependency:${step.itemCode}` };
     }
   }
@@ -418,7 +424,7 @@ export async function canClaimCraftOrderNow(ctx, routine, order, craftSkill, ban
     }
 
     const have = ctx.itemCount(step.itemCode) + (bankItems.get(step.itemCode) || 0);
-    if (have >= step.quantity) continue;
+    if (have >= step.quantity * plannedRounds) continue;
 
     if (!simCache.has(monsterCode)) {
       simCache.set(monsterCode, await routine._simulateClaimFight(ctx, monsterCode));
@@ -466,7 +472,9 @@ export async function canClaimNpcBuyOrderNow(ctx, routine, order, bank, simCache
   plan = budgetPlan.plan;
   const budget = budgetPlan.budget;
 
-  const planCheck = routine._canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems);
+  const planCheck = routine._canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems, {
+    checkBankDependencies: false,
+  });
   if (!planCheck.ok) {
     return {
       ok: false,
@@ -561,10 +569,12 @@ async function maybeResolveTaskRewardCraftDependency(ctx, routine, order, orderC
 function handleUnviableCraftOrder(routine, order, ctx, viability, bank) {
   // Queue gather orders for deficit materials so other characters can help
   if (viability.reason === 'insufficient_gather_skill' && viability.deficits?.length > 0) {
-    for (const step of viability.deficits) {
-      if (step.type !== 'gather' || !step.resource) continue;
+    for (const deficitStep of viability.deficits) {
+      const step = deficitStep.step || deficitStep;
+      if ((deficitStep.stepType || step.type) !== 'gather' || !step.resource) continue;
       const bankItems = bank instanceof Map ? bank : new Map();
-      const deficit = step.quantity - ctx.itemCount(step.itemCode) - (bankItems.get(step.itemCode) || 0);
+      const required = deficitStep.requiredQuantity || step.quantity || 0;
+      const deficit = required - ctx.itemCount(step.itemCode) - (bankItems.get(step.itemCode) || 0);
       if (deficit > 0) {
         routine._enqueueGatherOrderForDeficit(step, order, ctx, deficit);
       }

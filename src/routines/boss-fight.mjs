@@ -49,11 +49,11 @@ export class BossFightRoutine extends BaseRoutine {
       loop: true,
       urgent: false,
     });
+    this.orderDriven = cfg.orderDriven === true;
     this.teamSize = cfg.teamSize || 3;
-    this.minTeamSize = cfg.minTeamSize || cfg.teamSize || 3;
+    this.minTeamSize = cfg.minTeamSize || cfg.teamSize || (this.orderDriven ? 2 : 3);
     this.repeat = cfg.repeat !== false;
     this.maxFights = cfg.maxFights || 0; // 0 = unlimited
-    this.orderDriven = cfg.orderDriven === true;
     this.teamStrategy = cfg.teamStrategy || 'fast'; // 'fast' = fewest turns, 'xp' = lowest total level
     this.bosses = this._normalizeBosses(cfg);
     this.enabledBossCodes = this.bosses.filter(b => b.enabled).map(b => b.code);
@@ -243,10 +243,6 @@ export class BossFightRoutine extends BaseRoutine {
    * whose recipe chain transitively requires boss drops.
    */
   _ordersRequireBoss(bossCode) {
-    const boss = gameData.getMonster(bossCode);
-    if (!boss?.drops) return false;
-
-    const bossDropCodes = new Set(boss.drops.map(d => d.code));
     let snapshot;
     try {
       snapshot = getOrderBoardSnapshot();
@@ -261,6 +257,10 @@ export class BossFightRoutine extends BaseRoutine {
 
       // Direct fight order for this boss
       if (order.sourceType === 'fight' && order.sourceCode === bossCode) return true;
+
+      const boss = gameData.getMonster(bossCode);
+      if (!boss?.drops) continue;
+      const bossDropCodes = new Set(boss.drops.map(d => d.code));
 
       // Order for an item that IS a boss drop
       if (bossDropCodes.has(order.itemCode)) return true;

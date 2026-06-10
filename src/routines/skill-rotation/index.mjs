@@ -215,8 +215,15 @@ export class SkillRotationRoutine extends BaseRoutine {
     return gameData.canFulfillPlan(plan, ctx);
   }
 
-  _canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems) {
-    return gameData.canFulfillPlanWithBank(plan, ctx, bankItems);
+  _canFulfillCraftClaimPlanWithBank(plan, ctx, bankItems, options = {}) {
+    return gameData.checkPlanPrerequisites(plan, ctx, bankItems, {
+      checkBankDependencies: false,
+      ...options,
+    });
+  }
+
+  _checkPlanPrerequisites(plan, ctx, bankItems, options = {}) {
+    return gameData.checkPlanPrerequisites(plan, ctx, bankItems, options);
   }
 
   _isTaskRewardCode(itemCode) {

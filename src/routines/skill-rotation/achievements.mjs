@@ -315,6 +315,17 @@ async function executeCraftObjective(ctx, routine, action) {
     plan.push({ type: 'craft', itemCode: recipeCode, recipe: item.craft, quantity: 1 });
   }
 
+  const bankItemsForPrereqs = await gameData.getBankItems();
+  const prereqCheck = gameData.checkPlanPrerequisites(plan, ctx, bankItemsForPrereqs, {
+    quantityMultiplier: 1,
+    checkBankDependencies: false,
+  });
+  if (!prereqCheck.ok) {
+    log.warn(`[${ctx.name}] Achievement ${ach.code}: craft prerequisites no longer met for ${recipeCode}, rotating`);
+    await routine.rotation.forceRotate(ctx);
+    return true;
+  }
+
   // Withdraw materials from bank (once per execute call, reset on next rotation)
   if (!routine.rotation.bankChecked) {
     routine.rotation.bankChecked = true;
@@ -336,6 +347,12 @@ async function executeCraftObjective(ctx, routine, action) {
     if (step.type === 'gather') {
       const needed = rawMaterialNeeded(ctx, plan, step.itemCode, 1);
       if (ctx.itemCount(step.itemCode) >= needed) continue;
+
+      if (step.resource.level > ctx.skillLevel(step.resource.skill)) {
+        log.warn(`[${ctx.name}] Achievement ${ach.code}: ${step.resource.code} skill too low (need ${step.resource.skill} lv${step.resource.level}, have lv${ctx.skillLevel(step.resource.skill)}), rotating`);
+        await routine.rotation.forceRotate(ctx);
+        return true;
+      }
 
       const loc = await gameData.getResourceLocation(step.resource.code);
       if (!loc) {
@@ -437,6 +454,11 @@ async function executeCraftObjective(ctx, routine, action) {
 
       const craftItem = gameData.getItem(step.itemCode);
       if (!craftItem?.craft) continue;
+      if (craftItem.craft.level > ctx.skillLevel(craftItem.craft.skill)) {
+        log.warn(`[${ctx.name}] Achievement ${ach.code}: ${step.itemCode} craft skill too low (need ${craftItem.craft.skill} lv${craftItem.craft.level}, have lv${ctx.skillLevel(craftItem.craft.skill)}), rotating`);
+        await routine.rotation.forceRotate(ctx);
+        return true;
+      }
 
       let craftQty;
       if (i === plan.length - 1) {
@@ -672,8 +694,13 @@ async function scoreObjective(ctx, obj, remaining, bankItems) {
       const plan = gameData.resolveRecipeChain(item.craft);
       if (!plan) return null;
 
-      // Check gather/craft skill levels (bank-aware)
-      const planCheck = gameData.canFulfillPlanWithBank(plan, ctx, bankItems);
+      // Check gather/craft skill levels (bank-aware for the planned remaining quantity)
+      const craftYield = item.craft.quantity || 1;
+      const plannedRounds = Math.max(1, Math.ceil(remaining / craftYield));
+      const planCheck = gameData.checkPlanPrerequisites(plan, ctx, bankItems, {
+        quantityMultiplier: plannedRounds,
+        checkBankDependencies: false,
+      });
       if (!planCheck.ok) return null;
 
       // Verify combat viability for fight steps
