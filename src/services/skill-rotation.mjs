@@ -440,9 +440,22 @@ export class SkillRotation {
   _buildCraftCandidate(recipe, ctx, bank, goalQty = 1) {
     const plan = this.gameData.resolveRecipeChain(recipe.craft);
     if (!plan || plan.length === 0) return null;
-    const planCheck = this.gameData.canFulfillPlanWithBank(plan, ctx, bank);
+    const planCheck = this.gameData.checkPlanPrerequisites
+      ? this.gameData.checkPlanPrerequisites(plan, ctx, bank, {
+          quantityMultiplier: goalQty,
+          checkBankDependencies: true,
+        })
+      : this.gameData.canFulfillPlanWithBank(plan, ctx, bank);
     if (!planCheck.ok) {
       this._queueGatherOrdersForDeficits(plan, recipe, ctx, bank, goalQty);
+      const blockers = planCheck.blockers || planCheck.deficits || [];
+      this._trackExchangeNeeds(
+        blockers
+          .filter(b => (b.stepType || b.type) === 'bank')
+          .map(b => ({ ...(b.step || b), quantity: b.requiredQuantity || b.step?.quantity || b.quantity || 0 })),
+        bank,
+        ctx,
+      );
       return null;
     }
 

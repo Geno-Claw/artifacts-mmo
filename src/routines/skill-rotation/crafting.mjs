@@ -98,6 +98,44 @@ export async function executeCrafting(ctx, routine) {
     }
   }
 
+  // Runtime guard after bank withdrawal: if a too-high gather/craft step is
+  // still not covered by inventory, don't wander into impossible work.
+  const currentBatch = routine._currentBatch || (claimMode ? 1 : 1);
+  const prereqCheck = typeof ctx.skillLevel === 'function'
+    ? gameData.checkPlanPrerequisites(plan, ctx, new Map(), {
+        quantityMultiplier: currentBatch,
+        checkBankDependencies: false,
+      })
+    : { ok: true, blockers: [] };
+  if (!prereqCheck.ok) {
+    const blocker = prereqCheck.blockers[0];
+    const reason = blocker?.type === 'craft_skill' ? 'insufficient_craft_skill' : 'insufficient_skill';
+    if (claimMode) {
+      await routine._blockAndReleaseClaim(ctx, reason);
+    } else {
+      craftingLog.warn(`[${ctx.name}] ${routine.rotation.currentSkill}: prerequisite check failed for ${recipe.code}, rotating`, {
+        event: 'craft.prerequisite.blocked',
+        reasonCode: reason,
+        context: { character: ctx.name },
+        data: {
+          skill: routine.rotation.currentSkill,
+          recipeCode: recipe.code,
+          blockers: prereqCheck.blockers.map(b => ({
+            type: b.type,
+            itemCode: b.itemCode,
+            skill: b.skill || null,
+            requiredLevel: b.requiredLevel ?? null,
+            currentLevel: b.currentLevel ?? null,
+            requiredQuantity: b.requiredQuantity,
+            availableQuantity: b.availableQuantity,
+          })),
+        },
+      });
+      await routine.rotation.forceRotate(ctx);
+    }
+    return true;
+  }
+
   // Walk through production plan steps
   let reserveGatherBlocked = false;
   for (let i = 0; i < plan.length; i++) {

@@ -689,6 +689,114 @@ export function canFulfillPlan(planSteps, ctx) {
   return true;
 }
 
+function safeItemCount(ctx, itemCode) {
+  if (!ctx || !itemCode || typeof ctx.itemCount !== 'function') return 0;
+  return Math.max(0, Number(ctx.itemCount(itemCode)) || 0);
+}
+
+function safeSkillLevel(ctx, skill) {
+  if (!ctx || !skill || typeof ctx.skillLevel !== 'function') return 0;
+  return Math.max(0, Number(ctx.skillLevel(skill)) || 0);
+}
+
+function bankCount(bankItems, itemCode) {
+  if (!(bankItems instanceof Map) || !itemCode) return 0;
+  return Math.max(0, Number(bankItems.get(itemCode)) || 0);
+}
+
+function scaledStepQuantity(step, quantityMultiplier = 1) {
+  const base = Math.max(0, Number(step?.quantity) || 0);
+  const mult = Math.max(1, Number(quantityMultiplier) || 1);
+  return base * mult;
+}
+
+function planAvailableQuantity(step, ctx, bankItems) {
+  return safeItemCount(ctx, step?.itemCode) + bankCount(bankItems, step?.itemCode);
+}
+
+function makePlanBlocker(type, step, ctx, bankItems, requiredQuantity, extra = {}) {
+  const availableQuantity = planAvailableQuantity(step, ctx, bankItems);
+  return {
+    type,
+    stepType: step?.type || null,
+    itemCode: step?.itemCode || null,
+    requiredQuantity,
+    availableQuantity,
+    deficitQuantity: Math.max(0, requiredQuantity - availableQuantity),
+    step,
+    ...extra,
+  };
+}
+
+/**
+ * Central bank/inventory-aware prerequisite check for resolved production plans.
+ *
+ * A too-high gather/craft step is allowed only when inventory+bank already
+ * covers that step's output for the planned quantity, because the character can
+ * skip producing it. Monster drops are intentionally not treated as skill
+ * blockers; callers should continue using combat viability checks for fight
+ * steps. Bank-only/event/task-reward dependencies are blockers when requested
+ * unless inventory+bank covers them.
+ *
+ * @param {Array} planSteps - from resolveRecipeChain(), optionally including final craft step
+ * @param {CharacterContext} ctx
+ * @param {Map} bankItems - Map<itemCode, quantity>
+ * @param {object} options
+ * @param {number} options.quantityMultiplier - planned crafts/buys this plan represents
+ * @param {boolean} options.checkBankDependencies - include bank-only blockers
+ * @returns {{ ok: boolean, blockers: Array, deficits: Array }}
+ */
+export function checkPlanPrerequisites(planSteps, ctx, bankItems, options = {}) {
+  const steps = Array.isArray(planSteps) ? planSteps : [];
+  const bank = bankItems instanceof Map ? bankItems : new Map();
+  const quantityMultiplier = Math.max(1, Number(options.quantityMultiplier) || 1);
+  const checkBankDependencies = options.checkBankDependencies === true;
+  const blockers = [];
+
+  for (const step of steps) {
+    if (!step || !step.type) continue;
+    const requiredQuantity = scaledStepQuantity(step, quantityMultiplier);
+    if (requiredQuantity <= 0) continue;
+
+    if (step.type === 'gather' && step.resource) {
+      const currentLevel = safeSkillLevel(ctx, step.resource.skill);
+      const requiredLevel = Math.max(0, Number(step.resource.level) || 0);
+      if (currentLevel >= requiredLevel) continue;
+      const availableQuantity = planAvailableQuantity(step, ctx, bank);
+      if (availableQuantity >= requiredQuantity) continue;
+      blockers.push(makePlanBlocker('gather_skill', step, ctx, bank, requiredQuantity, {
+        skill: step.resource.skill,
+        requiredLevel,
+        currentLevel,
+        resourceCode: step.resource.code || null,
+      }));
+      continue;
+    }
+
+    if (step.type === 'craft' && step.recipe) {
+      const currentLevel = safeSkillLevel(ctx, step.recipe.skill);
+      const requiredLevel = Math.max(0, Number(step.recipe.level) || 0);
+      if (currentLevel >= requiredLevel) continue;
+      const availableQuantity = planAvailableQuantity(step, ctx, bank);
+      if (availableQuantity >= requiredQuantity) continue;
+      blockers.push(makePlanBlocker('craft_skill', step, ctx, bank, requiredQuantity, {
+        skill: step.recipe.skill,
+        requiredLevel,
+        currentLevel,
+      }));
+      continue;
+    }
+
+    if (checkBankDependencies && step.type === 'bank') {
+      const availableQuantity = planAvailableQuantity(step, ctx, bank);
+      if (availableQuantity >= requiredQuantity) continue;
+      blockers.push(makePlanBlocker('bank_dependency', step, ctx, bank, requiredQuantity));
+    }
+  }
+
+  return { ok: blockers.length === 0, blockers, deficits: blockers };
+}
+
 /**
  * Bank-aware plan fulfillment check. For gather steps, skips the skill check
  * when bank+inventory already covers the requirement. Also checks intermediate
@@ -700,24 +808,7 @@ export function canFulfillPlan(planSteps, ctx) {
  * @returns {{ ok: boolean, deficits: Array }} deficits = steps that can't be fulfilled
  */
 export function canFulfillPlanWithBank(planSteps, ctx, bankItems) {
-  const bank = bankItems instanceof Map ? bankItems : new Map();
-  const deficits = [];
-
-  for (const step of planSteps) {
-    if (step.type === 'gather' && step.resource) {
-      if (ctx.skillLevel(step.resource.skill) >= step.resource.level) continue;
-      // Can't gather — check if bank+inventory covers the requirement
-      const have = ctx.itemCount(step.itemCode) + (bank.get(step.itemCode) || 0);
-      if (have >= step.quantity) continue;
-      deficits.push(step);
-    }
-    if (step.type === 'craft' && step.recipe) {
-      if (ctx.skillLevel(step.recipe.skill) >= step.recipe.level) continue;
-      deficits.push(step);
-    }
-  }
-
-  return { ok: deficits.length === 0, deficits };
+  return checkPlanPrerequisites(planSteps, ctx, bankItems, { checkBankDependencies: false });
 }
 
 // --- Resource / Monster queries ---

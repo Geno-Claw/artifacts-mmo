@@ -167,26 +167,20 @@ export async function runItemTaskFlow(ctx, routine) {
       return true;
     }
 
-    // Check if character can execute all steps
-    let canExecute = true;
-    for (const step of plan) {
-      if (step.type === 'gather' && step.resource) {
-        if (ctx.skillLevel(step.resource.skill) < step.resource.level) {
-          log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${step.resource.skill} lv${step.resource.level} (have lv${ctx.skillLevel(step.resource.skill)})`);
-          canExecute = false;
-          break;
-        }
-      }
-      if (step.type === 'craft' && step.recipe) {
-        if (ctx.skillLevel(step.recipe.skill) < step.recipe.level) {
-          log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${step.recipe.skill} lv${step.recipe.level} for crafting (have lv${ctx.skillLevel(step.recipe.skill)})`);
-          canExecute = false;
-          break;
-        }
-      }
-    }
-
-    if (!canExecute) {
+    const bankItems = await gameData.getBankItems();
+    const bankFinal = bankItems.get(itemCode) || 0;
+    const craftYield = item.craft.quantity || 1;
+    const plannedRounds = Math.max(1, Math.ceil(Math.max(0, needed - ctx.itemCount(itemCode) - bankFinal) / craftYield));
+    const prereqCheck = gameData.checkPlanPrerequisites(plan, ctx, bankItems, {
+      quantityMultiplier: plannedRounds,
+      checkBankDependencies: false,
+    });
+    if (!prereqCheck.ok) {
+      const blocker = prereqCheck.blockers[0];
+      log.warn(
+        `[${ctx.name}] Item Task: ${itemCode} blocked by ${blocker?.skill || 'unknown'} prerequisite ` +
+        `(need lv${blocker?.requiredLevel ?? '?'}, have lv${blocker?.currentLevel ?? '?'})`,
+      );
       await routine._placeOrderAndCancel(ctx, itemCode, needed, ITEMS_MASTER);
       return true;
     }
@@ -275,6 +269,11 @@ export async function craftForItemTask(ctx, routine, itemCode, item, plan, neede
         if (ctx.itemCount(step.itemCode) >= stepNeeded) continue;
       }
 
+      if (typeof ctx.skillLevel === 'function' && step.resource?.level > ctx.skillLevel(step.resource.skill)) {
+        log.warn(`[${ctx.name}] Item Task craft: ${step.itemCode} needs ${step.resource.skill} lv${step.resource.level} (have lv${ctx.skillLevel(step.resource.skill)}); deferring`);
+        return true;
+      }
+
       const usableNow = routine._usableInventorySpace(ctx);
       if (usableNow <= 0) {
         const reserve = routine._inventoryReserve(ctx);
@@ -321,6 +320,10 @@ export async function craftForItemTask(ctx, routine, itemCode, item, plan, neede
       // Check if we have the materials for this intermediate craft
       const craftItem = gameData.getItem(step.itemCode);
       if (!craftItem?.craft) continue;
+      if (typeof ctx.skillLevel === 'function' && craftItem.craft.level > ctx.skillLevel(craftItem.craft.skill)) {
+        log.warn(`[${ctx.name}] Item Task craft: ${step.itemCode} needs ${craftItem.craft.skill} lv${craftItem.craft.level} (have lv${ctx.skillLevel(craftItem.craft.skill)}); deferring`);
+        return true;
+      }
 
       const canCraft = Math.min(
         ...craftItem.craft.items.map(mat =>
@@ -531,6 +534,11 @@ export function shouldTradeItemTaskNow(ctx, { haveQty = 0, needed = 0, canGather
 }
 
 export async function gatherForItemTask(ctx, routine, itemCode, resource, needed) {
+  if (typeof ctx.skillLevel === 'function' && resource?.level > ctx.skillLevel(resource.skill)) {
+    log.warn(`[${ctx.name}] Item Task: ${itemCode} needs ${resource.skill} lv${resource.level} (have lv${ctx.skillLevel(resource.skill)}), cannot gather`);
+    return true;
+  }
+
   const loc = await gameData.getResourceLocation(resource.code);
   if (!loc) {
     log.warn(`[${ctx.name}] Item Task: can't find location for ${resource.code}`);

@@ -3171,6 +3171,42 @@ async function testBuildCraftCandidateAcceptsWhenBankCoversMaterials() {
   assert.equal(candidate.recipe.code, 'ash_plank');
 }
 
+async function testBuildCraftCandidateUsesPlannedQuantityForPrereqs() {
+  const recipe = makeRecipe('cooked_bass', 'cooking', 25);
+  const plan = [
+    {
+      type: 'gather',
+      itemCode: 'raw_bass',
+      quantity: 2,
+      resource: { code: 'bass_spot', skill: 'fishing', level: 20 },
+    },
+  ];
+  let seenOptions = null;
+  const stub = makeGameDataStub({
+    resolveRecipeChain: () => plan,
+    checkPlanPrerequisites: (_plan, _ctx, _bank, options) => {
+      seenOptions = options;
+      return { ok: false, blockers: [{ stepType: 'gather', step: plan[0], requiredQuantity: 10 }], deficits: [] };
+    },
+  });
+
+  const rotation = new SkillRotation(
+    { skills: ['cooking'], orderBoard: { enabled: true, createOrders: true } },
+    { gameDataSvc: stub },
+  );
+
+  const candidate = rotation._buildCraftCandidate(
+    recipe,
+    makeCtx({ skillLevels: { cooking: 25, fishing: 1 } }),
+    new Map([['raw_bass', 4]]),
+    5,
+  );
+
+  assert.equal(candidate, null, 'recipe should be rejected for planned-batch prerequisite deficit');
+  assert.equal(seenOptions?.quantityMultiplier, 5);
+  assert.equal(seenOptions?.checkBankDependencies, true);
+}
+
 async function testSkillRotationRoutineEnabledHotReload() {
   const routine = new SkillRotationRoutine({
     enabled: false,
@@ -3264,6 +3300,7 @@ async function run() {
   await testCraftClaimRejectsInsufficientIntermediateCraftSkill();
   await testCraftClaimQueuesGatherOrderOnInsufficientSkill();
   await testBuildCraftCandidateAcceptsWhenBankCoversMaterials();
+  await testBuildCraftCandidateUsesPlannedQuantityForPrereqs();
   await testSkillRotationRoutineEnabledHotReload();
   resetOrderPriorityForTests();
   resetGameDataForTests();
